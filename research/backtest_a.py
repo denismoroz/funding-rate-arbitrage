@@ -20,7 +20,8 @@ from pathlib import Path
 from itertools import product
 
 DATA_DIR = Path(__file__).parent / "data"
-POSITION_SIZE = 1000  # USDC notional
+POSITION_SIZE = 1000  # USDC notional per leg (spot + perp)
+TOTAL_CAPITAL = POSITION_SIZE * 2  # 1000 spot + 1000 perp margin
 TAKER_FEE = 0.00035  # 0.035%
 HOURS_PER_YEAR = 8760
 
@@ -98,7 +99,7 @@ def run_backtest(
 
     total_hours = len(rates)
     pct_in_position = hours_in_position / total_hours if total_hours > 0 else 0
-    annualized_return = (pnl / POSITION_SIZE) / (total_hours / HOURS_PER_YEAR) * 100
+    annualized_return = (pnl / TOTAL_CAPITAL) / (total_hours / HOURS_PER_YEAR) * 100
 
     return {
         "pnl_usdc": round(pnl, 2),

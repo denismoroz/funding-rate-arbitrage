@@ -18,7 +18,8 @@ import numpy as np
 from pathlib import Path
 
 DATA_DIR       = Path(__file__).parent / "data"
-POSITION_SIZE  = 1000
+POSITION_SIZE  = 1000  # USDC notional per leg
+TOTAL_CAPITAL  = POSITION_SIZE * 2  # 1000 spot + 1000 perp margin
 TAKER_FEE      = 0.00035
 HOURS_PER_YEAR = 8760
 ENTRY_THRESHOLD = 0.20
@@ -54,11 +55,11 @@ def compute_metrics(hourly_pnl: np.ndarray, total_hours: int) -> dict:
     equity = np.cumsum(hourly_pnl)  # equity curve относительно стартового POSITION_SIZE
 
     # Return
-    total_return = equity[-1] / POSITION_SIZE
+    total_return = equity[-1] / TOTAL_CAPITAL
     annualized   = total_return / (total_hours / HOURS_PER_YEAR) * 100
 
-    # Hourly returns как % от POSITION_SIZE
-    hr = hourly_pnl / POSITION_SIZE
+    # Hourly returns как % от общего капитала
+    hr = hourly_pnl / TOTAL_CAPITAL
 
     # Volatility (годовая)
     vol_annual = hr.std() * np.sqrt(HOURS_PER_YEAR) * 100
@@ -75,7 +76,7 @@ def compute_metrics(hourly_pnl: np.ndarray, total_hours: int) -> dict:
 
     # Max Drawdown
     peak      = np.maximum.accumulate(equity)
-    dd        = (equity - peak) / (POSITION_SIZE + peak)  # как доля от текущего peak+initial
+    dd        = (equity - peak) / (TOTAL_CAPITAL + peak)  # как доля от текущего peak+initial
     max_dd    = abs(dd.min()) * 100
 
     # Calmar
