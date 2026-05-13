@@ -7,7 +7,8 @@ import numpy as np
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
-POSITION_SIZE  = 1000
+POSITION_SIZE  = 1000  # USDC notional per leg
+TOTAL_CAPITAL  = POSITION_SIZE * 2  # 1000 spot + 1000 perp margin
 TAKER_FEE      = 0.00035
 HOURS_PER_YEAR = 8760
 
@@ -63,7 +64,7 @@ def run_exp_a(df):
         pnl -= TAKER_FEE * POSITION_SIZE; trades += 1
     n = len(rates)
     return {
-        "annual_pct": round((pnl / POSITION_SIZE) / (n / HOURS_PER_YEAR) * 100, 2),
+        "annual_pct": round((pnl / TOTAL_CAPITAL) / (n / HOURS_PER_YEAR) * 100, 2),
         "pct_active": round(hours_in / n * 100, 1),
         "trades":     trades,
     }
@@ -101,7 +102,7 @@ def run_exp_b(df, staking):
 
     n = len(rates)
     return {
-        "annual_pct": round((pnl / POSITION_SIZE) / (n / HOURS_PER_YEAR) * 100, 2),
+        "annual_pct": round((pnl / TOTAL_CAPITAL) / (n / HOURS_PER_YEAR) * 100, 2),
         "pct_active": round(hours_in / n * 100, 1),
         "trades":     trades,
     }

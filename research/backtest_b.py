@@ -18,7 +18,8 @@ import numpy as np
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
-POSITION_SIZE  = 1000
+POSITION_SIZE  = 1000  # USDC notional per leg
+TOTAL_CAPITAL  = POSITION_SIZE * 2  # 1000 spot + 1000 perp margin
 TAKER_FEE      = 0.00035
 HOURS_PER_YEAR = 8760
 
@@ -110,7 +111,7 @@ def run_strategy(
         trades += 1
 
     total_hours = len(df)
-    annualized  = (pnl / POSITION_SIZE) / (total_hours / HOURS_PER_YEAR) * 100
+    annualized  = (pnl / TOTAL_CAPITAL) / (total_hours / HOURS_PER_YEAR) * 100
 
     return {
         "annualized_pct": round(annualized, 2),
