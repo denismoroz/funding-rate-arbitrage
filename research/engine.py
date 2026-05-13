@@ -86,11 +86,13 @@ def simulate(
     min_hold:        int   = MIN_HOLD_HOURS,
     cooldown_hours:  int   = 0,
     signal_window:   int   = 1,
+    momentum_window: int   = 0,   # часы; вход только если funding >= среднего за окно
+    track_capital:   bool  = False,
 ):
     """
     Возвращает (pnl_arr, info_dict).
       pnl_arr — почасовые ΔEquity (длина = len(df))
-      info_dict — trades, hours_in_position
+      info_dict — trades, hours_in_position, capital_arr (если track_capital)
     """
     close = df["close"].values
     rates = df["fundingRate"].values
@@ -102,8 +104,16 @@ def simulate(
     # сигнал входа (возможно сглаженный)
     signal = smooth_funding(rates, signal_window) * HOURS_PER_YEAR
 
+    # funding momentum: текущая ставка не ниже среднего за прошлое окно
+    if momentum_window > 0:
+        baseline = pd.Series(rates).rolling(momentum_window, min_periods=1).mean().shift(1).fillna(0).values
+        momentum_ok_arr = rates >= baseline
+    else:
+        momentum_ok_arr = np.ones(len(rates), dtype=bool)
+
     n = len(df)
     pnl_arr = np.zeros(n)
+    capital_arr = np.zeros(n) if track_capital else None
 
     cash        = TOTAL_CAPITAL
     units_spot  = 0.0
@@ -144,7 +154,7 @@ def simulate(
 
         # 3) Entry / exit
         if not in_position:
-            if cooldown == 0 and annual_signal > entry_threshold:
+            if cooldown == 0 and annual_signal > entry_threshold and momentum_ok_arr[i]:
                 regime_ok = True
                 if strategy == "B" and regime_filter is not None:
                     regime_ok = regime_filter(i, close, ma200, mom72, m168)
@@ -180,6 +190,13 @@ def simulate(
         pnl_arr[i] = equity_now - equity_prev
         equity_prev = equity_now
 
+        # Capital в работе на этом часу
+        if track_capital:
+            if strategy == "A_cycle":
+                capital_arr[i] = (POSITION_SIZE + POSITION_SIZE) if in_position else 0.0
+            elif strategy in ("A_spot_keep", "B"):
+                capital_arr[i] = POSITION_SIZE + (POSITION_SIZE if in_position else 0.0)
+
     # Финал: закрыть всё
     P_final = close[-1]
     extra = 0.0
@@ -194,7 +211,10 @@ def simulate(
         units_spot = 0.0
     pnl_arr[-1] += extra
 
-    return pnl_arr, {"trades": trades, "hours_in_position": hours_in}
+    info = {"trades": trades, "hours_in_position": hours_in}
+    if track_capital:
+        info["capital_arr"] = capital_arr
+    return pnl_arr, info
 
 
 def buy_and_hold(df: pd.DataFrame, staking_yield: float = 0.0) -> np.ndarray:
