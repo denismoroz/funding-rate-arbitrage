@@ -1,160 +1,70 @@
 """
-Сравнение Эксперимента А и лучшего варианта Б (s1_ma200 со стейкингом).
+Сравнение всех вариантов стратегий A/B + buy & hold по монетам.
 """
 
 import pandas as pd
-import numpy as np
 from pathlib import Path
-
-DATA_DIR = Path(__file__).parent / "data"
-POSITION_SIZE  = 1000  # USDC notional per leg
-TOTAL_CAPITAL  = POSITION_SIZE * 2  # 1000 spot + 1000 perp margin
-TAKER_FEE      = 0.00035
-HOURS_PER_YEAR = 8760
-
-ENTRY_THRESHOLD = 0.20
-EXIT_THRESHOLD  = -0.05
-MIN_HOLD_HOURS  = 72
-
-STAKING_YIELD = {
-    "ETH":  0.035, "SOL":  0.085, "BTC":  0.0,   "ARB":  0.0,
-    "OP":   0.0,   "AVAX": 0.065, "MATIC":0.04,  "DOGE": 0.0,
-    "LINK": 0.0,   "UNI":  0.0,   "AAVE": 0.0,   "WIF":  0.0,
-    "TIA":  0.14,  "INJ":  0.18,
-}
-
-COINS = ["BTC", "ETH", "SOL", "ARB", "OP", "AVAX", "MATIC",
-         "DOGE", "LINK", "UNI", "AAVE", "WIF", "TIA", "INJ"]
-
-
-def load_funding(coin):
-    df = pd.read_csv(DATA_DIR / f"{coin}.csv")
-    df["time"] = pd.to_datetime(df["time"], format="ISO8601", utc=True).dt.floor("h")
-    return df.set_index("time")[["fundingRate"]].sort_index()
-
-
-def load_data(coin):
-    funding = load_funding(coin)
-    ohlcv = pd.read_csv(DATA_DIR / f"{coin}_1h.csv")
-    ohlcv["time"] = pd.to_datetime(ohlcv["time"], format="ISO8601", utc=True).dt.floor("h")
-    ohlcv = ohlcv.set_index("time")[["close"]].sort_index()
-    df = funding.join(ohlcv, how="inner")
-    df["price_return"] = df["close"].pct_change().fillna(0)
-    df["ma200"] = df["close"].rolling(200, min_periods=1).mean()
-    return df
-
-
-def run_exp_a(df):
-    """Эксперимент А: дельта-нейтральный, без спот риска."""
-    rates = df["fundingRate"].values
-    in_pos, pnl, trades, hours_in, hours_since = False, 0.0, 0, 0, 0
-    for rate in rates:
-        ar = rate * HOURS_PER_YEAR
-        if not in_pos:
-            if ar > ENTRY_THRESHOLD:
-                in_pos = True; trades += 1; hours_since = 0
-                pnl -= TAKER_FEE * POSITION_SIZE
-        else:
-            pnl += rate * POSITION_SIZE
-            hours_in += 1; hours_since += 1
-            if hours_since >= MIN_HOLD_HOURS and ar < EXIT_THRESHOLD:
-                in_pos = False
-                pnl -= TAKER_FEE * POSITION_SIZE
-    if in_pos:
-        pnl -= TAKER_FEE * POSITION_SIZE; trades += 1
-    n = len(rates)
-    return {
-        "annual_pct": round((pnl / TOTAL_CAPITAL) / (n / HOURS_PER_YEAR) * 100, 2),
-        "pct_active": round(hours_in / n * 100, 1),
-        "trades":     trades,
-    }
-
-
-def run_exp_b(df, staking):
-    """Эксперимент Б: спот лонг всегда + шорт перп по s1_ma200."""
-    rates      = df["fundingRate"].values
-    price_ret  = df["price_return"].values
-    close      = df["close"].values
-    ma200      = df["ma200"].values
-    stk_ph     = staking / HOURS_PER_YEAR
-
-    in_pos, pnl, trades, hours_in, hours_since = False, 0.0, 0, 0, 0
-
-    for i in range(len(rates)):
-        rate = rates[i]; ar = rate * HOURS_PER_YEAR
-        pnl += POSITION_SIZE * stk_ph
-
-        if not in_pos:
-            pnl += POSITION_SIZE * price_ret[i]
-            below_ma = close[i] < ma200[i]
-            if below_ma and ar > ENTRY_THRESHOLD:
-                in_pos = True; trades += 1; hours_since = 0
-                pnl -= TAKER_FEE * POSITION_SIZE
-        else:
-            pnl += rate * POSITION_SIZE
-            hours_in += 1; hours_since += 1
-            if hours_since >= MIN_HOLD_HOURS and ar < EXIT_THRESHOLD:
-                in_pos = False
-                pnl -= TAKER_FEE * POSITION_SIZE
-
-    if in_pos:
-        pnl -= TAKER_FEE * POSITION_SIZE; trades += 1
-
-    n = len(rates)
-    return {
-        "annual_pct": round((pnl / TOTAL_CAPITAL) / (n / HOURS_PER_YEAR) * 100, 2),
-        "pct_active": round(hours_in / n * 100, 1),
-        "trades":     trades,
-    }
-
-
-def run_buy_hold(df, staking):
-    equity = POSITION_SIZE
-    stk_ph = staking / HOURS_PER_YEAR
-    for r in df["price_return"].values:
-        equity *= (1 + r)
-        equity += POSITION_SIZE * stk_ph
-    pnl = equity - POSITION_SIZE
-    return round((pnl / POSITION_SIZE) / (len(df) / HOURS_PER_YEAR) * 100, 2)
+from engine import (
+    COINS, STAKING_YIELD, load_data, simulate, buy_and_hold, compute_metrics,
+    regime_below_ma,
+)
 
 
 def main():
     rows = []
     for coin in COINS:
-        if not (DATA_DIR / f"{coin}.csv").exists() or not (DATA_DIR / f"{coin}_1h.csv").exists():
+        df = load_data(coin)
+        if df.empty:
             continue
-        df      = load_data(coin)
         staking = STAKING_YIELD.get(coin, 0.0)
-        a       = run_exp_a(df)
-        b       = run_exp_b(df, staking)
-        bh      = run_buy_hold(df, staking)
+        n = len(df)
+
+        pnl_cyc,  info_cyc  = simulate(df, staking, "A_cycle")
+        pnl_keep, info_keep = simulate(df, staking, "A_spot_keep")
+        pnl_b,    info_b    = simulate(df, staking, "B", regime_filter=regime_below_ma)
+        bh_pnl              = buy_and_hold(df, staking)
+
+        m_cyc  = compute_metrics(pnl_cyc)
+        m_keep = compute_metrics(pnl_keep)
+        m_b    = compute_metrics(pnl_b)
+        m_bh   = compute_metrics(bh_pnl)
+
         rows.append({
-            "coin":          coin,
-            "stk%":          f"{staking*100:.0f}%",
-            "buy&hold":      bh,
-            "A  annual%":    a["annual_pct"],
-            "A  active%":    a["pct_active"],
-            "A  trades":     a["trades"],
-            "B  annual%":    b["annual_pct"],
-            "B  active%":    b["pct_active"],
-            "B  trades":     b["trades"],
-            "B-A":           round(b["annual_pct"] - a["annual_pct"], 2),
+            "coin":             coin,
+            "stk%":             f"{staking*100:.0f}%",
+            "buy_hold":         m_bh["annual_pct"],
+            "bh_dd":            m_bh["max_dd_pct"],
+            "A_cycle":          m_cyc["annual_pct"],
+            "A_cyc_dd":         m_cyc["max_dd_pct"],
+            "A_cyc_calmar":     m_cyc["calmar"],
+            "A_keep":           m_keep["annual_pct"],
+            "A_keep_dd":        m_keep["max_dd_pct"],
+            "B":                m_b["annual_pct"],
+            "B_dd":             m_b["max_dd_pct"],
+            "B_calmar":         m_b["calmar"],
+            "A_cyc_trades":     info_cyc["trades"],
+            "B_trades":         info_b["trades"],
         })
 
-    df_out = pd.DataFrame(rows).sort_values("B  annual%", ascending=False)
+    df_out = pd.DataFrame(rows).sort_values("A_cycle", ascending=False)
 
-    print("\n" + "="*105)
-    print("СРАВНЕНИЕ A vs B (Б = спот лонг + шорт перп по MA200, со стейкингом)")
-    print("entry=20%  exit=-5%  min_hold=72ч")
-    print("="*105)
-    print(df_out.to_string(index=False))
+    print("\n" + "="*120)
+    print("СРАВНЕНИЕ ВСЕХ СТРАТЕГИЙ (annualized %, max DD %)")
+    print("entry=20% exit=-5% min_hold=72ч,  spot fee 0.07%, perp fee 0.035%")
+    print("="*120)
+    cols = ["coin","stk%","buy_hold","bh_dd","A_cycle","A_cyc_dd","A_cyc_calmar",
+            "A_keep","A_keep_dd","B","B_dd","B_calmar"]
+    print(df_out[cols].to_string(index=False))
 
-    print("\n" + "="*105)
+    print("\n" + "="*120)
     print("ИТОГО (среднее по монетам)")
-    print("="*105)
-    print(f"  buy&hold:   {df_out['buy&hold'].mean():>6.2f}%")
-    print(f"  Эксп А:     {df_out['A  annual%'].mean():>6.2f}%  (в позиции {df_out['A  active%'].mean():.1f}%  сделок {df_out['A  trades'].mean():.1f})")
-    print(f"  Эксп Б:     {df_out['B  annual%'].mean():>6.2f}%  (в позиции {df_out['B  active%'].mean():.1f}%  сделок {df_out['B  trades'].mean():.1f})")
+    print("="*120)
+    avg = df_out[["buy_hold","A_cycle","A_keep","B"]].mean().round(2)
+    avg_dd = df_out[["bh_dd","A_cyc_dd","A_keep_dd","B_dd"]].mean().round(2)
+    print(f"  buy & hold:   annual={avg['buy_hold']:>7.2f}%   max_dd={avg_dd['bh_dd']:>6.2f}%")
+    print(f"  A_cycle:      annual={avg['A_cycle']:>7.2f}%   max_dd={avg_dd['A_cyc_dd']:>6.2f}%")
+    print(f"  A_spot_keep:  annual={avg['A_keep']:>7.2f}%   max_dd={avg_dd['A_keep_dd']:>6.2f}%")
+    print(f"  B (MA200):    annual={avg['B']:>7.2f}%   max_dd={avg_dd['B_dd']:>6.2f}%")
 
     out = Path(__file__).parent / "compare_ab_results.csv"
     df_out.to_csv(out, index=False)
