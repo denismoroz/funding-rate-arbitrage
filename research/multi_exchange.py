@@ -19,10 +19,11 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-DIR_HL      = Path(__file__).parent / "data"
-DIR_BINANCE = Path(__file__).parent / "data_binance"
-DIR_BYBIT   = Path(__file__).parent / "data_bybit"
-DIR_DRIFT   = Path(__file__).parent / "data_drift"
+DIR_HL       = Path(__file__).parent / "data"
+DIR_BINANCE  = Path(__file__).parent / "data_binance"
+DIR_BYBIT    = Path(__file__).parent / "data_bybit"
+DIR_DRIFT    = Path(__file__).parent / "data_drift"
+DIR_BACKPACK = Path(__file__).parent / "data_backpack"
 
 POSITION_SIZE  = 1000
 TOTAL_CAPITAL  = POSITION_SIZE * 2
@@ -33,10 +34,11 @@ HOURS_PER_YEAR = 8760
 # Используем те же fees как на HL для перпа (Drift Pro tier).
 # Drift Pro perp taker = 0.05% (без скидок); spot — берём 0.07% как HL.
 EXCHANGES = {
-    "Hyperliquid": (DIR_HL,      1,  0.00070, 0.00035),
-    "Binance":     (DIR_BINANCE, 8,  0.00100, 0.00050),
-    "Bybit":       (DIR_BYBIT,   8,  0.00100, 0.00055),
-    "Drift":       (DIR_DRIFT,   1,  0.00070, 0.00050),
+    "Hyperliquid": (DIR_HL,       1,  0.00070, 0.00035),
+    "Binance":     (DIR_BINANCE,  8,  0.00100, 0.00050),
+    "Bybit":       (DIR_BYBIT,    8,  0.00100, 0.00055),
+    "Drift":       (DIR_DRIFT,    1,  0.00070, 0.00050),
+    "Backpack":    (DIR_BACKPACK, 1,  0.00100, 0.00050),  # spot 0.1%, perp 0.05%
 }
 
 COINS = ["BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE"]
