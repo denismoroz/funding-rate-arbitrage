@@ -1,0 +1,7 @@
+label,peak_$,peak_%_of_naive,annual_on_peak,max_dd_peak,calmar_peak,params
+mom=off,14000,100.0,8.86,0.06,159.1,combo5
+mom=12,14000,100.0,8.77,0.06,157.5,combo5
+mom=24,14000,100.0,8.79,0.06,157.9,combo5
+mom=48,14000,100.0,8.79,0.06,157.9,combo5
+mom=72,14000,100.0,8.79,0.06,157.9,combo5
+mom=168,14000,100.0,8.79,0.06,157.8,combo5

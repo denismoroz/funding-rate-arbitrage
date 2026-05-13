@@ -134,8 +134,13 @@ def main():
         r = run_multi(coins, "A_cycle", f"mom={mom_w if mom_w else 'off'}",
                       entry_threshold=0.30, exit_threshold=-0.20, min_hold=168,
                       signal_window=12, momentum_window=mom_w)
+        r["params"] = "combo5"
         rows.append(r)
     print(pd.DataFrame(rows).to_string(index=False))
+
+    out = Path(__file__).parent / "optimize_a_results.csv"
+    pd.DataFrame(rows).to_csv(out, index=False)
+    print(f"\nСохранено: {out}")
 
 
 if __name__ == "__main__":

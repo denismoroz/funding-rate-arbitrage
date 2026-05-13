@@ -233,7 +233,7 @@ def main():
     print(pd.DataFrame(rows).to_string(index=False))
 
     print("\n--- COMBO (entry=30%, exit=-15%, min_hold=120, sig_ma=12) ---")
-    rows = []
+    rows_combo = []
     for K in [1, 2, 3, 4, 5, 7]:
         pnl, cap, info = simulate_multi_capped(coins, K,
             entry_threshold=0.30, exit_threshold=-0.15, min_hold=120, signal_window=12)
@@ -241,7 +241,8 @@ def main():
         peak = info["peak_capital"]
         m_theory = metrics_on_capital(pnl, K * TOTAL_CAPITAL, n)
         m_peak = metrics_on_capital(pnl, peak, n) if peak > 0 else None
-        rows.append({
+        rows_combo.append({
+            "params":        "combo",
             "max_K":         K,
             "peak_$":        int(peak),
             "annual_theory": m_theory["annual"],
@@ -251,7 +252,13 @@ def main():
             "calmar_peak":   m_peak["calmar"] if m_peak else 0,
             "trades":        info["total_trades"],
         })
-    print(pd.DataFrame(rows).to_string(index=False))
+    print(pd.DataFrame(rows_combo).to_string(index=False))
+
+    # Сохранить результаты
+    out = Path(__file__).parent / "concurrency_cap_results.csv"
+    all_rows = [{**r, "params": "baseline"} for r in rows] + rows_combo
+    pd.DataFrame(all_rows).to_csv(out, index=False)
+    print(f"\nСохранено: {out}")
 
 
 if __name__ == "__main__":
