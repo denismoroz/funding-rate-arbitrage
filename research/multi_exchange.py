@@ -22,16 +22,21 @@ from pathlib import Path
 DIR_HL      = Path(__file__).parent / "data"
 DIR_BINANCE = Path(__file__).parent / "data_binance"
 DIR_BYBIT   = Path(__file__).parent / "data_bybit"
+DIR_DRIFT   = Path(__file__).parent / "data_drift"
 
 POSITION_SIZE  = 1000
 TOTAL_CAPITAL  = POSITION_SIZE * 2
 HOURS_PER_YEAR = 8760
 
 # Конфиги бирж: (data_dir, funding_interval_hours, spot_taker, perp_taker)
+# Drift: spot есть только для SOL/USDC, для других монет — нужно идти за спотом на Jupiter.
+# Используем те же fees как на HL для перпа (Drift Pro tier).
+# Drift Pro perp taker = 0.05% (без скидок); spot — берём 0.07% как HL.
 EXCHANGES = {
     "Hyperliquid": (DIR_HL,      1,  0.00070, 0.00035),
     "Binance":     (DIR_BINANCE, 8,  0.00100, 0.00050),
     "Bybit":       (DIR_BYBIT,   8,  0.00100, 0.00055),
+    "Drift":       (DIR_DRIFT,   1,  0.00070, 0.00050),
 }
 
 COINS = ["BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE"]
@@ -162,15 +167,17 @@ def main():
     print("\n=== По монете × биржам ===")
     # Pivot для удобства
     pivot = df_res.pivot(index="coin", columns="exchange", values="annual_%")
-    pivot = pivot[["Hyperliquid", "Binance", "Bybit"]]
+    cols_order = [e for e in ["Hyperliquid", "Drift", "Binance", "Bybit"] if e in pivot.columns]
+    pivot = pivot[cols_order]
     print(pivot.to_string())
 
-    print("\n=== Среднее по корзине (7 монет) ===")
+    print("\n=== Среднее по корзине ===")
     avg = df_res.groupby("exchange").agg(
         annual_avg=("annual_%", lambda x: round(np.mean([v for v in x if isinstance(v, (int, float))]), 2)),
         trades_avg=("trades", "mean"),
         pct_in_pos_avg=("pct_in_pos", "mean"),
-    ).reindex(["Hyperliquid", "Binance", "Bybit"])
+        years_avg=("years_data", "mean"),
+    ).reindex(cols_order)
     print(avg.to_string())
 
     print("\n=== Детально по бирже × монете ===")
