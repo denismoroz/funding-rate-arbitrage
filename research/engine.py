@@ -14,6 +14,9 @@ Shared simulation engine for funding-rate strategies.
   A_spot_keep  — спот куплен один раз и удерживается. Перп динамически.
                  Между циклами — спот риск + стейкинг.
   B            — то же что A_spot_keep, но вход в перп фильтруется regime_filter.
+  B_hedge      — "стейкинг + хедж просадок". Спот держим всегда (стейк капает),
+                 перп шортим по hedge_signal[i] (без funding-условия).
+                 Funding при хедже — побочный доход (может быть и отриц).
 """
 
 import numpy as np
@@ -88,6 +91,7 @@ def simulate(
     signal_window:   int   = 1,
     momentum_window: int   = 0,   # часы; вход только если funding >= среднего за окно
     track_capital:   bool  = False,
+    hedge_signal:    np.ndarray = None,   # bool[n], только для strategy="B_hedge"
 ):
     """
     Возвращает (pnl_arr, info_dict).
@@ -125,8 +129,8 @@ def simulate(
     trades      = 0
     hours_in    = 0
 
-    # Старт: spot_keep / B покупают спот сразу
-    if strategy in ("A_spot_keep", "B"):
+    # Старт: spot_keep / B / B_hedge покупают спот сразу
+    if strategy in ("A_spot_keep", "B", "B_hedge"):
         P0 = close[0]
         units_spot = POSITION_SIZE / P0
         cash -= POSITION_SIZE
@@ -153,7 +157,24 @@ def simulate(
             hours_in += 1
 
         # 3) Entry / exit
-        if not in_position:
+        if strategy == "B_hedge":
+            want_hedge = bool(hedge_signal[i]) if hedge_signal is not None else False
+            if not in_position and want_hedge:
+                short_size  = POSITION_SIZE / P
+                entry_price = P
+                cash -= POSITION_SIZE * PERP_TAKER
+                in_position = True
+                trades += 1
+                hours_since = 0
+            elif in_position:
+                hours_since += 1
+                if not want_hedge:
+                    cash += short_size * (entry_price - P)
+                    cash -= short_size * P * PERP_TAKER
+                    short_size = 0.0
+                    entry_price = 0.0
+                    in_position = False
+        elif not in_position:
             if cooldown == 0 and annual_signal > entry_threshold and momentum_ok_arr[i]:
                 regime_ok = True
                 if strategy == "B" and regime_filter is not None:
