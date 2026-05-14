@@ -9,7 +9,7 @@ from alembic import context
 
 # Import Base and models so autogenerate can detect all tables.
 from frab.db.models import Base  # noqa: F401
-from frab.config import get_settings
+from frab.settings import get_settings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

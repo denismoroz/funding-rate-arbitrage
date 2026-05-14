@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 import sqlalchemy
 
-from frab.config import PROJECT_ROOT, get_settings
+from frab.settings import PROJECT_ROOT, get_settings
 from frab.db.models import Exchange, Market
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
