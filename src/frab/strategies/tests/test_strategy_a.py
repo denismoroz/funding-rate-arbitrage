@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from frab.exchanges.base import Executor, Fill, FundingTick, Leg, OrderRequest, Quote, Side
+from frab.exchanges.base import Executor, FillReport, FundingTick, Leg, OrderRequest, Quote, Side
 from frab.strategies.base import EquitySnapshot, TickReport
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
 
@@ -51,8 +51,8 @@ def _fill(
     fee=0.1,
     ts_ms=T0,
     client_ref=None,
-) -> Fill:
-    return Fill(
+) -> FillReport:
+    return FillReport(
         coin=coin,
         leg=leg,
         side=side,
@@ -337,7 +337,7 @@ async def test_concurrency_cap_picks_top_k_by_signal(executor):
         "LINK": _funding("LINK", T0, 0.00003),
     }
 
-    async def _fill_gen(req: OrderRequest) -> Fill:
+    async def _fill_gen(req: OrderRequest) -> FillReport:
         return _fill(req.coin, req.leg, req.side, qty=10.0, price=100.0, fee=0.05)
 
     executor.submit.side_effect = _fill_gen

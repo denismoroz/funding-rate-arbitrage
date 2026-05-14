@@ -1,12 +1,26 @@
+from enum import StrEnum
 from time import time
 from typing import Optional
 
-from sqlalchemy import ForeignKey, Index, JSON, UniqueConstraint
+from sqlalchemy import Enum as SQLEnum, ForeignKey, Index, JSON, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from frab.engine.signals import Decision
+from frab.exchanges.base import Leg, Side
 
 
 def now_ms() -> int:
     return int(time() * 1000)
+
+
+class PositionMode(StrEnum):
+    PAPER = "paper"
+    LIVE = "live"
+
+
+class PositionStatus(StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"
 
 
 class Base(DeclarativeBase):
@@ -91,7 +105,7 @@ class Signal(Base):
     ts_ms: Mapped[int]
     signal_value: Mapped[float]
     regime_pass: Mapped[bool] = mapped_column(default=True)
-    action: Mapped[str]
+    action: Mapped[Decision] = mapped_column(SQLEnum(Decision, native_enum=False, length=10))
 
 
 class Position(Base):
@@ -104,8 +118,8 @@ class Position(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
-    mode: Mapped[str]
-    status: Mapped[str]
+    mode: Mapped[PositionMode] = mapped_column(SQLEnum(PositionMode, native_enum=False, length=10))
+    status: Mapped[PositionStatus] = mapped_column(SQLEnum(PositionStatus, native_enum=False, length=10))
     opened_at_ms: Mapped[int]
     closed_at_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
     spot_units: Mapped[float]
@@ -125,8 +139,8 @@ class Fill(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     position_id: Mapped[int] = mapped_column(ForeignKey("positions.id", ondelete="CASCADE"))
     ts_ms: Mapped[int]
-    leg: Mapped[str]
-    side: Mapped[str]
+    leg: Mapped[Leg] = mapped_column(SQLEnum(Leg, native_enum=False, length=10))
+    side: Mapped[Side] = mapped_column(SQLEnum(Side, native_enum=False, length=10))
     qty: Mapped[float]
     price: Mapped[float]
     fee: Mapped[float]

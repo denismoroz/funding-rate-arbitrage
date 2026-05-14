@@ -19,37 +19,13 @@ from frab.db.models import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_exchange(**kwargs) -> Exchange:
-    defaults = dict(name="HL", funding_interval_h=8, spot_taker_bps=7.0, perp_taker_bps=2.5)
-    defaults.update(kwargs)
-    return Exchange(**defaults)
-
-
-def make_strategy(**kwargs) -> Strategy:
-    defaults = dict(name="strategy_a", version="v1", params_json={"k": 3})
-    defaults.update(kwargs)
-    return Strategy(**defaults)
-
-
-# ---------------------------------------------------------------------------
-# now_ms helper
-# ---------------------------------------------------------------------------
-
 def test_now_ms_positive():
     ts = now_ms()
     assert isinstance(ts, int)
     assert ts > 0
 
 
-# ---------------------------------------------------------------------------
-# Exchange CRUD + defaults
-# ---------------------------------------------------------------------------
-
-async def test_exchange_create_and_read(session):
+async def test_exchange_create_and_read(session, make_exchange):
     exc = make_exchange()
     session.add(exc)
     await session.flush()
@@ -62,14 +38,14 @@ async def test_exchange_create_and_read(session):
     assert row.perp_taker_bps == 2.5
 
 
-async def test_exchange_created_at_ms_default(session):
+async def test_exchange_created_at_ms_default(session, make_exchange):
     exc = make_exchange()
     session.add(exc)
     await session.flush()
     assert exc.created_at_ms > 0
 
 
-async def test_exchange_update(session):
+async def test_exchange_update(session, make_exchange):
     exc = make_exchange()
     session.add(exc)
     await session.flush()
@@ -81,7 +57,7 @@ async def test_exchange_update(session):
     assert result.scalar_one().spot_taker_bps == 5.0
 
 
-async def test_exchange_delete(session):
+async def test_exchange_delete(session, make_exchange):
     exc = make_exchange()
     session.add(exc)
     await session.flush()
@@ -94,11 +70,7 @@ async def test_exchange_delete(session):
     assert result.scalar_one_or_none() is None
 
 
-# ---------------------------------------------------------------------------
-# Exchange unique constraint
-# ---------------------------------------------------------------------------
-
-async def test_exchange_name_unique(session_factory):
+async def test_exchange_name_unique(session_factory, make_exchange):
     async with session_scope(session_factory) as s:
         s.add(make_exchange(name="DUP"))
 
@@ -107,11 +79,7 @@ async def test_exchange_name_unique(session_factory):
             s.add(make_exchange(name="DUP"))
 
 
-# ---------------------------------------------------------------------------
-# Market CRUD + defaults
-# ---------------------------------------------------------------------------
-
-async def test_market_defaults(session):
+async def test_market_defaults(session, make_exchange):
     exc = make_exchange()
     session.add(exc)
     await session.flush()
@@ -126,7 +94,7 @@ async def test_market_defaults(session):
     assert mkt.tick_size == 0.0
 
 
-async def test_market_unique_constraint(session_factory):
+async def test_market_unique_constraint(session_factory, make_exchange):
     exc_id: int
     async with session_scope(session_factory) as s:
         exc = make_exchange(name="MktDup")
@@ -140,11 +108,7 @@ async def test_market_unique_constraint(session_factory):
             s.add(Market(exchange_id=exc_id, coin="ETH"))
 
 
-# ---------------------------------------------------------------------------
-# FundingRate CRUD + unique constraint
-# ---------------------------------------------------------------------------
-
-async def test_funding_rate_crud(session):
+async def test_funding_rate_crud(session, make_exchange):
     exc = make_exchange()
     session.add(exc)
     await session.flush()
@@ -167,7 +131,7 @@ async def test_funding_rate_crud(session):
     assert row.annualized_pct == 10.95
 
 
-async def test_funding_rate_unique_constraint(session_factory):
+async def test_funding_rate_unique_constraint(session_factory, make_exchange):
     mkt_id: int
     async with session_scope(session_factory) as s:
         exc = make_exchange(name="FRDup")
@@ -184,7 +148,7 @@ async def test_funding_rate_unique_constraint(session_factory):
             s.add(FundingRate(market_id=mkt_id, ts_ms=2000, rate=0.0001, annualized_pct=10.0))
 
 
-async def test_funding_rate_different_market_same_ts(session_factory):
+async def test_funding_rate_different_market_same_ts(session_factory, make_exchange):
     """Different market_id at same ts_ms must succeed (no constraint violation)."""
     async with session_scope(session_factory) as s:
         exc = make_exchange(name="FRDiff")
@@ -199,11 +163,7 @@ async def test_funding_rate_different_market_same_ts(session_factory):
         s.add(FundingRate(market_id=mkt_eth.id, ts_ms=3000, rate=0.0002, annualized_pct=20.0))
 
 
-# ---------------------------------------------------------------------------
-# Price CRUD + unique constraint
-# ---------------------------------------------------------------------------
-
-async def test_price_crud(session):
+async def test_price_crud(session, make_exchange):
     exc = make_exchange()
     session.add(exc)
     await session.flush()
@@ -222,7 +182,7 @@ async def test_price_crud(session):
     assert row.spot is None
 
 
-async def test_price_unique_constraint(session_factory):
+async def test_price_unique_constraint(session_factory, make_exchange):
     mkt_id: int
     async with session_scope(session_factory) as s:
         exc = make_exchange(name="PriceDup")
@@ -239,7 +199,7 @@ async def test_price_unique_constraint(session_factory):
             s.add(Price(market_id=mkt_id, ts_ms=4000, mark=100.0))
 
 
-async def test_price_different_market_same_ts(session_factory):
+async def test_price_different_market_same_ts(session_factory, make_exchange):
     """Different market_id at same ts_ms must succeed (no constraint violation)."""
     async with session_scope(session_factory) as s:
         exc = make_exchange(name="PriceDiff")
@@ -254,11 +214,7 @@ async def test_price_different_market_same_ts(session_factory):
         s.add(Price(market_id=mkt_btc.id, ts_ms=5000, mark=30000.0))
 
 
-# ---------------------------------------------------------------------------
-# Strategy CRUD + defaults + JSON
-# ---------------------------------------------------------------------------
-
-async def test_strategy_defaults(session):
+async def test_strategy_defaults(session, make_strategy):
     s = make_strategy()
     session.add(s)
     await session.flush()
@@ -280,7 +236,7 @@ async def test_strategy_params_json(session):
     assert row.params_json["coins"] == ["BTC", "ETH"]
 
 
-async def test_strategy_unique_constraint(session_factory):
+async def test_strategy_unique_constraint(session_factory, make_strategy):
     async with session_scope(session_factory) as s:
         s.add(make_strategy(name="strat", version="v1"))
 
@@ -289,7 +245,7 @@ async def test_strategy_unique_constraint(session_factory):
             s.add(make_strategy(name="strat", version="v1"))
 
 
-async def test_strategy_update_status(session):
+async def test_strategy_update_status(session, make_strategy):
     s = make_strategy()
     session.add(s)
     await session.flush()
@@ -302,11 +258,7 @@ async def test_strategy_update_status(session):
     assert result.scalar_one().status == "running"
 
 
-# ---------------------------------------------------------------------------
-# Signal CRUD + unique constraint
-# ---------------------------------------------------------------------------
-
-async def test_signal_crud(session):
+async def test_signal_crud(session, make_strategy, make_exchange):
     strat = make_strategy()
     session.add(strat)
     await session.flush()
@@ -332,7 +284,7 @@ async def test_signal_crud(session):
     assert row.regime_pass is True
 
 
-async def test_signal_unique_constraint(session_factory):
+async def test_signal_unique_constraint(session_factory, make_strategy, make_exchange):
     strat_id: int
     mkt_id: int
     async with session_scope(session_factory) as s:
@@ -354,21 +306,7 @@ async def test_signal_unique_constraint(session_factory):
             s.add(Signal(strategy_id=strat_id, market_id=mkt_id, ts_ms=6000, signal_value=10.0, action="NONE"))
 
 
-# ---------------------------------------------------------------------------
-# Position CRUD + defaults
-# ---------------------------------------------------------------------------
-
-def make_position(strategy_id: int, market_id: int, **kwargs) -> Position:
-    defaults = dict(
-        strategy_id=strategy_id, market_id=market_id, mode="paper", status="open",
-        opened_at_ms=1_000_000, spot_units=0.1, perp_units=0.1,
-        entry_spot_price=30000.0, entry_perp_price=30010.0,
-    )
-    defaults.update(kwargs)
-    return Position(**defaults)
-
-
-async def test_position_defaults(session):
+async def test_position_defaults(session, make_strategy, make_exchange, make_position):
     strat = make_strategy()
     session.add(strat)
     await session.flush()
@@ -391,7 +329,7 @@ async def test_position_defaults(session):
     assert pos.closed_at_ms is None
 
 
-async def test_position_update(session):
+async def test_position_update(session, make_strategy, make_exchange, make_position):
     strat = make_strategy()
     session.add(strat)
     await session.flush()
@@ -419,11 +357,7 @@ async def test_position_update(session):
     assert row.realized_pnl == 42.5
 
 
-# ---------------------------------------------------------------------------
-# Fill CRUD + defaults
-# ---------------------------------------------------------------------------
-
-async def test_fill_defaults(session):
+async def test_fill_defaults(session, make_strategy, make_exchange, make_position):
     strat = make_strategy()
     session.add(strat)
     await session.flush()
@@ -450,7 +384,7 @@ async def test_fill_defaults(session):
     assert fill.is_paper is True
 
 
-async def test_fill_read(session):
+async def test_fill_read(session, make_strategy, make_exchange, make_position):
     strat = make_strategy()
     session.add(strat)
     await session.flush()
@@ -480,11 +414,7 @@ async def test_fill_read(session):
     assert row.is_paper is False
 
 
-# ---------------------------------------------------------------------------
-# EquitySnapshot CRUD
-# ---------------------------------------------------------------------------
-
-async def test_equity_snapshot_crud(session):
+async def test_equity_snapshot_crud(session, make_strategy):
     strat = make_strategy()
     session.add(strat)
     await session.flush()
@@ -504,10 +434,6 @@ async def test_equity_snapshot_crud(session):
     assert row.total_equity == 10000.0
     assert row.funding_cum == 50.0
 
-
-# ---------------------------------------------------------------------------
-# Event CRUD + JSON nullable
-# ---------------------------------------------------------------------------
 
 async def test_event_crud(session):
     ev = Event(ts_ms=10000, level="INFO", source="strategy_a", kind="position_opened",
@@ -533,11 +459,7 @@ async def test_event_payload_json_nullable(session):
     assert row.payload_json is None
 
 
-# ---------------------------------------------------------------------------
-# Foreign-key cascade: delete Exchange cascades to Market
-# ---------------------------------------------------------------------------
-
-async def test_cascade_delete_exchange_removes_markets(session):
+async def test_cascade_delete_exchange_removes_markets(session, make_exchange):
     exc = make_exchange(name="CascadeX")
     session.add(exc)
     await session.flush()

@@ -3,7 +3,7 @@ import pytest
 
 from frab.exchanges.base import (
     Executor,
-    Fill,
+    FillReport,
     FundingTick,
     Leg,
     MarketDataSource,
@@ -92,7 +92,7 @@ def test_market_data_source_isinstance():
 # ---------------------------------------------------------------------------
 
 class GoodExecutor:
-    async def submit(self, req: OrderRequest) -> Fill: ...
+    async def submit(self, req: OrderRequest) -> FillReport: ...
     async def get_position(self, coin: str) -> PositionState | None: ...
     async def reconcile(self) -> None: ...
 

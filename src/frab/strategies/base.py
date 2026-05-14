@@ -4,7 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from frab.exchanges.base import Fill, FundingTick, Quote
+from frab.exchanges.base import FillReport, FundingTick, Quote
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +20,7 @@ class SignalEvent:
 class TickReport:
     ts_ms: int
     signals: tuple[SignalEvent, ...]
-    fills: tuple[Fill, ...]
+    fills: tuple[FillReport, ...]
     opened: tuple[str, ...]
     closed: tuple[str, ...]
 

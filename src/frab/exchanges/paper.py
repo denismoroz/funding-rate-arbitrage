@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from frab.exchanges.base import (
-    Fill,
+    FillReport,
     Leg,
     MarketDataSource,
     OrderRequest,
@@ -73,7 +73,7 @@ class PaperExecutor:
         self._clock_ms = clock_ms if clock_ms is not None else lambda: int(time.time() * 1000)
         self._positions: dict[str, _PositionEntry] = {}
 
-    async def submit(self, req: OrderRequest) -> Fill:
+    async def submit(self, req: OrderRequest) -> FillReport:
         quote = await self._market_data.fetch_quote(req.coin)
         slip = self._extra_slip_bps / 1e4
 
@@ -107,7 +107,7 @@ class PaperExecutor:
             entry.perp_units = new_units
             entry.avg_entry_perp = new_avg
 
-        return Fill(
+        return FillReport(
             coin=req.coin,
             leg=req.leg,
             side=req.side,

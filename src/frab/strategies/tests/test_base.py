@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from dataclasses import FrozenInstanceError
 
-from frab.exchanges.base import Fill, FundingTick, Leg, Quote, Side
+from frab.exchanges.base import FillReport, FundingTick, Leg, Quote, Side
 from frab.strategies.base import EquitySnapshot, SignalEvent, Strategy, TickReport
 
 T0 = 1_700_000_000_000

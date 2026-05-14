@@ -7,7 +7,7 @@ from frab.engine.signals import Decision, decide
 from frab.engine.state import MarketState
 from frab.exchanges.base import (
     Executor,
-    Fill,
+    FillReport,
     FundingTick,
     Leg,
     OrderRequest,
@@ -126,7 +126,7 @@ class StrategyA(Strategy):
             signals_log.append(SignalEvent(coin=coin, ts_ms=now_ms, signal_value=smoothed, regime_pass=True, action=dec.value))
 
         # Step 4: execute CLOSE decisions
-        fills_log: list[Fill] = []
+        fills_log: list[FillReport] = []
         closed: list[str] = []
         for coin, dec in coin_decisions.items():
             if dec == Decision.CLOSE:
@@ -160,7 +160,7 @@ class StrategyA(Strategy):
             closed=tuple(closed),
         )
 
-    async def _open_position(self, coin: str, now_ms: int) -> list[Fill]:
+    async def _open_position(self, coin: str, now_ms: int) -> list[FillReport]:
         quote = self._last_quotes[coin]
         qty = self._params.position_size_usdc / quote.mark
 
@@ -192,7 +192,7 @@ class StrategyA(Strategy):
         )
         return [fill_spot, fill_perp]
 
-    async def _close_position(self, coin: str, now_ms: int) -> list[Fill]:
+    async def _close_position(self, coin: str, now_ms: int) -> list[FillReport]:
         pos = self._positions.pop(coin)
 
         spot_req = OrderRequest(

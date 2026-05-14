@@ -58,7 +58,7 @@ class OrderRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class Fill:
+class FillReport:
     coin: str
     leg: Leg
     side: Side
@@ -92,6 +92,6 @@ class MarketDataSource(Protocol):
 
 @runtime_checkable
 class Executor(Protocol):
-    async def submit(self, req: OrderRequest) -> Fill: ...  # pragma: no cover
+    async def submit(self, req: OrderRequest) -> FillReport: ...  # pragma: no cover
     async def get_position(self, coin: str) -> PositionState | None: ...  # pragma: no cover
     async def reconcile(self) -> None: ...  # pragma: no cover
