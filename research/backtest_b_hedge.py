@@ -50,6 +50,16 @@ def build_signal_grid(df: pd.DataFrame) -> dict:
     # Простой combo
     signals["combo_mom14_dd10"] = signals["mom14d"] | signals["dd10"]
 
+    # Адаптивные: hedge только когда краткосроч. И долгосроч. оба вниз.
+    # "long-term regime" — 90д и 180д price return < 0
+    for short_d in (14, 21):
+        for long_d in (90, 180):
+            sh = signals[f"mom{short_d}d"]
+            lh_h = long_d * 24
+            long_mom = pd.Series(close).pct_change(lh_h).fillna(0).values
+            lt_down = (long_mom < 0)
+            signals[f"mom{short_d}d_lt{long_d}d"] = sh & lt_down
+
     return signals
 
 
@@ -165,11 +175,39 @@ def main():
         print(f"\n{coin}:  buy&hold = {coin_df.iloc[0]['bh_annual']:.1f}% / DD {coin_df.iloc[0]['bh_max_dd']:.1f}%")
         print(coin_df[cols].to_string(index=False))
 
+    # Portfolio-level: применить ОДИН сигнал ко всем монетам равномерно
+    print("\n" + "="*120)
+    print("Универсальный сигнал на ВСЕ монеты (равно-взвешенный портфель)")
+    print("="*120)
+    portfolio_rows = []
+    sig_names = df_res["signal"].unique()
+    for sig_name in sig_names:
+        sub = df_res[df_res["signal"] == sig_name]
+        avg_annual = sub["annual_pct"].mean()
+        avg_dd     = sub["max_dd_pct"].mean()
+        avg_calmar = avg_annual / avg_dd if avg_dd > 0 else 0
+        portfolio_rows.append({
+            "signal":         sig_name,
+            "avg_annual":     round(avg_annual, 2),
+            "avg_max_dd":     round(avg_dd, 2),
+            "calmar":         round(avg_calmar, 2),
+            "avg_funding":    round(sub["funding_apr"].mean(), 2),
+            "avg_hedge_pnl":  round(sub["hedge_apr"].mean(), 2),
+            "avg_fees":       round(sub["fees_apr"].mean(), 2),
+        })
+    df_port = pd.DataFrame(portfolio_rows).sort_values("calmar", ascending=False)
+    bh_avg = df_best["bh_annual"].mean()
+    bh_dd  = df_best["bh_max_dd"].mean()
+    print(df_port.to_string(index=False))
+    print(f"\nbuy & hold всех монет: annual={bh_avg:.2f}%, max_dd={bh_dd:.2f}%, calmar={bh_avg/bh_dd:.2f}")
+
     out = Path(__file__).parent / "backtest_b_hedge_results.csv"
     df_res.to_csv(out, index=False)
     out_best = Path(__file__).parent / "backtest_b_hedge_best.csv"
     df_best.to_csv(out_best, index=False)
-    print(f"\nСохранено: {out}, {out_best}")
+    out_port = Path(__file__).parent / "backtest_b_hedge_portfolio.csv"
+    df_port.to_csv(out_port, index=False)
+    print(f"\nСохранено: {out}, {out_best}, {out_port}")
 
 
 if __name__ == "__main__":
