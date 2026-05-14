@@ -1,0 +1,122 @@
+"""Tests for frab CLI commands (init-db and seed)."""
+from pathlib import Path
+
+import sqlalchemy
+from alembic import command
+from sqlalchemy import inspect, select
+from sqlalchemy.orm import Session
+from typer.testing import CliRunner
+
+from frab.cli import _sync_db_url, app
+from frab.db.models import Exchange, Market
+
+runner = CliRunner()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_sync_engine(tmp_path: Path):
+    db_url = f"sqlite:///{tmp_path}/test.db"
+    return sqlalchemy.create_engine(db_url, future=True)
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def test_init_db_creates_tables(tmp_path, monkeypatch, mocker):
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("FRAB_DATA_DIR", str(tmp_path))
+
+    upgrade_spy = mocker.patch("frab.cli.command.upgrade", wraps=command.upgrade)
+
+    result = runner.invoke(app, ["init-db"])
+
+    assert result.exit_code == 0, result.output
+    assert db_path.exists()
+    upgrade_spy.assert_called_once()
+    # Verify "head" was passed as the second positional arg
+    _, called_revision = upgrade_spy.call_args.args
+    assert called_revision == "head"
+
+    # Inspect created tables via sync engine
+    engine = sqlalchemy.create_engine(f"sqlite:///{db_path}", future=True)
+    try:
+        table_names = set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+    app_tables = table_names - {"alembic_version"}
+    assert len(app_tables) == 10  # 10 application tables
+    assert "alembic_version" in table_names
+
+
+def test_seed_inserts_exchange_and_markets(tmp_path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("FRAB_DATA_DIR", str(tmp_path))
+
+    result = runner.invoke(app, ["init-db"])
+    assert result.exit_code == 0, result.output
+
+    result = runner.invoke(app, ["seed"])
+    assert result.exit_code == 0, result.output
+
+    engine = sqlalchemy.create_engine(f"sqlite:///{db_path}", future=True)
+    try:
+        with Session(engine) as session:
+            exchanges = session.execute(select(Exchange)).scalars().all()
+            assert len(exchanges) == 1
+            assert exchanges[0].name == "hyperliquid"
+
+            markets = session.execute(select(Market)).scalars().all()
+            assert len(markets) == 7
+            coins = {m.coin for m in markets}
+            assert coins == {"BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE"}
+    finally:
+        engine.dispose()
+
+
+def test_seed_is_idempotent(tmp_path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("FRAB_DATA_DIR", str(tmp_path))
+
+    runner.invoke(app, ["init-db"])
+
+    result1 = runner.invoke(app, ["seed"])
+    assert result1.exit_code == 0, result1.output
+
+    result2 = runner.invoke(app, ["seed"])
+    assert result2.exit_code == 0, result2.output
+
+    engine = sqlalchemy.create_engine(f"sqlite:///{db_path}", future=True)
+    try:
+        with Session(engine) as session:
+            exchanges = session.execute(select(Exchange)).scalars().all()
+            assert len(exchanges) == 1
+
+            markets = session.execute(select(Market)).scalars().all()
+            assert len(markets) == 7
+    finally:
+        engine.dispose()
+
+    # Second run output should report 0 added
+    assert "0 added" in result2.output
+    assert "1 skipped" in result2.output  # exchange skipped
+    assert "7 skipped" in result2.output  # markets skipped
+
+
+def test_help_shows_commands():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "init-db" in result.stdout
+    assert "seed" in result.stdout
+
+
+def test_sync_db_url_strips_aiosqlite():
+    assert _sync_db_url("sqlite+aiosqlite:///foo.db") == "sqlite:///foo.db"
+    assert _sync_db_url("sqlite+aiosqlite:////abs/path/db.db") == "sqlite:////abs/path/db.db"
