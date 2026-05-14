@@ -1,20 +1,18 @@
 """
-Б_hedge + constant-dollar rebalancing (ratchet).
+Б_hedge + constant-dollar rebalancing (ratchet) — несколько версий.
 
-Механика:
-  Старт:                $1000 spot + $1000 cash
-  Цена выросла:         продаём излишек spot до $1000, излишек → cash (lock profit)
-  Цена упала, no hedge: НЕ докупаем spot (просто фиксируем подешевевшую позицию)
-  Сигнал хеджа True:    short = текущий dollar value spot
-  Цена упала с hedge:   short в плюсе, spot в минусе — equity стабильна
-  Hedge закрывается:    realize hedge profit → cash; rebalance spot обратно до $1000
-                        (если не хватает кэша — оставляем меньше)
+v1 — базовый:
+  Цена выросла → продаём излишек spot выше $1000.
+  Hedge закрывается → сразу доливаем spot обратно до $1000 за счёт cash.
+  Cash под 5% (Aave).
 
-Rebalance происходит:
-  - Каждый раз когда (no_hedge AND |spot_value − $1000| > REBAL_THRESHOLD * $1000)
-  - При закрытии хеджа (top-up spot до $1000 за счёт cash)
+v2 — asymmetric refill:
+  Доливаем spot только когда тренд подтвердился (mom14d > 0 — цена идёт вверх).
+  Это спасает на структурно-падающих монетах типа TIA.
 
-Cash зарабатывает RISK_FREE_APR (~5% USDC в Aave).
+v3 — v2 + per-coin LT hedge signal + cash под 10% (как будто работает в Стратегии А).
+  BTC, INJ → mom14d_lt90d (LT-фильтр)
+  ETH, SOL, AVAX, TIA → mom14d
 """
 
 import numpy as np
@@ -23,8 +21,10 @@ from pathlib import Path
 from engine import STAKING_YIELD, load_data, buy_and_hold, compute_metrics, HOURS_PER_YEAR, TOTAL_CAPITAL, POSITION_SIZE, SPOT_TAKER, PERP_TAKER
 
 COINS = ["BTC", "ETH", "SOL", "AVAX", "TIA", "INJ"]
-REBAL_THRESHOLD = 0.05   # 5% отклонение spot value от $1000 → ребалансировка
-RISK_FREE_APR   = 0.05   # cash под 5% годовых
+REBAL_THRESHOLD = 0.05
+RISK_FREE_APR   = 0.05
+# Per-coin hedge: для BTC/INJ LT-фильтр улучшает Calmar, для остальных — нет
+LT_FILTERED_COINS = {"BTC", "INJ"}
 
 
 def build_mom14d(close: np.ndarray) -> np.ndarray:
@@ -32,12 +32,29 @@ def build_mom14d(close: np.ndarray) -> np.ndarray:
     return (mom < 0)
 
 
-def simulate_constdollar(df, staking, hedge_signal, rebal_threshold=REBAL_THRESHOLD):
+def build_mom14d_lt90d(close: np.ndarray) -> np.ndarray:
+    s = pd.Series(close)
+    mom14 = s.pct_change(14 * 24).fillna(0).values
+    mom90 = s.pct_change(90 * 24).fillna(0).values
+    return (mom14 < 0) & (mom90 < 0)
+
+
+def build_trend_up(close: np.ndarray) -> np.ndarray:
+    """Для refill confirm: mom14d > 0 (тренд развернулся вверх)."""
+    mom = pd.Series(close).pct_change(14 * 24).fillna(0).values
+    return (mom > 0)
+
+
+def simulate_constdollar(df, staking, hedge_signal,
+                          rebal_threshold=REBAL_THRESHOLD,
+                          risk_free_apr=RISK_FREE_APR,
+                          refill_confirm=None):
     close = df["close"].values
     rates = df["fundingRate"].values
     n = len(df)
     stk_ph = staking / HOURS_PER_YEAR
-    rf_ph  = RISK_FREE_APR / HOURS_PER_YEAR
+    rf_ph  = risk_free_apr / HOURS_PER_YEAR
+    refill_pending = False  # для v2: ждать подтверждения тренда
 
     cash         = TOTAL_CAPITAL - POSITION_SIZE
     P0           = float(close[0])
@@ -100,24 +117,44 @@ def simulate_constdollar(df, staking, hedge_signal, rebal_threshold=REBAL_THRESH
             entry_price = 0.0
             in_pos = False
 
-            # После закрытия хеджа — top up spot до $1000 за счёт cash
+            # После закрытия хеджа — пометить для refill (или сразу залить если v1)
             spot_value = units_spot * P
             if spot_value < POSITION_SIZE:
-                need = POSITION_SIZE - spot_value
-                buy = min(need, max(cash - POSITION_SIZE, 0))  # оставляем минимум на cash
-                if buy > 0:
-                    buy_units = buy / P
-                    fee = buy * SPOT_TAKER
-                    cash -= buy + fee
-                    spot_fees_total += fee
-                    units_spot += buy_units
-                    rebals += 1
+                if refill_confirm is None:
+                    # v1: сразу заливаем
+                    need = POSITION_SIZE - spot_value
+                    buy = min(need, max(cash - POSITION_SIZE, 0))
+                    if buy > 0:
+                        buy_units = buy / P
+                        fee = buy * SPOT_TAKER
+                        cash -= buy + fee
+                        spot_fees_total += fee
+                        units_spot += buy_units
+                        rebals += 1
+                else:
+                    # v2: ждём подтверждения тренда
+                    refill_pending = True
 
-        # 2) Rebalance вне хеджа: если spot value сильно выше $1000 — продать излишек
+        # 2) Если refill_pending и тренд развернулся — доливаем
+        if refill_pending and not in_pos and refill_confirm is not None:
+            if bool(refill_confirm[i]):
+                spot_value = units_spot * P
+                if spot_value < POSITION_SIZE:
+                    need = POSITION_SIZE - spot_value
+                    buy = min(need, max(cash - POSITION_SIZE, 0))
+                    if buy > 0:
+                        buy_units = buy / P
+                        fee = buy * SPOT_TAKER
+                        cash -= buy + fee
+                        spot_fees_total += fee
+                        units_spot += buy_units
+                        rebals += 1
+                refill_pending = False
+
+        # 3) Rebalance вне хеджа: если spot value сильно выше $1000 — продать излишек
         if not in_pos:
             spot_value = units_spot * P
             if spot_value > POSITION_SIZE * (1 + rebal_threshold):
-                # продаём излишек
                 excess = spot_value - POSITION_SIZE
                 sell_units = excess / P
                 fee = excess * SPOT_TAKER
@@ -162,6 +199,44 @@ def simulate_constdollar(df, staking, hedge_signal, rebal_threshold=REBAL_THRESH
     return pnl_arr, info
 
 
+def run(df, staking, mode, hedge, trend_up, years, bh_m):
+    """Запустить один конфиг и вернуть row."""
+    from backtest_b_voltgt import simulate_voltgt
+
+    if mode == "floating":
+        pnl, info = simulate_voltgt(df, staking, None, hedge)
+        rebals = 0
+    elif mode == "const_v1":
+        pnl, info = simulate_constdollar(df, staking, hedge,
+                                          risk_free_apr=0.05, refill_confirm=None)
+        rebals = info["rebals"]
+    elif mode == "const_v2":
+        pnl, info = simulate_constdollar(df, staking, hedge,
+                                          risk_free_apr=0.05, refill_confirm=trend_up)
+        rebals = info["rebals"]
+    elif mode == "const_v3":
+        pnl, info = simulate_constdollar(df, staking, hedge,
+                                          risk_free_apr=0.10, refill_confirm=trend_up)
+        rebals = info["rebals"]
+    else:
+        raise ValueError(mode)
+    m = compute_metrics(pnl)
+    return {
+        "mode":      mode,
+        "annual":    m["annual_pct"],
+        "max_dd":    m["max_dd_pct"],
+        "calmar":    m["calmar"],
+        "sharpe":    m["sharpe"],
+        "trades":    info["trades"],
+        "rebals":    rebals,
+        "funding":   round(info["funding_total"]/TOTAL_CAPITAL/years*100, 2),
+        "hedge_pnl": round(info["short_realized_pnl"]/TOTAL_CAPITAL/years*100, 2),
+        "fees":      round(-(info["perp_fees_total"]+info["spot_fees_total"])/TOTAL_CAPITAL/years*100, 2),
+        "bh_annual": bh_m["annual_pct"],
+        "bh_dd":     bh_m["max_dd_pct"],
+    }
+
+
 def main():
     rows = []
     for coin in COINS:
@@ -170,49 +245,37 @@ def main():
             continue
         staking = STAKING_YIELD.get(coin, 0.0)
         years = len(df) / HOURS_PER_YEAR
-        hedge = build_mom14d(df["close"].values)
+        close = df["close"].values
+
+        # Per-coin hedge сигнал
+        if coin in LT_FILTERED_COINS:
+            hedge = build_mom14d_lt90d(close)
+        else:
+            hedge = build_mom14d(close)
+        trend_up = build_trend_up(close)
 
         bh_pnl = buy_and_hold(df, staking)
         bh_m   = compute_metrics(bh_pnl)
 
-        # Сравнение: constant-dollar vs floating spot (текущий B_hedge)
-        from backtest_b_voltgt import simulate_voltgt
-
-        pnl_cd, info_cd = simulate_constdollar(df, staking, hedge)
-        m_cd = compute_metrics(pnl_cd)
-
-        pnl_fl, info_fl = simulate_voltgt(df, staking, None, hedge)
-        m_fl = compute_metrics(pnl_fl)
-
-        rows.append({"coin": coin, "mode": "constant_dollar",
-                     "annual": m_cd["annual_pct"], "max_dd": m_cd["max_dd_pct"],
-                     "calmar": m_cd["calmar"], "sharpe": m_cd["sharpe"],
-                     "trades": info_cd["trades"], "rebals": info_cd["rebals"],
-                     "funding":   round(info_cd["funding_total"]/TOTAL_CAPITAL/years*100, 2),
-                     "hedge_pnl": round(info_cd["short_realized_pnl"]/TOTAL_CAPITAL/years*100, 2),
-                     "fees":      round(-(info_cd["perp_fees_total"]+info_cd["spot_fees_total"])/TOTAL_CAPITAL/years*100, 2),
-                     "bh_annual": bh_m["annual_pct"], "bh_dd": bh_m["max_dd_pct"]})
-        rows.append({"coin": coin, "mode": "floating_spot",
-                     "annual": m_fl["annual_pct"], "max_dd": m_fl["max_dd_pct"],
-                     "calmar": m_fl["calmar"], "sharpe": m_fl["sharpe"],
-                     "trades": info_fl["trades"], "rebals": 0,
-                     "funding":   round(info_fl["funding_total"]/TOTAL_CAPITAL/years*100, 2),
-                     "hedge_pnl": round(info_fl["short_realized_pnl"]/TOTAL_CAPITAL/years*100, 2),
-                     "fees":      round(-(info_fl["perp_fees_total"]+info_fl["spot_fees_total"])/TOTAL_CAPITAL/years*100, 2),
-                     "bh_annual": bh_m["annual_pct"], "bh_dd": bh_m["max_dd_pct"]})
+        for mode in ("floating", "const_v1", "const_v2", "const_v3"):
+            r = run(df, staking, mode, hedge, trend_up, years, bh_m)
+            r["coin"] = coin
+            r["hedge"] = "mom14d_lt90d" if coin in LT_FILTERED_COINS else "mom14d"
+            rows.append(r)
 
     df_res = pd.DataFrame(rows)
 
     print("\n" + "="*130)
-    print("Constant-dollar rebalancing (ratchet) vs floating spot (исправленный B_hedge)")
-    print("Сигнал хеджа: mom14d. Cash под 5% годовых.")
+    print("Constant-dollar v1/v2/v3 vs floating. Per-coin hedge: BTC/INJ=mom14d_lt90d, остальные=mom14d.")
+    print("v1 = ratchet с мгновенным refill; v2 = с trend-confirm refill; v3 = v2 + cash под 10% (Стратегия A yield)")
     print("="*130)
 
     for coin in df_res["coin"].unique():
         sub = df_res[df_res["coin"] == coin]
         bh_a = sub.iloc[0]["bh_annual"]
         bh_d = sub.iloc[0]["bh_dd"]
-        print(f"\n{coin}: buy & hold = {bh_a:.1f}% / DD {bh_d:.1f}% / Calmar {bh_a/bh_d:.2f}")
+        hedge_name = sub.iloc[0]["hedge"]
+        print(f"\n{coin} ({hedge_name}): buy & hold = {bh_a:.1f}% / DD {bh_d:.1f}% / Calmar {bh_a/bh_d:.2f}")
         cols = ["mode", "annual", "max_dd", "calmar", "sharpe", "trades", "rebals",
                 "funding", "hedge_pnl", "fees"]
         print(sub[cols].to_string(index=False))
