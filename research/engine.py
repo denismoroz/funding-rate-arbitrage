@@ -129,12 +129,22 @@ def simulate(
     trades      = 0
     hours_in    = 0
 
+    # Декомпозиция доходности
+    funding_total      = 0.0   # cum. funding (может быть и отриц)
+    short_realized     = 0.0   # cum. realized P&L шортов при закрытии
+    perp_fees_total    = 0.0
+    spot_fees_total    = 0.0
+    units_initial      = 0.0   # количество монет на старте (для разложения staking vs price)
+    first_price        = float(close[0])
+
     # Старт: spot_keep / B / B_hedge покупают спот сразу
     if strategy in ("A_spot_keep", "B", "B_hedge"):
         P0 = close[0]
         units_spot = POSITION_SIZE / P0
+        units_initial = units_spot
         cash -= POSITION_SIZE
         cash -= POSITION_SIZE * SPOT_TAKER
+        spot_fees_total += POSITION_SIZE * SPOT_TAKER
 
     equity_prev = TOTAL_CAPITAL
 
@@ -153,7 +163,9 @@ def simulate(
 
         # 2) Funding (по текущей notional)
         if in_position:
-            cash += short_size * P * rate
+            f = short_size * P * rate
+            cash += f
+            funding_total += f
             hours_in += 1
 
         # 3) Entry / exit
@@ -163,14 +175,19 @@ def simulate(
                 short_size  = POSITION_SIZE / P
                 entry_price = P
                 cash -= POSITION_SIZE * PERP_TAKER
+                perp_fees_total += POSITION_SIZE * PERP_TAKER
                 in_position = True
                 trades += 1
                 hours_since = 0
             elif in_position:
                 hours_since += 1
                 if not want_hedge:
-                    cash += short_size * (entry_price - P)
-                    cash -= short_size * P * PERP_TAKER
+                    realized = short_size * (entry_price - P)
+                    cash += realized
+                    short_realized += realized
+                    fee = short_size * P * PERP_TAKER
+                    cash -= fee
+                    perp_fees_total += fee
                     short_size = 0.0
                     entry_price = 0.0
                     in_position = False
@@ -184,9 +201,11 @@ def simulate(
                         units_spot = POSITION_SIZE / P
                         cash -= POSITION_SIZE
                         cash -= POSITION_SIZE * SPOT_TAKER
+                        spot_fees_total += POSITION_SIZE * SPOT_TAKER
                     short_size  = POSITION_SIZE / P
                     entry_price = P
                     cash -= POSITION_SIZE * PERP_TAKER
+                    perp_fees_total += POSITION_SIZE * PERP_TAKER
                     in_position = True
                     trades += 1
                     hours_since = 0
@@ -194,11 +213,17 @@ def simulate(
             hours_since += 1
             if hours_since >= min_hold and annual_rate < exit_threshold:
                 # close short
-                cash += short_size * (entry_price - P)
-                cash -= short_size * P * PERP_TAKER
+                realized = short_size * (entry_price - P)
+                cash += realized
+                short_realized += realized
+                fee = short_size * P * PERP_TAKER
+                cash -= fee
+                perp_fees_total += fee
                 if strategy == "A_cycle":
                     cash += units_spot * P
-                    cash -= units_spot * P * SPOT_TAKER
+                    sfee = units_spot * P * SPOT_TAKER
+                    cash -= sfee
+                    spot_fees_total += sfee
                     units_spot = 0.0
                 short_size = 0.0
                 entry_price = 0.0
@@ -221,18 +246,38 @@ def simulate(
     # Финал: закрыть всё
     P_final = close[-1]
     extra = 0.0
+    final_units_at_close = units_spot
     if in_position:
-        cash += short_size * (entry_price - P_final)
-        cash -= short_size * P_final * PERP_TAKER
-        extra -= short_size * P_final * PERP_TAKER
+        realized = short_size * (entry_price - P_final)
+        cash += realized
+        short_realized += realized
+        fee = short_size * P_final * PERP_TAKER
+        cash -= fee
+        perp_fees_total += fee
+        extra -= fee
         short_size = 0.0
     if units_spot > 0:
-        cash -= units_spot * P_final * SPOT_TAKER
-        extra -= units_spot * P_final * SPOT_TAKER
+        sfee = units_spot * P_final * SPOT_TAKER
+        cash -= sfee
+        spot_fees_total += sfee
+        extra -= sfee
         units_spot = 0.0
     pnl_arr[-1] += extra
 
-    info = {"trades": trades, "hours_in_position": hours_in}
+    # Декомпозиция спот-ноги (если она была)
+    spot_price_pnl    = units_initial * (P_final - first_price)
+    spot_staking_pnl  = (final_units_at_close - units_initial) * P_final  # доп. монеты × цена выхода
+
+    info = {
+        "trades":              trades,
+        "hours_in_position":   hours_in,
+        "funding_total":       round(funding_total, 2),
+        "short_realized_pnl":  round(short_realized, 2),
+        "perp_fees_total":     round(perp_fees_total, 2),
+        "spot_fees_total":     round(spot_fees_total, 2),
+        "spot_price_pnl":      round(spot_price_pnl, 2),
+        "spot_staking_pnl":    round(spot_staking_pnl, 2),
+    }
     if track_capital:
         info["capital_arr"] = capital_arr
     return pnl_arr, info
