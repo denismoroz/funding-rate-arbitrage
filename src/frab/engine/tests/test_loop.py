@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from frab.engine.loop import (
-    MS_PER_HOUR,
-    MS_PER_MINUTE,
     Engine,
     NullRecorder,
     Recorder,
@@ -16,29 +15,34 @@ from frab.engine.loop import (
 from frab.exchanges.base import FundingTick, MarketDataSource, Quote
 from frab.strategies.base import EquitySnapshot, SignalEvent, Strategy, TickReport
 
+# Reference datetime: 2023-11-14 22:13:20 UTC (a known epoch anchor)
+_T0 = datetime(2023, 11, 14, 22, 0, 0, tzinfo=UTC)  # on the hour
+_HOUR = timedelta(hours=1)
+_MINUTE = timedelta(minutes=1)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _quote(coin="BTC", mark=100.0, ts_ms=1_700_000_000_000):
-    return Quote(coin=coin, ts_ms=ts_ms, bid=mark, ask=mark, mark=mark, spot=None)
+def _quote(coin="BTC", mark=100.0, ts: datetime = _T0):
+    return Quote(coin=coin, ts=ts, bid=mark, ask=mark, mark=mark, spot=None)
 
 
-def _funding(coin="BTC", ts_ms=1_700_000_000_000, rate=0.0001):
+def _funding(coin="BTC", ts: datetime = _T0, rate=0.0001):
     return FundingTick(
         coin=coin,
-        ts_ms=ts_ms,
+        ts=ts,
         rate=rate,
         premium=None,
         annualized_pct=rate * 8760 * 100,
     )
 
 
-def _equity(ts_ms=1_700_000_000_000, total=6000.0):
+def _equity(ts: datetime = _T0, total=6000.0):
     return EquitySnapshot(
-        ts_ms=ts_ms,
+        ts=ts,
         total_equity=total,
         cash=total,
         spot_value=0.0,
@@ -49,8 +53,8 @@ def _equity(ts_ms=1_700_000_000_000, total=6000.0):
     )
 
 
-def _tick_report(ts_ms=1_700_000_000_000):
-    return TickReport(ts_ms=ts_ms, signals=(), fills=(), opened=(), closed=())
+def _tick_report(ts: datetime = _T0):
+    return TickReport(ts=ts, signals=(), fills=(), opened=(), closed=())
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +103,7 @@ def test_init_defaults(mocker):
     s = mocker.AsyncMock(spec=Strategy)
     engine = Engine(market_data=md, strategy=s, coins=("BTC",))
     assert isinstance(engine._recorder, NullRecorder)
-    assert callable(engine._clock_ms)
+    assert callable(engine._clock_fn)
     assert engine._sleep is asyncio.sleep
 
 
@@ -122,14 +126,14 @@ async def test_null_recorder_methods_are_async_noops():
 
 
 async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, recorder, mocker):
-    now_ms = 1_700_000_000_000
+    now = _T0
 
     market_data.fetch_quote.side_effect = [_quote("BTC", 100.0), _quote("ETH", 200.0)]
     market_data.fetch_funding.side_effect = [
         _funding("BTC", rate=0.0001),
         _funding("ETH", rate=0.00005),
     ]
-    strategy.on_hour_tick.return_value = _tick_report(ts_ms=now_ms)
+    strategy.on_hour_tick.return_value = _tick_report(ts=now)
 
     engine = Engine(
         market_data=market_data,
@@ -138,10 +142,10 @@ async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, 
         recorder=recorder,
     )
 
-    outcome = await engine.tick_once(now_ms)
+    outcome = await engine.tick_once(now)
 
     # Basic outcome fields
-    assert outcome.ts_ms == now_ms
+    assert outcome.ts == now
     assert set(outcome.quotes.keys()) == {"BTC", "ETH"}
     assert outcome.quotes["BTC"].mark == 100.0
     assert outcome.quotes["ETH"].mark == 200.0
@@ -151,9 +155,9 @@ async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, 
     assert outcome.equity == _equity()
 
     # Strategy calls
-    strategy.on_minute_tick.assert_called_once_with(now_ms, outcome.quotes)
-    strategy.on_hour_tick.assert_called_once_with(now_ms, outcome.funding)
-    strategy.compute_equity.assert_called_once_with(now_ms)
+    strategy.on_minute_tick.assert_called_once_with(now, outcome.quotes)
+    strategy.on_hour_tick.assert_called_once_with(now, outcome.funding)
+    strategy.compute_equity.assert_called_once_with(now)
 
     # Market data calls
     assert market_data.fetch_quote.call_count == 2
@@ -174,11 +178,11 @@ async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, 
 async def test_tick_once_subsequent_minute_within_same_hour_skips_funding(
     market_data, strategy, recorder
 ):
-    t0 = 1_700_000_000_000
+    t0 = _T0  # on the hour
 
     market_data.fetch_quote.return_value = _quote()
     market_data.fetch_funding.return_value = _funding()
-    strategy.on_hour_tick.return_value = _tick_report(ts_ms=t0)
+    strategy.on_hour_tick.return_value = _tick_report(ts=t0)
 
     engine = Engine(
         market_data=market_data,
@@ -198,9 +202,9 @@ async def test_tick_once_subsequent_minute_within_same_hour_skips_funding(
     market_data.fetch_funding.side_effect = None
     market_data.fetch_funding.return_value = _funding()
 
-    # Second tick — same hour bucket
-    t1 = t0 + MS_PER_MINUTE
-    assert t1 // MS_PER_HOUR == t0 // MS_PER_HOUR  # same bucket
+    # Second tick — same hour
+    t1 = t0 + _MINUTE
+    assert t1.replace(minute=0, second=0, microsecond=0) == t0.replace(minute=0, second=0, microsecond=0)
 
     outcome2 = await engine.tick_once(t1)
 
@@ -223,7 +227,7 @@ async def test_tick_once_subsequent_minute_within_same_hour_skips_funding(
 
 
 async def test_tick_once_new_hour_triggers_funding_again(market_data, strategy, recorder):
-    t0 = 1_700_000_000_000
+    t0 = _T0
 
     market_data.fetch_quote.return_value = _quote()
     market_data.fetch_funding.return_value = _funding()
@@ -242,8 +246,8 @@ async def test_tick_once_new_hour_triggers_funding_again(market_data, strategy, 
     await engine.tick_once(t0)
 
     # Second tick — new hour
-    t1 = t0 + MS_PER_HOUR
-    assert t1 // MS_PER_HOUR != t0 // MS_PER_HOUR
+    t1 = t0 + _HOUR
+    assert t1.replace(minute=0, second=0, microsecond=0) != t0.replace(minute=0, second=0, microsecond=0)
 
     market_data.fetch_quote.side_effect = [_quote("BTC"), _quote("ETH")]
     market_data.fetch_funding.side_effect = [_funding("BTC"), _funding("ETH")]
@@ -265,17 +269,17 @@ async def test_tick_once_new_hour_triggers_funding_again(market_data, strategy, 
 
 
 async def test_tick_once_propagates_strategy_tick_report(market_data, strategy, recorder):
-    now_ms = 1_700_000_000_000
+    now = _T0
 
     signal = SignalEvent(
         coin="BTC",
-        ts_ms=now_ms,
+        ts=now,
         signal_value=1.5,
         regime_pass=True,
         action="OPEN",
     )
     expected_report = TickReport(
-        ts_ms=now_ms,
+        ts=now,
         signals=(signal,),
         fills=(),
         opened=("BTC",),
@@ -293,7 +297,7 @@ async def test_tick_once_propagates_strategy_tick_report(market_data, strategy, 
         recorder=recorder,
     )
 
-    outcome = await engine.tick_once(now_ms)
+    outcome = await engine.tick_once(now)
 
     assert outcome.tick_report is not None
     assert len(outcome.tick_report.signals) == 1
@@ -307,7 +311,7 @@ async def test_tick_once_propagates_strategy_tick_report(market_data, strategy, 
 
 
 async def test_concurrent_quote_fetch(market_data, strategy, recorder):
-    now_ms = 1_700_000_000_000
+    now = _T0
     coins = ("BTC", "ETH", "SOL")
 
     market_data.fetch_quote.return_value = _quote()
@@ -321,7 +325,7 @@ async def test_concurrent_quote_fetch(market_data, strategy, recorder):
         recorder=recorder,
     )
 
-    await engine.tick_once(now_ms)
+    await engine.tick_once(now)
 
     assert market_data.fetch_quote.call_count == len(coins)
 
@@ -332,7 +336,7 @@ async def test_concurrent_quote_fetch(market_data, strategy, recorder):
 
 
 async def test_quote_fetch_failure_propagates(market_data, strategy, recorder):
-    now_ms = 1_700_000_000_000
+    now = _T0
 
     market_data.fetch_quote.side_effect = [_quote("BTC"), RuntimeError("boom")]
 
@@ -344,7 +348,7 @@ async def test_quote_fetch_failure_propagates(market_data, strategy, recorder):
     )
 
     with pytest.raises(RuntimeError, match="boom"):
-        await engine.tick_once(now_ms)
+        await engine.tick_once(now)
 
 
 # ---------------------------------------------------------------------------
@@ -353,14 +357,14 @@ async def test_quote_fetch_failure_propagates(market_data, strategy, recorder):
 
 
 async def test_recorder_receives_all_saves_in_order(market_data, strategy, recorder):
-    now_ms = 1_700_000_000_000
+    now = _T0
 
     btc_quote = _quote("BTC", 100.0)
     eth_quote = _quote("ETH", 200.0)
     btc_funding = _funding("BTC", rate=0.0001)
     eth_funding = _funding("ETH", rate=0.00005)
     eq = _equity()
-    report = _tick_report(ts_ms=now_ms)
+    report = _tick_report(ts=now)
 
     market_data.fetch_quote.side_effect = [btc_quote, eth_quote]
     market_data.fetch_funding.side_effect = [btc_funding, eth_funding]
@@ -374,7 +378,7 @@ async def test_recorder_receives_all_saves_in_order(market_data, strategy, recor
         recorder=recorder,
     )
 
-    await engine.tick_once(now_ms)
+    await engine.tick_once(now)
 
     # Counts
     assert recorder.save_quote.call_count == 2
@@ -417,10 +421,15 @@ def test_stop_idempotent(mocker):
 
 
 async def test_run_calls_tick_once_until_stop(market_data, strategy, mocker):
-    t0 = 1_700_000_000_000
-
+    # Clock returns a sequence of datetimes
+    t0 = _T0
     clock = mocker.MagicMock(
-        side_effect=[t0, t0 + 30_000, t0 + 60_000, t0 + 90_000]
+        side_effect=[
+            t0,
+            t0 + timedelta(seconds=30),
+            t0 + timedelta(seconds=60),
+            t0 + timedelta(seconds=90),
+        ]
     )
 
     market_data.fetch_quote.return_value = _quote()
@@ -431,7 +440,7 @@ async def test_run_calls_tick_once_until_stop(market_data, strategy, mocker):
         market_data=market_data,
         strategy=strategy,
         coins=("BTC",),
-        clock_ms_fn=clock,
+        clock_fn=clock,
     )
 
     calls = 0
@@ -458,10 +467,10 @@ async def test_run_calls_tick_once_until_stop(market_data, strategy, mocker):
 
 
 async def test_run_sleep_delay_computed_to_next_minute_boundary(market_data, strategy, mocker):
-    now = 1_700_000_000_000
-    # Compute expected next minute
-    next_minute_ms = ((now // MS_PER_MINUTE) + 1) * MS_PER_MINUTE
-    expected_delay = (next_minute_ms - now) / 1000.0
+    # Use a time that is NOT on the minute boundary so delay > 0
+    now = datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)  # :13:20
+    next_minute = (now + timedelta(minutes=1)).replace(second=0, microsecond=0)  # :14:00
+    expected_delay = (next_minute - now).total_seconds()  # 40s
 
     clock = mocker.MagicMock(return_value=now)
 
@@ -473,7 +482,7 @@ async def test_run_sleep_delay_computed_to_next_minute_boundary(market_data, str
         market_data=market_data,
         strategy=strategy,
         coins=("BTC",),
-        clock_ms_fn=clock,
+        clock_fn=clock,
     )
 
     sleep_args = []
@@ -496,14 +505,14 @@ async def test_run_sleep_delay_computed_to_next_minute_boundary(market_data, str
 
 
 async def test_run_does_not_tick_after_stop_called_during_sleep(market_data, strategy, mocker):
-    t0 = 1_700_000_000_000
+    t0 = _T0
     clock = mocker.MagicMock(return_value=t0)
 
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
         coins=("BTC",),
-        clock_ms_fn=clock,
+        clock_fn=clock,
     )
 
     async def fake_sleep(s):

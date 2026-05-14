@@ -23,9 +23,9 @@ class CoinState:
     def add_funding(self, tick: FundingTick) -> None:
         if tick.coin != self.coin:
             raise ValueError(f"coin mismatch: state={self.coin!r}, tick={tick.coin!r}")
-        if self._last_tick is not None and tick.ts_ms <= self._last_tick.ts_ms:
+        if self._last_tick is not None and tick.ts <= self._last_tick.ts:
             raise ValueError(
-                f"non-monotonic funding tick: last_ts_ms={self._last_tick.ts_ms}, new_ts_ms={tick.ts_ms}"
+                f"non-monotonic funding tick: last_ts={self._last_tick.ts!r}, new_ts={tick.ts!r}"
             )
         self._rates.append(tick.rate)
         self._last_tick = tick

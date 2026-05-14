@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
@@ -22,7 +23,7 @@ class OrderType(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Quote:
     coin: str
-    ts_ms: int
+    ts: datetime
     bid: float
     ask: float
     mark: float
@@ -32,7 +33,7 @@ class Quote:
 @dataclass(frozen=True, slots=True)
 class FundingTick:
     coin: str
-    ts_ms: int
+    ts: datetime
     rate: float            # per-funding-period rate (e.g. hourly for HL)
     premium: float | None  # exchange-provided premium index if available
     annualized_pct: float  # rate * periods_per_year * 100, computed by caller
@@ -62,7 +63,7 @@ class FillReport:
     coin: str
     leg: Leg
     side: Side
-    ts_ms: int
+    ts: datetime
     qty: float
     price: float
     fee: float

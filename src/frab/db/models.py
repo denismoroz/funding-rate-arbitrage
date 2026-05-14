@@ -1,16 +1,16 @@
+from datetime import UTC, datetime
 from enum import StrEnum
-from time import time
 from typing import Optional
 
-from sqlalchemy import Enum as SQLEnum, ForeignKey, Index, JSON, UniqueConstraint
+from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Index, JSON, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from frab.engine.signals import Decision
 from frab.exchanges.base import Leg, Side
 
 
-def now_ms() -> int:
-    return int(time() * 1000)
+def now_utc() -> datetime:
+    return datetime.now(UTC)
 
 
 class PositionMode(StrEnum):
@@ -35,7 +35,7 @@ class Exchange(Base):
     funding_interval_h: Mapped[int]
     spot_taker_bps: Mapped[float]
     perp_taker_bps: Mapped[float]
-    created_at_ms: Mapped[int] = mapped_column(default=now_ms)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class Market(Base):
@@ -54,13 +54,13 @@ class Market(Base):
 class FundingRate(Base):
     __tablename__ = "funding_rates"
     __table_args__ = (
-        UniqueConstraint("market_id", "ts_ms"),
-        Index("ix_funding_rates_lookup", "market_id", "ts_ms"),
+        UniqueConstraint("market_id", "ts"),
+        Index("ix_funding_rates_lookup", "market_id", "ts"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
-    ts_ms: Mapped[int]
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     rate: Mapped[float]
     premium: Mapped[Optional[float]] = mapped_column(nullable=True)
     annualized_pct: Mapped[float]
@@ -69,13 +69,13 @@ class FundingRate(Base):
 class Price(Base):
     __tablename__ = "prices"
     __table_args__ = (
-        UniqueConstraint("market_id", "ts_ms"),
-        Index("ix_prices_lookup", "market_id", "ts_ms"),
+        UniqueConstraint("market_id", "ts"),
+        Index("ix_prices_lookup", "market_id", "ts"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
-    ts_ms: Mapped[int]
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     mark: Mapped[float]
     spot: Mapped[Optional[float]] = mapped_column(nullable=True)
     bid: Mapped[Optional[float]] = mapped_column(nullable=True)
@@ -91,18 +91,18 @@ class Strategy(Base):
     version: Mapped[str]
     params_json: Mapped[dict] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(default="idle")
-    started_at_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
-    stopped_at_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Signal(Base):
     __tablename__ = "signals"
-    __table_args__ = (UniqueConstraint("strategy_id", "market_id", "ts_ms"),)
+    __table_args__ = (UniqueConstraint("strategy_id", "market_id", "ts"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
-    ts_ms: Mapped[int]
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     signal_value: Mapped[float]
     regime_pass: Mapped[bool] = mapped_column(default=True)
     action: Mapped[Decision] = mapped_column(SQLEnum(Decision, native_enum=False, length=10))
@@ -112,7 +112,7 @@ class Position(Base):
     __tablename__ = "positions"
     __table_args__ = (
         Index("ix_positions_status", "strategy_id", "status"),
-        Index("ix_positions_market_time", "market_id", "opened_at_ms"),
+        Index("ix_positions_market_time", "market_id", "opened_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -120,8 +120,8 @@ class Position(Base):
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
     mode: Mapped[PositionMode] = mapped_column(SQLEnum(PositionMode, native_enum=False, length=10))
     status: Mapped[PositionStatus] = mapped_column(SQLEnum(PositionStatus, native_enum=False, length=10))
-    opened_at_ms: Mapped[int]
-    closed_at_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     spot_units: Mapped[float]
     perp_units: Mapped[float]
     entry_spot_price: Mapped[float]
@@ -138,7 +138,7 @@ class Fill(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     position_id: Mapped[int] = mapped_column(ForeignKey("positions.id", ondelete="CASCADE"))
-    ts_ms: Mapped[int]
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     leg: Mapped[Leg] = mapped_column(SQLEnum(Leg, native_enum=False, length=10))
     side: Mapped[Side] = mapped_column(SQLEnum(Side, native_enum=False, length=10))
     qty: Mapped[float]
@@ -150,11 +150,11 @@ class Fill(Base):
 
 class EquitySnapshot(Base):
     __tablename__ = "equity_snapshots"
-    __table_args__ = (Index("ix_equity_lookup", "strategy_id", "ts_ms"),)
+    __table_args__ = (Index("ix_equity_lookup", "strategy_id", "ts"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
-    ts_ms: Mapped[int]
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     total_equity: Mapped[float]
     cash: Mapped[float]
     spot_value: Mapped[float]
@@ -167,12 +167,12 @@ class EquitySnapshot(Base):
 class Event(Base):
     __tablename__ = "events"
     __table_args__ = (
-        Index("ix_events_time", "ts_ms"),
+        Index("ix_events_time", "ts"),
         Index("ix_events_level", "level"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    ts_ms: Mapped[int]
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     level: Mapped[str]
     source: Mapped[str]
     kind: Mapped[str]

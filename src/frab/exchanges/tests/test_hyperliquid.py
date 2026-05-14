@@ -1,13 +1,15 @@
 """Tests for HLMarketData."""
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 import respx
 from tenacity import wait_none
 
 import frab.exchanges.hyperliquid as hl_mod
-from frab.exchanges.hyperliquid import HLMarketData
+from frab.exchanges.hyperliquid import HLMarketData, _ms_to_dt
 
 BASE_URL = "https://api.hyperliquid.xyz"
 INFO_URL = f"{BASE_URL}/info"
@@ -38,7 +40,7 @@ async def test_fetch_funding_happy_path():
         tick = await md.fetch_funding("BTC")
 
     assert tick.coin == "BTC"
-    assert tick.ts_ms == 1_700_000_000_000
+    assert tick.ts == _ms_to_dt(1_700_000_000_000)
     assert tick.rate == pytest.approx(0.0001)
     assert tick.premium == pytest.approx(0.0005)
     assert tick.annualized_pct == pytest.approx(0.0001 * 8760 * 100)
@@ -101,7 +103,7 @@ async def test_fetch_funding_history_paginates(mocker):
         ticks = await md.fetch_funding_history("BTC", since_ms=0)
 
     assert len(ticks) == 700
-    assert ticks == sorted(ticks, key=lambda t: t.ts_ms)
+    assert ticks == sorted(ticks, key=lambda t: t.ts)
     assert call_bodies[1]["startTime"] == last_ts_page1 + 1
 
 
@@ -140,7 +142,7 @@ async def test_fetch_quote_combines_endpoints():
         quote = await md.fetch_quote("BTC")
 
     assert quote.coin == "BTC"
-    assert quote.ts_ms == 1_700_000_000_000
+    assert quote.ts == _ms_to_dt(1_700_000_000_000)
     assert quote.bid == pytest.approx(29999.0)
     assert quote.ask == pytest.approx(30001.0)
     assert quote.mark == pytest.approx(30000.5)

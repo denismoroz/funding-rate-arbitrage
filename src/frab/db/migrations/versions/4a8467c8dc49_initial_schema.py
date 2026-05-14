@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table('events',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('ts_ms', sa.Integer(), nullable=False),
+    sa.Column('ts', sa.DateTime(timezone=True), nullable=False),
     sa.Column('level', sa.String(), nullable=False),
     sa.Column('source', sa.String(), nullable=False),
     sa.Column('kind', sa.String(), nullable=False),
@@ -31,7 +31,7 @@ def upgrade() -> None:
     )
     with op.batch_alter_table('events', schema=None) as batch_op:
         batch_op.create_index('ix_events_level', ['level'], unique=False)
-        batch_op.create_index('ix_events_time', ['ts_ms'], unique=False)
+        batch_op.create_index('ix_events_time', ['ts'], unique=False)
 
     op.create_table('exchanges',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -39,7 +39,7 @@ def upgrade() -> None:
     sa.Column('funding_interval_h', sa.Integer(), nullable=False),
     sa.Column('spot_taker_bps', sa.Float(), nullable=False),
     sa.Column('perp_taker_bps', sa.Float(), nullable=False),
-    sa.Column('created_at_ms', sa.Integer(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('name')
     )
@@ -50,8 +50,8 @@ def upgrade() -> None:
     sa.Column('version', sa.String(), nullable=False),
     sa.Column('params_json', sa.JSON(), nullable=False),
     sa.Column('status', sa.String(), nullable=False),
-    sa.Column('started_at_ms', sa.Integer(), nullable=True),
-    sa.Column('stopped_at_ms', sa.Integer(), nullable=True),
+    sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('stopped_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('name', 'version')
     )
@@ -72,7 +72,7 @@ def upgrade() -> None:
     op.create_table('equity_snapshots',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('strategy_id', sa.Integer(), nullable=False),
-    sa.Column('ts_ms', sa.Integer(), nullable=False),
+    sa.Column('ts', sa.DateTime(timezone=True), nullable=False),
     sa.Column('total_equity', sa.Float(), nullable=False),
     sa.Column('cash', sa.Float(), nullable=False),
     sa.Column('spot_value', sa.Float(), nullable=False),
@@ -84,21 +84,21 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('equity_snapshots', schema=None) as batch_op:
-        batch_op.create_index('ix_equity_lookup', ['strategy_id', 'ts_ms'], unique=False)
+        batch_op.create_index('ix_equity_lookup', ['strategy_id', 'ts'], unique=False)
 
     op.create_table('funding_rates',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('market_id', sa.Integer(), nullable=False),
-    sa.Column('ts_ms', sa.Integer(), nullable=False),
+    sa.Column('ts', sa.DateTime(timezone=True), nullable=False),
     sa.Column('rate', sa.Float(), nullable=False),
     sa.Column('premium', sa.Float(), nullable=True),
     sa.Column('annualized_pct', sa.Float(), nullable=False),
     sa.ForeignKeyConstraint(['market_id'], ['markets.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('market_id', 'ts_ms')
+    sa.UniqueConstraint('market_id', 'ts')
     )
     with op.batch_alter_table('funding_rates', schema=None) as batch_op:
-        batch_op.create_index('ix_funding_rates_lookup', ['market_id', 'ts_ms'], unique=False)
+        batch_op.create_index('ix_funding_rates_lookup', ['market_id', 'ts'], unique=False)
 
     op.create_table('positions',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -106,8 +106,8 @@ def upgrade() -> None:
     sa.Column('market_id', sa.Integer(), nullable=False),
     sa.Column('mode', sa.Enum('paper', 'live', name='positionmode', native_enum=False, length=10), nullable=False),
     sa.Column('status', sa.Enum('open', 'closed', name='positionstatus', native_enum=False, length=10), nullable=False),
-    sa.Column('opened_at_ms', sa.Integer(), nullable=False),
-    sa.Column('closed_at_ms', sa.Integer(), nullable=True),
+    sa.Column('opened_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('closed_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('spot_units', sa.Float(), nullable=False),
     sa.Column('perp_units', sa.Float(), nullable=False),
     sa.Column('entry_spot_price', sa.Float(), nullable=False),
@@ -122,42 +122,42 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('positions', schema=None) as batch_op:
-        batch_op.create_index('ix_positions_market_time', ['market_id', 'opened_at_ms'], unique=False)
+        batch_op.create_index('ix_positions_market_time', ['market_id', 'opened_at'], unique=False)
         batch_op.create_index('ix_positions_status', ['strategy_id', 'status'], unique=False)
 
     op.create_table('prices',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('market_id', sa.Integer(), nullable=False),
-    sa.Column('ts_ms', sa.Integer(), nullable=False),
+    sa.Column('ts', sa.DateTime(timezone=True), nullable=False),
     sa.Column('mark', sa.Float(), nullable=False),
     sa.Column('spot', sa.Float(), nullable=True),
     sa.Column('bid', sa.Float(), nullable=True),
     sa.Column('ask', sa.Float(), nullable=True),
     sa.ForeignKeyConstraint(['market_id'], ['markets.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('market_id', 'ts_ms')
+    sa.UniqueConstraint('market_id', 'ts')
     )
     with op.batch_alter_table('prices', schema=None) as batch_op:
-        batch_op.create_index('ix_prices_lookup', ['market_id', 'ts_ms'], unique=False)
+        batch_op.create_index('ix_prices_lookup', ['market_id', 'ts'], unique=False)
 
     op.create_table('signals',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('strategy_id', sa.Integer(), nullable=False),
     sa.Column('market_id', sa.Integer(), nullable=False),
-    sa.Column('ts_ms', sa.Integer(), nullable=False),
+    sa.Column('ts', sa.DateTime(timezone=True), nullable=False),
     sa.Column('signal_value', sa.Float(), nullable=False),
     sa.Column('regime_pass', sa.Boolean(), nullable=False),
     sa.Column('action', sa.Enum('NONE', 'OPEN', 'CLOSE', name='decision', native_enum=False, length=10), nullable=False),
     sa.ForeignKeyConstraint(['strategy_id'], ['strategies.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['market_id'], ['markets.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('strategy_id', 'market_id', 'ts_ms')
+    sa.UniqueConstraint('strategy_id', 'market_id', 'ts')
     )
 
     op.create_table('fills',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('position_id', sa.Integer(), nullable=False),
-    sa.Column('ts_ms', sa.Integer(), nullable=False),
+    sa.Column('ts', sa.DateTime(timezone=True), nullable=False),
     sa.Column('leg', sa.Enum('spot', 'perp', name='leg', native_enum=False, length=10), nullable=False),
     sa.Column('side', sa.Enum('buy', 'sell', name='side', native_enum=False, length=10), nullable=False),
     sa.Column('qty', sa.Float(), nullable=False),

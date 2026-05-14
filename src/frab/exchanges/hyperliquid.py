@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -15,6 +15,10 @@ from tenacity import (
 from frab.exchanges.base import FundingTick, MarketSpec, Quote
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
+
+
+def _ms_to_dt(ms: int) -> datetime:
+    return datetime.fromtimestamp(ms / 1000, tz=UTC)
 
 
 class _RetryableHTTPError(Exception):
@@ -72,17 +76,17 @@ class HLMarketData:
     def _record_to_tick(self, coin: str, record: dict) -> FundingTick:
         rate = float(record["fundingRate"])
         premium = float(record["premium"])
-        ts_ms = int(record["time"])
+        ts = _ms_to_dt(int(record["time"]))
         return FundingTick(
             coin=coin,
-            ts_ms=ts_ms,
+            ts=ts,
             rate=rate,
             premium=premium,
             annualized_pct=rate * _PERIODS_PER_YEAR * 100,
         )
 
     async def fetch_funding(self, coin: str) -> FundingTick:
-        now_ms = int(time.time() * 1000)
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
         data: list[dict] = await self._post({
             "type": "fundingHistory",
             "coin": coin,
@@ -106,7 +110,7 @@ class HLMarketData:
             if len(data) < 500:
                 break
             start = int(data[-1]["time"]) + 1
-        ticks.sort(key=lambda t: t.ts_ms)
+        ticks.sort(key=lambda t: t.ts)
         return ticks
 
     async def fetch_quote(self, coin: str) -> Quote:
@@ -118,8 +122,8 @@ class HLMarketData:
         levels = book["levels"]
         bid = float(levels[0][0]["px"])
         ask = float(levels[1][0]["px"])
-        ts_ms = int(book["time"])
-        return Quote(coin=coin, ts_ms=ts_ms, bid=bid, ask=ask, mark=mark, spot=None)
+        ts = _ms_to_dt(int(book["time"]))
+        return Quote(coin=coin, ts=ts, bid=bid, ask=ask, mark=mark, spot=None)
 
     async def fetch_meta(self) -> list[MarketSpec]:
         data = await self._post({"type": "meta"})

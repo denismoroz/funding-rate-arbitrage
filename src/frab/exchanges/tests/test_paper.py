@@ -1,12 +1,15 @@
 """Tests for PaperExecutor."""
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from frab.exchanges.base import Leg, MarketDataSource, OrderRequest, Quote, Side
 from frab.exchanges.paper import PaperExecutor
 
-_CLOCK = lambda: 1700000000000  # noqa: E731
+_FIXED_DT = datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)  # 1700000000 unix seconds
+_CLOCK = lambda: _FIXED_DT  # noqa: E731
 _COIN = "BTC"
 
 
@@ -16,7 +19,7 @@ def _make_quote(
     spot: float | None = None,
     mark: float = 100.0,
 ) -> Quote:
-    return Quote(coin=_COIN, ts_ms=0, bid=bid, ask=ask, mark=mark, spot=spot)
+    return Quote(coin=_COIN, ts=_FIXED_DT, bid=bid, ask=ask, mark=mark, spot=spot)
 
 
 def _req(
@@ -40,7 +43,7 @@ def ex(md):
         spot_taker_bps=7.0,
         perp_taker_bps=3.5,
         extra_slip_bps=2.0,
-        clock_ms=_CLOCK,
+        clock_fn=_CLOCK,
     )
 
 
@@ -96,7 +99,7 @@ async def test_fill_metadata(md, ex):
     assert fill.is_paper is True
     assert fill.slippage_bps == 2.0
     assert fill.client_ref == "ref-42"
-    assert fill.ts_ms == 1700000000000
+    assert fill.ts == _FIXED_DT
 
 
 # 7. Position empty initially

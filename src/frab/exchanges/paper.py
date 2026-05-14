@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Callable
 
 from frab.exchanges.base import (
@@ -64,13 +64,13 @@ class PaperExecutor:
         spot_taker_bps: float,
         perp_taker_bps: float,
         extra_slip_bps: float = 2.0,
-        clock_ms: Callable[[], int] | None = None,
+        clock_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self._market_data = market_data
         self._spot_taker_bps = spot_taker_bps
         self._perp_taker_bps = perp_taker_bps
         self._extra_slip_bps = extra_slip_bps
-        self._clock_ms = clock_ms if clock_ms is not None else lambda: int(time.time() * 1000)
+        self._clock_fn = clock_fn if clock_fn is not None else lambda: datetime.now(UTC)
         self._positions: dict[str, _PositionEntry] = {}
 
     async def submit(self, req: OrderRequest) -> FillReport:
@@ -111,7 +111,7 @@ class PaperExecutor:
             coin=req.coin,
             leg=req.leg,
             side=req.side,
-            ts_ms=self._clock_ms(),
+            ts=self._clock_fn(),
             qty=req.qty,
             price=price,
             fee=fee,

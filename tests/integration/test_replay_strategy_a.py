@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -17,78 +17,70 @@ DATA_DIR = REPO_ROOT / "research" / "data"
 COINS = ("BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE")
 
 # 30-day window for the smoke test
-WINDOW_START = datetime(2024, 1, 1, tzinfo=timezone.utc)
-WINDOW_END = datetime(2024, 2, 1, tzinfo=timezone.utc)
+WINDOW_START = datetime(2024, 1, 1, tzinfo=UTC)
+WINDOW_END = datetime(2024, 2, 1, tzinfo=UTC)
 
 
-def _ts_ms(dt_str: str) -> int:
-    # ISO8601 like "2024-01-01 00:00:00+00:00" or "2024-01-01T00:00:00Z"
+def _parse_dt(dt_str: str) -> datetime:
+    """Parse ISO8601-ish timestamp string to UTC-aware datetime."""
     s = dt_str.strip()
-    # normalize: replace space with 'T' if needed, strip trailing Z
     if " " in s and "T" not in s:
         s = s.replace(" ", "T", 1)
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
-    dt = datetime.fromisoformat(s).astimezone(timezone.utc)
-    return int(dt.timestamp() * 1000)
+    return datetime.fromisoformat(s).astimezone(UTC)
 
 
-def _load_coin_data(coin: str, start: datetime, end: datetime) -> list[tuple[int, float, float]]:
-    """Inner-join funding + 1h close on hour timestamp, return list of (ts_ms, rate, close) within [start, end)."""
-    start_ms = int(start.timestamp() * 1000)
-    end_ms = int(end.timestamp() * 1000)
-
-    funding: dict[int, float] = {}
+def _load_coin_data(coin: str, start: datetime, end: datetime) -> list[tuple[datetime, float, float]]:
+    """Inner-join funding + 1h close on hour timestamp, return list of (dt, rate, close) within [start, end)."""
+    funding: dict[datetime, float] = {}
     with (DATA_DIR / f"{coin}.csv").open() as f:
         reader = csv.DictReader(f)
         for row in reader:
-            ts = _ts_ms(row["time"])
-            # floor to hour
-            ts = (ts // 3_600_000) * 3_600_000
-            if start_ms <= ts < end_ms:
-                funding[ts] = float(row["fundingRate"])
+            dt = _parse_dt(row["time"]).replace(minute=0, second=0, microsecond=0)
+            if start <= dt < end:
+                funding[dt] = float(row["fundingRate"])
 
-    prices: dict[int, float] = {}
+    prices: dict[datetime, float] = {}
     with (DATA_DIR / f"{coin}_1h.csv").open() as f:
         reader = csv.DictReader(f)
         for row in reader:
-            ts = _ts_ms(row["time"])
-            ts = (ts // 3_600_000) * 3_600_000
-            if start_ms <= ts < end_ms:
-                prices[ts] = float(row["close"])
+            dt = _parse_dt(row["time"]).replace(minute=0, second=0, microsecond=0)
+            if start <= dt < end:
+                prices[dt] = float(row["close"])
 
     common = sorted(set(funding.keys()) & set(prices.keys()))
-    return [(ts, funding[ts], prices[ts]) for ts in common]
+    return [(dt, funding[dt], prices[dt]) for dt in common]
 
 
 class ReplayMarketData(MarketDataSource):
-    """Pre-indexed market data replayed by ts_ms. The driver loop calls set_now() before each tick."""
+    """Pre-indexed market data replayed by datetime. The driver loop calls set_now() before each tick."""
 
     name = "replay"
 
-    def __init__(self, data: dict[str, list[tuple[int, float, float]]]):
-        # data: coin -> sorted [(ts_ms, rate, close), ...]
-        # Build per-coin index by ts_ms for O(1) lookup.
-        self._funding_by_ts: dict[str, dict[int, FundingTick]] = {}
-        self._quote_by_ts: dict[str, dict[int, Quote]] = {}
+    def __init__(self, data: dict[str, list[tuple[datetime, float, float]]]):
+        # data: coin -> sorted [(dt, rate, close), ...]
+        # Build per-coin index by datetime for O(1) lookup.
+        self._funding_by_ts: dict[str, dict[datetime, FundingTick]] = {}
+        self._quote_by_ts: dict[str, dict[datetime, Quote]] = {}
         for coin, rows in data.items():
-            f_map: dict[int, FundingTick] = {}
-            q_map: dict[int, Quote] = {}
-            for ts, rate, close in rows:
-                f_map[ts] = FundingTick(coin=coin, ts_ms=ts, rate=rate, premium=None, annualized_pct=rate * 8760 * 100)
-                q_map[ts] = Quote(coin=coin, ts_ms=ts, bid=close, ask=close, mark=close, spot=None)
+            f_map: dict[datetime, FundingTick] = {}
+            q_map: dict[datetime, Quote] = {}
+            for dt, rate, close in rows:
+                f_map[dt] = FundingTick(coin=coin, ts=dt, rate=rate, premium=None, annualized_pct=rate * 8760 * 100)
+                q_map[dt] = Quote(coin=coin, ts=dt, bid=close, ask=close, mark=close, spot=None)
             self._funding_by_ts[coin] = f_map
             self._quote_by_ts[coin] = q_map
-        self._now_ms: int = 0
+        self._now: datetime | None = None
 
-    def set_now(self, ts_ms: int) -> None:
-        self._now_ms = ts_ms
+    def set_now(self, dt: datetime) -> None:
+        self._now = dt
 
     async def fetch_quote(self, coin: str) -> Quote:
-        return self._quote_by_ts[coin][self._now_ms]
+        return self._quote_by_ts[coin][self._now]
 
     async def fetch_funding(self, coin: str) -> FundingTick:
-        return self._funding_by_ts[coin][self._now_ms]
+        return self._funding_by_ts[coin][self._now]
 
     async def fetch_funding_history(self, coin: str, since_ms: int):
         # Not used by Engine; raise if called.
@@ -98,9 +90,9 @@ class ReplayMarketData(MarketDataSource):
         raise NotImplementedError("replay does not implement meta")
 
 
-def _common_timeline(data_by_coin: dict[str, list[tuple[int, float, float]]]) -> list[int]:
+def _common_timeline(data_by_coin: dict[str, list[tuple[datetime, float, float]]]) -> list[datetime]:
     """Intersection of timestamps across all coins (so a tick is fired only when every coin has data)."""
-    sets = [set(ts for ts, _, _ in rows) for rows in data_by_coin.values()]
+    sets = [set(dt for dt, _, _ in rows) for rows in data_by_coin.values()]
     if not sets:
         return []
     common = set.intersection(*sets)
@@ -110,7 +102,7 @@ def _common_timeline(data_by_coin: dict[str, list[tuple[int, float, float]]]) ->
 @pytest.mark.asyncio
 async def test_replay_strategy_a_one_month_smoke():
     # 1. Load real data for all 7 coins in the window.
-    data_by_coin: dict[str, list[tuple[int, float, float]]] = {}
+    data_by_coin: dict[str, list[tuple[datetime, float, float]]] = {}
     for coin in COINS:
         rows = _load_coin_data(coin, WINDOW_START, WINDOW_END)
         assert len(rows) > 0, f"no data for {coin} in window"

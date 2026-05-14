@@ -1,4 +1,6 @@
 """Tests for exchange-agnostic contracts and DTOs in base.py."""
+from datetime import UTC, datetime
+
 import pytest
 
 from frab.exchanges.base import (
@@ -14,6 +16,8 @@ from frab.exchanges.base import (
     Quote,
     Side,
 )
+
+_DT = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +43,7 @@ def test_order_type_enum_values():
 # ---------------------------------------------------------------------------
 
 def test_quote_is_frozen():
-    q = Quote(coin="BTC", ts_ms=1000, bid=29999.0, ask=30001.0, mark=30000.0, spot=None)
+    q = Quote(coin="BTC", ts=_DT, bid=29999.0, ask=30001.0, mark=30000.0, spot=None)
     with pytest.raises((AttributeError, TypeError)):
         q.bid = 1.0  # type: ignore[misc]
 
@@ -49,14 +53,14 @@ def test_quote_is_frozen():
 # ---------------------------------------------------------------------------
 
 def test_funding_tick_equality():
-    tick_a = FundingTick(coin="BTC", ts_ms=1000, rate=0.0001, premium=None, annualized_pct=10.95)
-    tick_b = FundingTick(coin="BTC", ts_ms=1000, rate=0.0001, premium=None, annualized_pct=10.95)
+    tick_a = FundingTick(coin="BTC", ts=_DT, rate=0.0001, premium=None, annualized_pct=10.95)
+    tick_b = FundingTick(coin="BTC", ts=_DT, rate=0.0001, premium=None, annualized_pct=10.95)
     assert tick_a == tick_b
 
 
 def test_funding_tick_inequality():
-    tick_a = FundingTick(coin="BTC", ts_ms=1000, rate=0.0001, premium=None, annualized_pct=10.95)
-    tick_b = FundingTick(coin="ETH", ts_ms=1000, rate=0.0001, premium=None, annualized_pct=10.95)
+    tick_a = FundingTick(coin="BTC", ts=_DT, rate=0.0001, premium=None, annualized_pct=10.95)
+    tick_b = FundingTick(coin="ETH", ts=_DT, rate=0.0001, premium=None, annualized_pct=10.95)
     assert tick_a != tick_b
 
 

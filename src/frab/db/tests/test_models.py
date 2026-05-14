@@ -1,4 +1,6 @@
 """Unit tests for ORM models: CRUD, unique constraints, defaults, JSON, cascade."""
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -15,14 +17,20 @@ from frab.db.models import (
     Price,
     Signal,
     Strategy,
-    now_ms,
+    now_utc,
 )
 
+_DT = lambda h=0: datetime(2024, 1, 1, hour=h, tzinfo=UTC)  # noqa: E731
 
-def test_now_ms_positive():
-    ts = now_ms()
-    assert isinstance(ts, int)
-    assert ts > 0
+
+def test_now_utc_returns_aware_datetime():
+    before = datetime.now(UTC)
+    ts = now_utc()
+    after = datetime.now(UTC)
+    assert isinstance(ts, datetime)
+    assert ts.tzinfo is not None
+    assert before <= ts <= after
+    assert (after - ts) < timedelta(seconds=1)
 
 
 async def test_exchange_create_and_read(session, make_exchange):
@@ -38,11 +46,13 @@ async def test_exchange_create_and_read(session, make_exchange):
     assert row.perp_taker_bps == 2.5
 
 
-async def test_exchange_created_at_ms_default(session, make_exchange):
+async def test_exchange_created_at_default(session, make_exchange):
     exc = make_exchange()
     session.add(exc)
     await session.flush()
-    assert exc.created_at_ms > 0
+    assert exc.created_at is not None
+    assert isinstance(exc.created_at, datetime)
+    assert exc.created_at.tzinfo is not None
 
 
 async def test_exchange_update(session, make_exchange):
@@ -118,7 +128,7 @@ async def test_funding_rate_crud(session, make_exchange):
     await session.flush()
 
     fr = FundingRate(
-        market_id=mkt.id, ts_ms=1000, rate=0.0001,
+        market_id=mkt.id, ts=_DT(0), rate=0.0001,
         premium=None, annualized_pct=10.95,
     )
     session.add(fr)
@@ -140,16 +150,16 @@ async def test_funding_rate_unique_constraint(session_factory, make_exchange):
         mkt = Market(exchange_id=exc.id, coin="BTC")
         s.add(mkt)
         await s.flush()
-        s.add(FundingRate(market_id=mkt.id, ts_ms=2000, rate=0.0001, annualized_pct=10.0))
+        s.add(FundingRate(market_id=mkt.id, ts=_DT(1), rate=0.0001, annualized_pct=10.0))
         mkt_id = mkt.id
 
     with pytest.raises(IntegrityError):
         async with session_scope(session_factory) as s:
-            s.add(FundingRate(market_id=mkt_id, ts_ms=2000, rate=0.0001, annualized_pct=10.0))
+            s.add(FundingRate(market_id=mkt_id, ts=_DT(1), rate=0.0001, annualized_pct=10.0))
 
 
 async def test_funding_rate_different_market_same_ts(session_factory, make_exchange):
-    """Different market_id at same ts_ms must succeed (no constraint violation)."""
+    """Different market_id at same ts must succeed (no constraint violation)."""
     async with session_scope(session_factory) as s:
         exc = make_exchange(name="FRDiff")
         s.add(exc)
@@ -159,8 +169,8 @@ async def test_funding_rate_different_market_same_ts(session_factory, make_excha
         s.add(mkt_btc)
         s.add(mkt_eth)
         await s.flush()
-        s.add(FundingRate(market_id=mkt_btc.id, ts_ms=3000, rate=0.0001, annualized_pct=10.0))
-        s.add(FundingRate(market_id=mkt_eth.id, ts_ms=3000, rate=0.0002, annualized_pct=20.0))
+        s.add(FundingRate(market_id=mkt_btc.id, ts=_DT(2), rate=0.0001, annualized_pct=10.0))
+        s.add(FundingRate(market_id=mkt_eth.id, ts=_DT(2), rate=0.0002, annualized_pct=20.0))
 
 
 async def test_price_crud(session, make_exchange):
@@ -172,7 +182,7 @@ async def test_price_crud(session, make_exchange):
     session.add(mkt)
     await session.flush()
 
-    p = Price(market_id=mkt.id, ts_ms=3000, mark=150.0)
+    p = Price(market_id=mkt.id, ts=_DT(3), mark=150.0)
     session.add(p)
     await session.flush()
 
@@ -191,16 +201,16 @@ async def test_price_unique_constraint(session_factory, make_exchange):
         mkt = Market(exchange_id=exc.id, coin="SOL")
         s.add(mkt)
         await s.flush()
-        s.add(Price(market_id=mkt.id, ts_ms=4000, mark=100.0))
+        s.add(Price(market_id=mkt.id, ts=_DT(4), mark=100.0))
         mkt_id = mkt.id
 
     with pytest.raises(IntegrityError):
         async with session_scope(session_factory) as s:
-            s.add(Price(market_id=mkt_id, ts_ms=4000, mark=100.0))
+            s.add(Price(market_id=mkt_id, ts=_DT(4), mark=100.0))
 
 
 async def test_price_different_market_same_ts(session_factory, make_exchange):
-    """Different market_id at same ts_ms must succeed (no constraint violation)."""
+    """Different market_id at same ts must succeed (no constraint violation)."""
     async with session_scope(session_factory) as s:
         exc = make_exchange(name="PriceDiff")
         s.add(exc)
@@ -210,8 +220,8 @@ async def test_price_different_market_same_ts(session_factory, make_exchange):
         s.add(mkt_sol)
         s.add(mkt_btc)
         await s.flush()
-        s.add(Price(market_id=mkt_sol.id, ts_ms=5000, mark=150.0))
-        s.add(Price(market_id=mkt_btc.id, ts_ms=5000, mark=30000.0))
+        s.add(Price(market_id=mkt_sol.id, ts=_DT(5), mark=150.0))
+        s.add(Price(market_id=mkt_btc.id, ts=_DT(5), mark=30000.0))
 
 
 async def test_strategy_defaults(session, make_strategy):
@@ -220,8 +230,8 @@ async def test_strategy_defaults(session, make_strategy):
     await session.flush()
 
     assert s.status == "idle"
-    assert s.started_at_ms is None
-    assert s.stopped_at_ms is None
+    assert s.started_at is None
+    assert s.stopped_at is None
 
 
 async def test_strategy_params_json(session):
@@ -251,7 +261,7 @@ async def test_strategy_update_status(session, make_strategy):
     await session.flush()
 
     s.status = "running"
-    s.started_at_ms = now_ms()
+    s.started_at = now_utc()
     await session.flush()
 
     result = await session.execute(select(Strategy).where(Strategy.id == s.id))
@@ -272,7 +282,7 @@ async def test_signal_crud(session, make_strategy, make_exchange):
     await session.flush()
 
     sig = Signal(
-        strategy_id=strat.id, market_id=mkt.id, ts_ms=5000,
+        strategy_id=strat.id, market_id=mkt.id, ts=_DT(5),
         signal_value=15.0, action="OPEN",
     )
     session.add(sig)
@@ -297,13 +307,13 @@ async def test_signal_unique_constraint(session_factory, make_strategy, make_exc
         mkt = Market(exchange_id=exc.id, coin="ETH")
         s.add(mkt)
         await s.flush()
-        s.add(Signal(strategy_id=strat.id, market_id=mkt.id, ts_ms=6000, signal_value=10.0, action="NONE"))
+        s.add(Signal(strategy_id=strat.id, market_id=mkt.id, ts=_DT(6), signal_value=10.0, action="NONE"))
         strat_id = strat.id
         mkt_id = mkt.id
 
     with pytest.raises(IntegrityError):
         async with session_scope(session_factory) as s:
-            s.add(Signal(strategy_id=strat_id, market_id=mkt_id, ts_ms=6000, signal_value=10.0, action="NONE"))
+            s.add(Signal(strategy_id=strat_id, market_id=mkt_id, ts=_DT(6), signal_value=10.0, action="NONE"))
 
 
 async def test_position_defaults(session, make_strategy, make_exchange, make_position):
@@ -326,7 +336,7 @@ async def test_position_defaults(session, make_strategy, make_exchange, make_pos
     assert pos.realized_pnl == 0.0
     assert pos.funding_collected == 0.0
     assert pos.fees_paid == 0.0
-    assert pos.closed_at_ms is None
+    assert pos.closed_at is None
 
 
 async def test_position_update(session, make_strategy, make_exchange, make_position):
@@ -347,7 +357,7 @@ async def test_position_update(session, make_strategy, make_exchange, make_posit
     await session.flush()
 
     pos.status = "closed"
-    pos.closed_at_ms = now_ms()
+    pos.closed_at = now_utc()
     pos.realized_pnl = 42.5
     await session.flush()
 
@@ -375,7 +385,7 @@ async def test_fill_defaults(session, make_strategy, make_exchange, make_positio
     await session.flush()
 
     fill = Fill(
-        position_id=pos.id, ts_ms=7000, leg="spot", side="buy",
+        position_id=pos.id, ts=_DT(7), leg="spot", side="buy",
         qty=0.1, price=30000.0, fee=0.21, slippage_bps=2.0,
     )
     session.add(fill)
@@ -402,7 +412,7 @@ async def test_fill_read(session, make_strategy, make_exchange, make_position):
     await session.flush()
 
     fill = Fill(
-        position_id=pos.id, ts_ms=8000, leg="perp", side="sell",
+        position_id=pos.id, ts=_DT(8), leg="perp", side="sell",
         qty=0.1, price=30010.0, fee=0.075, slippage_bps=1.5, is_paper=False,
     )
     session.add(fill)
@@ -420,7 +430,7 @@ async def test_equity_snapshot_crud(session, make_strategy):
     await session.flush()
 
     snap = EquitySnapshot(
-        strategy_id=strat.id, ts_ms=9000, total_equity=10000.0,
+        strategy_id=strat.id, ts=_DT(9), total_equity=10000.0,
         cash=5000.0, spot_value=3000.0, perp_unrealized=2000.0,
         perp_realized_cum=0.0, funding_cum=50.0, fees_cum=10.0,
     )
@@ -436,7 +446,7 @@ async def test_equity_snapshot_crud(session, make_strategy):
 
 
 async def test_event_crud(session):
-    ev = Event(ts_ms=10000, level="INFO", source="strategy_a", kind="position_opened",
+    ev = Event(ts=_DT(10), level="INFO", source="strategy_a", kind="position_opened",
                message="BTC opened", payload_json={"size": 0.1})
     session.add(ev)
     await session.flush()
@@ -449,7 +459,7 @@ async def test_event_crud(session):
 
 
 async def test_event_payload_json_nullable(session):
-    ev = Event(ts_ms=11000, level="WARN", source="hl_market", kind="api_error",
+    ev = Event(ts=_DT(11), level="WARN", source="hl_market", kind="api_error",
                message="timeout", payload_json=None)
     session.add(ev)
     await session.flush()

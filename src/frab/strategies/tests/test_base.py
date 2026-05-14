@@ -1,13 +1,15 @@
 """Tests for strategies/base.py — dataclasses and abstract Strategy."""
 from __future__ import annotations
 
-import pytest
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
+
+import pytest
 
 from frab.exchanges.base import FillReport, FundingTick, Leg, Quote, Side
 from frab.strategies.base import EquitySnapshot, SignalEvent, Strategy, TickReport
 
-T0 = 1_700_000_000_000
+T0 = datetime(2023, 11, 14, 22, 0, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -18,15 +20,15 @@ class _ConcreteStrategy(Strategy):
     name = "test_strategy"
     version = "v0"
 
-    async def on_minute_tick(self, now_ms: int, quotes: dict[str, Quote]) -> None:
+    async def on_minute_tick(self, now: datetime, quotes: dict[str, Quote]) -> None:
         return None
 
-    async def on_hour_tick(self, now_ms: int, funding: dict[str, FundingTick]) -> TickReport:
-        return TickReport(ts_ms=now_ms, signals=(), fills=(), opened=(), closed=())
+    async def on_hour_tick(self, now: datetime, funding: dict[str, FundingTick]) -> TickReport:
+        return TickReport(ts=now, signals=(), fills=(), opened=(), closed=())
 
-    def compute_equity(self, now_ms: int) -> EquitySnapshot:
+    def compute_equity(self, now: datetime) -> EquitySnapshot:
         return EquitySnapshot(
-            ts_ms=now_ms,
+            ts=now,
             total_equity=0.0,
             cash=0.0,
             spot_value=0.0,
@@ -42,15 +44,15 @@ class _ConcreteStrategy(Strategy):
 # ---------------------------------------------------------------------------
 
 def test_signal_event_frozen():
-    ev = SignalEvent(coin="BTC", ts_ms=T0, signal_value=1.0, regime_pass=True, action="NONE")
+    ev = SignalEvent(coin="BTC", ts=T0, signal_value=1.0, regime_pass=True, action="NONE")
     with pytest.raises((FrozenInstanceError, AttributeError)):
         ev.coin = "X"  # type: ignore[misc]
 
 
 def test_tick_report_defaults():
     report = TickReport(
-        ts_ms=T0,
-        signals=(SignalEvent(coin="BTC", ts_ms=T0, signal_value=0.5, regime_pass=True, action="OPEN"),),
+        ts=T0,
+        signals=(SignalEvent(coin="BTC", ts=T0, signal_value=0.5, regime_pass=True, action="OPEN"),),
         fills=(),
         opened=("BTC",),
         closed=(),
@@ -59,12 +61,12 @@ def test_tick_report_defaults():
     assert isinstance(report.fills, tuple)
     assert isinstance(report.opened, tuple)
     assert isinstance(report.closed, tuple)
-    assert report.ts_ms == T0
+    assert report.ts == T0
 
 
 def test_equity_snapshot_fields():
     snap = EquitySnapshot(
-        ts_ms=T0,
+        ts=T0,
         total_equity=10_000.0,
         cash=5_000.0,
         spot_value=3_000.0,
@@ -73,7 +75,7 @@ def test_equity_snapshot_fields():
         funding_cum=50.0,
         fees_cum=10.0,
     )
-    assert snap.ts_ms == T0
+    assert snap.ts == T0
     assert snap.total_equity == pytest.approx(10_000.0)
     assert snap.cash == pytest.approx(5_000.0)
     assert snap.spot_value == pytest.approx(3_000.0)

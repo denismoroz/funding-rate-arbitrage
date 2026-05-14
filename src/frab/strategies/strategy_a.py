@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from frab.engine.signals import Decision, decide
 from frab.engine.state import MarketState
@@ -40,7 +41,7 @@ class StrategyAParams:
 
 @dataclass
 class _PositionRecord:
-    opened_at_ms: int
+    opened_at: datetime
     spot_qty: float         # positive: units of base
     perp_qty: float         # positive: magnitude of short
     entry_spot_price: float
@@ -83,11 +84,11 @@ class StrategyA(Strategy):
     def open_positions(self) -> list[str]:
         return list(self._positions.keys())
 
-    async def on_minute_tick(self, now_ms: int, quotes: dict[str, Quote]) -> None:
+    async def on_minute_tick(self, now: datetime, quotes: dict[str, Quote]) -> None:
         for coin, quote in quotes.items():
             self._last_quotes[coin] = quote
 
-    async def on_hour_tick(self, now_ms: int, funding: dict[str, FundingTick]) -> TickReport:
+    async def on_hour_tick(self, now: datetime, funding: dict[str, FundingTick]) -> TickReport:
         # Step 1: apply funding ticks to MarketState
         for coin in self._market_state.coins():
             if coin in funding:
@@ -110,27 +111,27 @@ class StrategyA(Strategy):
         for coin in self._market_state.coins():
             cs = self._market_state.get(coin)
             in_pos = coin in self._positions
-            hours_in = (now_ms - self._positions[coin].opened_at_ms) // 3_600_000 if in_pos else 0
+            hours_in = int((now - self._positions[coin].opened_at).total_seconds() // 3600) if in_pos else 0
             smoothed = cs.smoothed_signal()
             current_annual = cs.current_annual_rate() if cs.current_annual_rate() is not None else 0.0
             dec = decide(
                 in_position=in_pos,
                 smoothed_signal=smoothed,
                 current_annual_rate=current_annual,
-                hours_in_position=int(hours_in),
+                hours_in_position=hours_in,
                 entry_threshold=self._params.entry_threshold,
                 exit_threshold=self._params.exit_threshold,
                 min_hold_hours=self._params.min_hold_hours,
             )
             coin_decisions[coin] = dec
-            signals_log.append(SignalEvent(coin=coin, ts_ms=now_ms, signal_value=smoothed, regime_pass=True, action=dec.value))
+            signals_log.append(SignalEvent(coin=coin, ts=now, signal_value=smoothed, regime_pass=True, action=dec.value))
 
         # Step 4: execute CLOSE decisions
         fills_log: list[FillReport] = []
         closed: list[str] = []
         for coin, dec in coin_decisions.items():
             if dec == Decision.CLOSE:
-                close_fills = await self._close_position(coin, now_ms)
+                close_fills = await self._close_position(coin, now)
                 fills_log.extend(close_fills)
                 closed.append(coin)
 
@@ -147,32 +148,32 @@ class StrategyA(Strategy):
                     candidates.append((coin, smoothed))
             candidates.sort(key=lambda x: -x[1])  # strongest first
             for coin, _ in candidates[:slots_free]:
-                open_fills = await self._open_position(coin, now_ms)
+                open_fills = await self._open_position(coin, now)
                 fills_log.extend(open_fills)
                 opened.append(coin)
 
         # Step 6: assemble report
         return TickReport(
-            ts_ms=now_ms,
+            ts=now,
             signals=tuple(signals_log),
             fills=tuple(fills_log),
             opened=tuple(opened),
             closed=tuple(closed),
         )
 
-    async def _open_position(self, coin: str, now_ms: int) -> list[FillReport]:
+    async def _open_position(self, coin: str, now: datetime) -> list[FillReport]:
         quote = self._last_quotes[coin]
         qty = self._params.position_size_usdc / quote.mark
 
         spot_req = OrderRequest(
             coin=coin, leg=Leg.SPOT, side=Side.BUY, qty=qty,
-            client_ref=f"open-spot-{coin}-{now_ms}",
+            client_ref=f"open-spot-{coin}-{now.isoformat()}",
         )
         fill_spot = await self._executor.submit(spot_req)
 
         perp_req = OrderRequest(
             coin=coin, leg=Leg.PERP, side=Side.SELL, qty=qty,
-            client_ref=f"open-perp-{coin}-{now_ms}",
+            client_ref=f"open-perp-{coin}-{now.isoformat()}",
         )
         fill_perp = await self._executor.submit(perp_req)
 
@@ -183,7 +184,7 @@ class StrategyA(Strategy):
         self._fees_cum += fill_spot.fee + fill_perp.fee
 
         self._positions[coin] = _PositionRecord(
-            opened_at_ms=now_ms,
+            opened_at=now,
             spot_qty=fill_spot.qty,
             perp_qty=fill_perp.qty,
             entry_spot_price=fill_spot.price,
@@ -192,18 +193,18 @@ class StrategyA(Strategy):
         )
         return [fill_spot, fill_perp]
 
-    async def _close_position(self, coin: str, now_ms: int) -> list[FillReport]:
+    async def _close_position(self, coin: str, now: datetime) -> list[FillReport]:
         pos = self._positions.pop(coin)
 
         spot_req = OrderRequest(
             coin=coin, leg=Leg.SPOT, side=Side.SELL, qty=pos.spot_qty,
-            client_ref=f"close-spot-{coin}-{now_ms}",
+            client_ref=f"close-spot-{coin}-{now.isoformat()}",
         )
         fill_spot = await self._executor.submit(spot_req)
 
         perp_req = OrderRequest(
             coin=coin, leg=Leg.PERP, side=Side.BUY, qty=pos.perp_qty,
-            client_ref=f"close-perp-{coin}-{now_ms}",
+            client_ref=f"close-perp-{coin}-{now.isoformat()}",
         )
         fill_perp = await self._executor.submit(perp_req)
 
@@ -218,7 +219,7 @@ class StrategyA(Strategy):
         self._fees_cum += fill_spot.fee + fill_perp.fee
         return [fill_spot, fill_perp]
 
-    def compute_equity(self, now_ms: int) -> EquitySnapshot:
+    def compute_equity(self, now: datetime) -> EquitySnapshot:
         spot_value = 0.0
         perp_unrealized = 0.0
         for coin, pos in self._positions.items():
@@ -229,7 +230,7 @@ class StrategyA(Strategy):
             perp_unrealized += pos.perp_qty * (pos.entry_perp_price - mark)
         total = self._cash + spot_value + perp_unrealized
         return EquitySnapshot(
-            ts_ms=now_ms,
+            ts=now,
             total_equity=total,
             cash=self._cash,
             spot_value=spot_value,

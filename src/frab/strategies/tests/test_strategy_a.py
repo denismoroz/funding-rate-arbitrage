@@ -1,14 +1,16 @@
 """Tests for strategies/strategy_a.py — StrategyA behavior."""
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from frab.exchanges.base import Executor, FillReport, FundingTick, Leg, OrderRequest, Quote, Side
 from frab.strategies.base import EquitySnapshot, TickReport
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
 
-HOUR_MS = 3_600_000
-T0 = 1_700_000_000_000  # base timestamp
+HOUR = timedelta(hours=1)
+T0 = datetime(2023, 11, 14, 22, 0, 0, tzinfo=UTC)  # base datetime
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +26,7 @@ def _quote(
 ) -> Quote:
     return Quote(
         coin=coin,
-        ts_ms=T0,
+        ts=T0,
         bid=bid if bid is not None else mark,
         ask=ask if ask is not None else mark,
         mark=mark,
@@ -32,10 +34,10 @@ def _quote(
     )
 
 
-def _funding(coin: str, ts_ms: int, rate: float) -> FundingTick:
+def _funding(coin: str, ts: datetime, rate: float) -> FundingTick:
     return FundingTick(
         coin=coin,
-        ts_ms=ts_ms,
+        ts=ts,
         rate=rate,
         premium=None,
         annualized_pct=rate * 8760 * 100,
@@ -49,14 +51,14 @@ def _fill(
     qty=10.0,
     price=100.0,
     fee=0.1,
-    ts_ms=T0,
+    ts: datetime = T0,
     client_ref=None,
 ) -> FillReport:
     return FillReport(
         coin=coin,
         leg=leg,
         side=side,
-        ts_ms=ts_ms,
+        ts=ts,
         qty=qty,
         price=price,
         fee=fee,
@@ -157,22 +159,6 @@ async def test_hour_tick_emits_signals_for_all_coins(executor):
     assert "ETH" in coins_in_signals
     for sig in report.signals:
         assert sig.signal_value is not None
-    # Rates are 0.876 and 0.438 → both below entry_threshold=0.30? No, 0.876 > 0.30 and 0.438 > 0.30
-    # Actually 0.0001 * 8760 = 0.876 and 0.00005 * 8760 = 0.438 — both > 0.30
-    # But executor is not configured so if OPEN happens it will fail. Actually the default entry=0.30
-    # Let's not open — use lower rates
-    # Wait: test says "below entry_threshold=0.30" and "opened == ()"
-    # But 0.876 > 0.30! Let me re-read the test description...
-    # The test says opened=() but rates are above threshold...
-    # The test checks signals exist and have values; if opened=() it means no fills are needed.
-    # In this test the executor is a mock with no side_effect configured — any submit call would
-    # raise StopIteration if called. The rates ARE above threshold, so positions would be opened...
-    # But the spec says "signals below entry_threshold=0.30" for this test. Let me trust the spec.
-    # The spec says rates 0.0001 and 0.00005. 0.00005 * 8760 = 0.438 > 0.30. 0.0001 * 8760 = 0.876.
-    # So both ARE above threshold. The test description in the spec seems wrong about "below threshold".
-    # I'll verify: opened == () is asserted. But if the strategy opens, submit is called on a mock
-    # with no side_effect, it returns a MagicMock, not a Fill. That would fail on attribute access.
-    # Let me just not assert opened==() here but focus on signals.
     assert report.closed == ()
 
 
@@ -247,7 +233,7 @@ async def test_hour_tick_closes_when_signal_below_exit_and_min_hold_met(executor
     assert "BTC" in strat.open_positions()
 
     # Now close at T0 + 121 hours with mark=110 and negative funding
-    close_ts = T0 + 121 * HOUR_MS
+    close_ts = T0 + 121 * HOUR
 
     # Update quote to mark=110
     await strat.on_minute_tick(close_ts, {"BTC": _quote("BTC", mark=110.0)})
@@ -302,8 +288,9 @@ async def test_min_hold_blocks_close(executor):
 
     # Only 1 hour later — min_hold not met
     executor.submit.side_effect = []  # should not be called
-    await strat.on_minute_tick(T0 + HOUR_MS, {"BTC": _quote("BTC", mark=100.0)})
-    report = await strat.on_hour_tick(T0 + HOUR_MS, {"BTC": _funding("BTC", T0 + HOUR_MS, -0.0001)})
+    t1 = T0 + HOUR
+    await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
+    report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -0.0001)})
 
     assert report.closed == ()
     assert "BTC" in strat.open_positions()
@@ -379,8 +366,9 @@ async def test_funding_accrual_for_open_position(executor):
 
     # Next hour tick: still positive funding, position still open (min_hold not met)
     executor.submit.side_effect = []  # no orders should be submitted
-    await strat.on_minute_tick(T0 + HOUR_MS, {"BTC": _quote("BTC", mark=100.0)})
-    await strat.on_hour_tick(T0 + HOUR_MS, {"BTC": _funding("BTC", T0 + HOUR_MS, 0.0001)})
+    t1 = T0 + HOUR
+    await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
+    await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
 
     # Funding accrual = 10 * 100 * 0.0001 = 0.1
     assert strat.funding_cum == pytest.approx(0.1, abs=1e-9)
@@ -471,7 +459,8 @@ async def test_signal_window_fills_after_three_ticks(executor):
     assert report1.signals[0].signal_value is None
 
     # Tick 2: 2 of 3 samples
-    report2 = await strat.on_hour_tick(T0 + HOUR_MS, {"BTC": _funding("BTC", T0 + HOUR_MS, 0.0001)})
+    t1 = T0 + HOUR
+    report2 = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
     assert report2.opened == ()
     assert report2.signals[0].signal_value is None
 
@@ -481,9 +470,10 @@ async def test_signal_window_fills_after_three_ticks(executor):
         _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
         _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
     ]
+    t2 = T0 + 2 * HOUR
     report3 = await strat.on_hour_tick(
-        T0 + 2 * HOUR_MS,
-        {"BTC": _funding("BTC", T0 + 2 * HOUR_MS, 0.0001)},
+        t2,
+        {"BTC": _funding("BTC", t2, 0.0001)},
     )
     assert report3.opened == ("BTC",)
 
@@ -531,7 +521,7 @@ async def test_compute_equity_with_open_position(executor):
     assert strat.cash == pytest.approx(1000.0, abs=1e-9)
 
     # Price moves to 110
-    T1 = T0 + HOUR_MS
+    T1 = T0 + HOUR
     await strat.on_minute_tick(T1, {"BTC": _quote("BTC", mark=110.0)})
 
     snap = strat.compute_equity(T1)
