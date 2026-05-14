@@ -40,13 +40,12 @@ class Market(Base):
 class FundingRate(Base):
     __tablename__ = "funding_rates"
     __table_args__ = (
-        UniqueConstraint("exchange_id", "coin", "ts_ms"),
-        Index("ix_funding_rates_lookup", "coin", "ts_ms"),
+        UniqueConstraint("market_id", "ts_ms"),
+        Index("ix_funding_rates_lookup", "market_id", "ts_ms"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id", ondelete="CASCADE"))
-    coin: Mapped[str]
+    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
     ts_ms: Mapped[int]
     rate: Mapped[float]
     premium: Mapped[Optional[float]] = mapped_column(nullable=True)
@@ -56,13 +55,12 @@ class FundingRate(Base):
 class Price(Base):
     __tablename__ = "prices"
     __table_args__ = (
-        UniqueConstraint("exchange_id", "coin", "ts_ms"),
-        Index("ix_prices_lookup", "coin", "ts_ms"),
+        UniqueConstraint("market_id", "ts_ms"),
+        Index("ix_prices_lookup", "market_id", "ts_ms"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id", ondelete="CASCADE"))
-    coin: Mapped[str]
+    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
     ts_ms: Mapped[int]
     mark: Mapped[float]
     spot: Mapped[Optional[float]] = mapped_column(nullable=True)
@@ -85,11 +83,11 @@ class Strategy(Base):
 
 class Signal(Base):
     __tablename__ = "signals"
-    __table_args__ = (UniqueConstraint("strategy_id", "coin", "ts_ms"),)
+    __table_args__ = (UniqueConstraint("strategy_id", "market_id", "ts_ms"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
-    coin: Mapped[str]
+    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
     ts_ms: Mapped[int]
     signal_value: Mapped[float]
     regime_pass: Mapped[bool] = mapped_column(default=True)
@@ -100,13 +98,13 @@ class Position(Base):
     __tablename__ = "positions"
     __table_args__ = (
         Index("ix_positions_status", "strategy_id", "status"),
-        Index("ix_positions_coin_time", "coin", "opened_at_ms"),
+        Index("ix_positions_market_time", "market_id", "opened_at_ms"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
     mode: Mapped[str]
-    coin: Mapped[str]
     status: Mapped[str]
     opened_at_ms: Mapped[int]
     closed_at_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
