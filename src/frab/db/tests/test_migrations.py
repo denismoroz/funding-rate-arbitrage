@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from frab.db.models import Base
 
-# Locate the project root relative to this file: src/frab/db/test_migrations.py
-# -> parents[0] = db/, [1] = frab/, [2] = src/, [3] = project root
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# Locate the project root relative to this file: src/frab/db/tests/test_migrations.py
+# -> parents[0] = tests/, [1] = db/, [2] = frab/, [3] = src/, [4] = project root
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 EXPECTED_TABLES = {
     "exchanges",

@@ -206,6 +206,9 @@ tempCodeRunnerFile.py
 # Research data (large CSV files)
 research/data/
 
+# Application runtime data (SQLite, etc.)
+data/
+
 # Ruff stuff:
 .ruff_cache/
 
