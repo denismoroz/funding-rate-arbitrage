@@ -42,7 +42,7 @@ packages = ["src/frab"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["src"]
+testpaths = ["src", "tests"]
 pythonpath = ["src"]
 python_files = ["test_*.py"]
 addopts = "-ra"
