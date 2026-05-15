@@ -117,18 +117,20 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             if exc is not None:
                 logger.error("Background task %s failed", task.get_name(), exc_info=exc)
 
-        engine_task = asyncio.create_task(engine.run(), name="engine")
         sink_task = asyncio.create_task(sink.run(), name="event-sink")
-        engine_task.add_done_callback(_on_task_done)
         sink_task.add_done_callback(_on_task_done)
+        await sink.wait_until_subscribed()
+        engine_task = asyncio.create_task(engine.run(), name="engine")
+        engine_task.add_done_callback(_on_task_done)
         logger.info("frab serve: engine + sink started (strategy_id=%d, coins=%s)", strategy_id, coins)
 
         try:
             yield
         finally:
             engine.stop()
+            await asyncio.gather(engine_task, return_exceptions=True)
             await sink.stop()
-            await asyncio.gather(engine_task, sink_task, return_exceptions=True)
+            await asyncio.gather(sink_task, return_exceptions=True)
             await market_data.aclose()
             await db_engine.dispose()
             logger.info("frab serve: shutdown complete")

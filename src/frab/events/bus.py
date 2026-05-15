@@ -53,9 +53,11 @@ class EventDbSink:
         self._bus = bus
         self._queue_maxsize = queue_maxsize
         self._stop = asyncio.Event()
+        self._subscribed: asyncio.Event = asyncio.Event()
 
     async def run(self) -> None:
         async with self._bus.subscribe(maxsize=self._queue_maxsize) as q:
+            self._subscribed.set()
             while not self._stop.is_set():
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=0.5)
@@ -74,6 +76,10 @@ class EventDbSink:
                 payload_json=event.payload_json,
             )
             session.add(row)
+
+    async def wait_until_subscribed(self) -> None:
+        """Block until the sink's queue has been registered with the bus."""
+        await self._subscribed.wait()
 
     async def stop(self) -> None:
         self._stop.set()

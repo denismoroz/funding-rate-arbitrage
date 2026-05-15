@@ -198,3 +198,21 @@ async def test_db_sink_handles_none_payload(session_factory):
     assert len(rows) == 1
     assert rows[0].payload_json is None
     assert rows[0].message == "no payload"
+
+
+async def test_sink_wait_until_subscribed_unblocks_after_subscribe(session_factory):
+    """wait_until_subscribed blocks until run() has registered with the bus."""
+    bus = EventBus()
+    sink = EventDbSink(session_factory, bus)
+
+    # Before run() starts, no one is subscribed.
+    assert len(bus._subscribers) == 0
+
+    task = asyncio.create_task(sink.run())
+    try:
+        # wait_until_subscribed must resolve once run() enters the bus.subscribe context.
+        await asyncio.wait_for(sink.wait_until_subscribed(), timeout=1.0)
+        assert len(bus._subscribers) == 1
+    finally:
+        await sink.stop()
+        await asyncio.wait_for(task, timeout=2.0)
