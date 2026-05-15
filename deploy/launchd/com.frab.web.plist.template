@@ -14,7 +14,7 @@
         <string>--port</string>
         <string>5173</string>
         <string>--host</string>
-        <string>127.0.0.1</string>
+        <string>0.0.0.0</string>
     </array>
 
     <key>WorkingDirectory</key>

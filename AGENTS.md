@@ -34,6 +34,15 @@
 - **Frontend** (`web/`) — Vite + React 18 + TS Dashboard. Читает `/api/*` через dev-proxy.
 - **Research** (`research/`) — оффлайн backtest engine и эксперименты, не трогаются prod-кодом.
 
+### Hosts
+
+| Host | Role | Где |
+|------|------|-----|
+| local mac | **dev** — здесь идёт разработка, новые фичи, тесты | `/Users/d/prj/funding-rate-arbitrage` |
+| `10.8.0.5` (mbp2.local) | **prod** — always-on paper-trading | `ssh dis@10.8.0.5`, `/Users/dis/prj/funding-rate-arbitrage` |
+
+Prod-инстанс крутится 24/7 (mac не уходит в sleep), source-of-truth для оценки live pace стратегии. Web UI: `http://10.8.0.5:5173/`. Deploy: `git push` на main → SSH → `git pull && uv sync && cd web && npm install && cd .. && launchctl kickstart -k gui/$(id -u)/com.frab.engine`.
+
 ---
 
 ## 2. Где что лежит
