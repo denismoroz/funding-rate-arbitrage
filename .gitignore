@@ -222,3 +222,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node / web frontend
+node_modules/
+.vite/
+
+# Re-include web/ source dirs that collide with Python packaging globs (`lib/`, `build/`)
+!web/src/lib/
+!web/src/lib/**
