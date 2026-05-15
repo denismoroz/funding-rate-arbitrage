@@ -121,6 +121,26 @@ class DbRecorder:
 
     async def save_tick_report(self, report: TickReport) -> None:
         async with session_scope(self._session_factory) as session:
+            # --- Funding accrual on existing open positions ---
+            # Applied before opens/closes so that a position closing this tick
+            # gets its final funding bump persisted before status flips.
+            for coin, delta in report.funding_accrued:
+                position_id = self._open_positions.get(coin)
+                if position_id is None:
+                    logger.warning(
+                        "save_tick_report: funding accrued for coin %r but no open position — skipping",
+                        coin,
+                    )
+                    continue
+                pos = await session.get(Position, position_id)
+                if pos is None:
+                    logger.warning(
+                        "save_tick_report: position id=%d not found for funding accrual on %r",
+                        position_id, coin,
+                    )
+                    continue
+                pos.funding_collected += delta
+
             # --- Signals ---
             for event in report.signals:
                 market_id = self._coin_to_market_id.get(event.coin)

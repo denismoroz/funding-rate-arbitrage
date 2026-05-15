@@ -368,12 +368,34 @@ async def test_funding_accrual_for_open_position(executor):
     executor.submit.side_effect = []  # no orders should be submitted
     t1 = T0 + HOUR
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
-    await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
+    report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
 
     # Funding accrual = 10 * 100 * 0.0001 = 0.1
     assert strat.funding_cum == pytest.approx(0.1, abs=1e-9)
     assert strat.cash == pytest.approx(cash_after_open + 0.1, abs=1e-9)
     assert strat._positions["BTC"].funding_collected == pytest.approx(0.1, abs=1e-9)
+
+    # TickReport carries the per-coin funding delta so recorder can persist it
+    assert report.funding_accrued == (("BTC", pytest.approx(0.1, abs=1e-9)),)
+
+
+@pytest.mark.asyncio
+async def test_funding_accrued_empty_when_no_open_positions(executor):
+    """No open positions → funding_accrued is empty even with funding ticks."""
+    strat = StrategyA(
+        StrategyAParams(
+            coins=("BTC",),
+            concurrency_cap=1,
+            signal_window_hours=1,
+            entry_threshold=10.0,  # too high — won't open
+        ),
+        executor,
+    )
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    assert report.funding_accrued == ()
 
 
 @pytest.mark.asyncio

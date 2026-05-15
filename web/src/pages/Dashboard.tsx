@@ -167,11 +167,31 @@ function EquityCard() {
       })()
     : [];
 
+  const latest = slice.length > 0 ? slice[slice.length - 1] : undefined;
+
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-sm font-semibold text-gray-700">
-        Equity (last 24h)
-      </h2>
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-gray-700">
+          Equity (last 24h)
+        </h2>
+        {latest && (
+          <div className="flex items-baseline gap-3 text-xs text-gray-500">
+            <span>
+              Total{" "}
+              <span className="text-base font-semibold text-gray-900">
+                {formatCurrency(latest.total_equity)}
+              </span>
+            </span>
+            <span className="text-green-600">
+              funding {formatCurrency(latest.funding_cum)}
+            </span>
+            <span className="text-red-500">
+              fees {formatCurrency(latest.fees_cum)}
+            </span>
+          </div>
+        )}
+      </div>
       {isLoading && <Skeleton rows={6} />}
       {error instanceof Error && <ErrorMsg message={error.message} />}
       {!isLoading && !error && (
@@ -190,9 +210,12 @@ function EquityCard() {
               minTickGap={60}
             />
             <YAxis
-              tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`}
+              domain={["auto", "auto"]}
+              tickFormatter={(v: number) =>
+                Math.abs(v) >= 1000 ? `$${(v / 1000).toFixed(2)}k` : `$${v.toFixed(0)}`
+              }
               tick={{ fontSize: 11 }}
-              width={60}
+              width={70}
             />
             <Tooltip content={<EquityTooltip />} />
             <Line

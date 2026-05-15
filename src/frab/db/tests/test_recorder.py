@@ -683,6 +683,119 @@ async def test_save_funding_is_idempotent_on_duplicate_ts(session_factory):
     assert len(rows) == 1
 
 
+async def test_save_tick_report_applies_funding_accrued_to_open_position(session_factory):
+    """funding_accrued increments positions.funding_collected for existing OPEN rows."""
+    exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    # First open the position
+    open_report = TickReport(
+        ts=_TS,
+        signals=(),
+        fills=(_make_spot_buy("BTC"), _make_perp_sell("BTC")),
+        opened=("BTC",),
+        closed=(),
+    )
+    await rec.save_tick_report(open_report)
+
+    # Tick 2: funding accrued for BTC (no opens/closes)
+    accrual_report = TickReport(
+        ts=_TS2,
+        signals=(),
+        fills=(),
+        opened=(),
+        closed=(),
+        funding_accrued=(("BTC", 0.42),),
+    )
+    await rec.save_tick_report(accrual_report)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = result.scalar_one()
+
+    assert pos.funding_collected == pytest.approx(0.42)
+
+    # Tick 3: more funding — accumulates
+    accrual_report_2 = TickReport(
+        ts=_TS2,
+        signals=(),
+        fills=(),
+        opened=(),
+        closed=(),
+        funding_accrued=(("BTC", 0.15),),
+    )
+    await rec.save_tick_report(accrual_report_2)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = result.scalar_one()
+
+    assert pos.funding_collected == pytest.approx(0.57)
+
+
+async def test_save_tick_report_funding_accrued_persisted_before_close(session_factory):
+    """A coin closing this tick still gets its final funding bump persisted."""
+    exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    # Open
+    open_report = TickReport(
+        ts=_TS,
+        signals=(),
+        fills=(_make_spot_buy("BTC"), _make_perp_sell("BTC")),
+        opened=("BTC",),
+        closed=(),
+    )
+    await rec.save_tick_report(open_report)
+
+    # Hour-tick: funding accrued + position closed in the same tick
+    close_report = TickReport(
+        ts=_TS2,
+        signals=(),
+        fills=(_make_spot_sell("BTC"), _make_perp_buy("BTC")),
+        opened=(),
+        closed=("BTC",),
+        funding_accrued=(("BTC", 0.30),),
+    )
+    await rec.save_tick_report(close_report)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = result.scalar_one()
+
+    assert pos.status == PositionStatus.CLOSED
+    assert pos.funding_collected == pytest.approx(0.30)
+
+
+async def test_save_tick_report_funding_for_unknown_coin_logs_warning(session_factory, caplog):
+    """funding_accrued for a coin with no open position logs a warning, no crash."""
+    exc_id, _ = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    report = TickReport(
+        ts=_TS,
+        signals=(),
+        fills=(),
+        opened=(),
+        closed=(),
+        funding_accrued=(("BTC", 0.10),),  # no open position
+    )
+
+    with caplog.at_level(logging.WARNING, logger="frab.db.recorder"):
+        await rec.save_tick_report(report)
+
+    assert any("BTC" in r.message for r in caplog.records)
+
+
 async def test_save_tick_report_skips_duplicate_signal(session_factory):
     exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
     strat_id = await _seed_strategy(session_factory)

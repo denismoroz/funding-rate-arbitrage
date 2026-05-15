@@ -135,6 +135,7 @@ class StrategyA(Strategy):
                 self._market_state.add_funding(funding[coin])
 
         # Step 2: funding accrual on open positions
+        funding_accrued: list[tuple[str, float]] = []
         for coin, pos in self._positions.items():
             if coin not in funding or coin not in self._last_quotes:
                 continue
@@ -144,6 +145,7 @@ class StrategyA(Strategy):
             self._cash += f
             pos.funding_collected += f
             self._funding_cum += f
+            funding_accrued.append((coin, f))
 
         # Step 3: compute decisions for every coin in MarketState
         signals_log: list[SignalEvent] = []
@@ -199,6 +201,7 @@ class StrategyA(Strategy):
             fills=tuple(fills_log),
             opened=tuple(opened),
             closed=tuple(closed),
+            funding_accrued=tuple(funding_accrued),
         )
 
     async def _open_position(self, coin: str, now: datetime) -> list[FillReport]:

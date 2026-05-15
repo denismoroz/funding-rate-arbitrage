@@ -24,6 +24,10 @@ class TickReport:
     fills: tuple[FillReport, ...]
     opened: tuple[str, ...]
     closed: tuple[str, ...]
+    # Per-position funding accrued this tick (coin → delta in quote currency).
+    # Only includes positions that were already open at the start of this
+    # hour-tick (not coins opened by Step 5 of the same tick).
+    funding_accrued: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
