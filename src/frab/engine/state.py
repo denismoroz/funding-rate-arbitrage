@@ -23,10 +23,13 @@ class CoinState:
     def add_funding(self, tick: FundingTick) -> None:
         if tick.coin != self.coin:
             raise ValueError(f"coin mismatch: state={self.coin!r}, tick={tick.coin!r}")
-        if self._last_tick is not None and tick.ts <= self._last_tick.ts:
-            raise ValueError(
-                f"non-monotonic funding tick: last_ts={self._last_tick.ts!r}, new_ts={tick.ts!r}"
-            )
+        if self._last_tick is not None:
+            if tick.ts == self._last_tick.ts:
+                return  # idempotent: same tick re-applied (e.g. DB load + engine fetch)
+            if tick.ts < self._last_tick.ts:
+                raise ValueError(
+                    f"out-of-order funding tick: last_ts={self._last_tick.ts!r}, new_ts={tick.ts!r}"
+                )
         self._rates.append(tick.rate)
         self._last_tick = tick
 

@@ -76,18 +76,21 @@ def test_coin_mismatch_raises() -> None:
         state.add_funding(_tick(coin="ETH", offset_s=0, rate=0.0001))
 
 
-def test_non_monotonic_tick_raises() -> None:
+def test_out_of_order_tick_raises() -> None:
     state = CoinState("BTC", 12)
     state.add_funding(_tick(coin="BTC", offset_s=2000, rate=0.0001))
-    with pytest.raises(ValueError, match="non-monotonic"):
+    with pytest.raises(ValueError, match="out-of-order"):
         state.add_funding(_tick(coin="BTC", offset_s=1500, rate=0.0001))
 
 
-def test_equal_timestamp_raises() -> None:
+def test_equal_timestamp_is_idempotent() -> None:
     state = CoinState("BTC", 12)
     state.add_funding(_tick(coin="BTC", offset_s=2000, rate=0.0001))
-    with pytest.raises(ValueError, match="non-monotonic"):
-        state.add_funding(_tick(coin="BTC", offset_s=2000, rate=0.0001))
+    # Re-applying the same ts is a no-op, not an error. This is how DB-loaded
+    # warmup ticks coexist with the engine's first hour-tick fetching the same
+    # boundary from HL.
+    state.add_funding(_tick(coin="BTC", offset_s=2000, rate=0.0001))
+    assert state.samples == 1
 
 
 def test_repr() -> None:
