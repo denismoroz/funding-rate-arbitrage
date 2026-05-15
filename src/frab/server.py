@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -15,10 +16,13 @@ from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.engine.loop import Engine
 from frab.events.bus import EventBus, EventDbSink
+from frab.exchanges.base import FundingTick, MarketDataSource
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.paper import PaperExecutor
 from frab.settings import get_settings
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
+
+BACKFILL_HOURS = 24
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,46 @@ async def _ensure_strategy(session_factory, params_json: dict) -> int:
         s.add(row)
         await s.flush()
         return row.id
+
+
+async def _backfill_funding(
+    market_data: MarketDataSource,
+    recorder: DbRecorder,
+    strategy: StrategyA,
+    coins: tuple[str, ...],
+    *,
+    hours: int = BACKFILL_HOURS,
+) -> int:
+    """Prime the strategy's funding history from the exchange.
+
+    Fetches the last `hours` of fundingHistory per coin in parallel, writes each
+    tick to the DB (idempotent), and pushes them into the strategy's MarketState
+    so smoothed_signal() becomes non-None without waiting through the warmup.
+
+    Ticks at or after the current hour boundary are dropped — the engine's first
+    hour-tick will fetch and apply that tick itself, and CoinState rejects
+    duplicates by ts.
+    """
+    now = datetime.now(UTC)
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    since_ms = int((now - timedelta(hours=hours)).timestamp() * 1000)
+
+    async def one(coin: str) -> tuple[str, list[FundingTick]]:
+        ticks = await market_data.fetch_funding_history(coin, since_ms)
+        kept = [t for t in ticks if t.ts < current_hour]
+        return coin, kept
+
+    results = await asyncio.gather(*(one(c) for c in coins))
+    ticks_by_coin: dict[str, list[FundingTick]] = {coin: ticks for coin, ticks in results}
+
+    for coin, ticks in ticks_by_coin.items():
+        for tick in ticks:
+            await recorder.save_funding(tick)
+
+    applied = strategy.warmup_from_history(ticks_by_coin)
+    per_coin = {c: len(ts) for c, ts in ticks_by_coin.items()}
+    logger.info("backfill_funding: applied=%d, per_coin=%s", applied, per_coin)
+    return applied
 
 
 async def _resolve_exchange(session_factory) -> tuple[int, float, float]:
@@ -101,6 +145,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             mode=PositionMode.PAPER,
         )
         await recorder.prime()
+        await _backfill_funding(market_data, recorder, strategy, coins)
         engine = Engine(
             market_data=market_data,
             strategy=strategy,

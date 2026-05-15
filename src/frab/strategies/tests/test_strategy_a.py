@@ -554,3 +554,57 @@ async def test_tick_report_signals_action_strings(executor):
     for sig in report.signals:
         assert isinstance(sig.action, str)
         assert sig.action in {"NONE", "OPEN", "CLOSE"}
+
+
+# ---------------------------------------------------------------------------
+# warmup_from_history
+# ---------------------------------------------------------------------------
+
+def test_warmup_from_history_fills_market_state(executor):
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC", "ETH"), concurrency_cap=1, signal_window_hours=3),
+        executor,
+    )
+    btc_ticks = [_funding("BTC", T0 - 3 * HOUR + i * HOUR, 0.0001) for i in range(3)]
+    eth_ticks = [_funding("ETH", T0 - 2 * HOUR + i * HOUR, 0.00005) for i in range(2)]
+
+    applied = strat.warmup_from_history({"BTC": btc_ticks, "ETH": eth_ticks})
+
+    assert applied == 5
+    assert strat._market_state.get("BTC").is_ready  # 3 samples, window=3
+    assert not strat._market_state.get("ETH").is_ready  # only 2 samples
+    assert strat._market_state.get("BTC").smoothed_signal() == pytest.approx(0.0001 * 8760)
+
+
+def test_warmup_from_history_skips_unknown_coin(executor):
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=1, signal_window_hours=1),
+        executor,
+    )
+    applied = strat.warmup_from_history({
+        "BTC": [_funding("BTC", T0, 0.0001)],
+        "DOGE": [_funding("DOGE", T0, 0.0001)],  # not in universe
+    })
+    assert applied == 1
+
+
+def test_warmup_from_history_skips_duplicates_silently(executor):
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=1, signal_window_hours=1),
+        executor,
+    )
+    tick = _funding("BTC", T0, 0.0001)
+    strat.warmup_from_history({"BTC": [tick]})
+    # Re-applying the same tick should be a no-op, not raise
+    applied = strat.warmup_from_history({"BTC": [tick]})
+    assert applied == 0
+    assert strat._market_state.get("BTC").samples == 1
+
+
+def test_warmup_from_history_empty_input(executor):
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=1, signal_window_hours=1),
+        executor,
+    )
+    assert strat.warmup_from_history({}) == 0
+    assert strat.warmup_from_history({"BTC": []}) == 0

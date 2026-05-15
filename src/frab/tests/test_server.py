@@ -1,19 +1,23 @@
 """Tests for frab.server build_app and its lifespan helpers."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.routing import APIWebSocketRoute
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from frab.db.models import Exchange, Strategy
 from frab.db.session import init_db, make_session_factory, session_scope
+from frab.exchanges.base import FundingTick
 from frab.server import (
     DEFAULT_COINS,
     EXCHANGE_NAME,
     STRATEGY_NAME,
     STRATEGY_VERSION,
+    _backfill_funding,
     _ensure_strategy,
     _resolve_exchange,
     build_app,
@@ -114,3 +118,65 @@ def test_build_app_returns_fastapi_with_routes(tmp_path, monkeypatch):
 
     assert app.state.event_bus is not None
     assert app.state.session_factory is not None
+
+
+# ---------------------------------------------------------------------------
+# _backfill_funding
+# ---------------------------------------------------------------------------
+
+def _ftick(coin: str, ts: datetime, rate: float = 0.0001) -> FundingTick:
+    return FundingTick(
+        coin=coin,
+        ts=ts,
+        rate=rate,
+        premium=None,
+        annualized_pct=rate * 8760 * 100,
+    )
+
+
+@pytest.mark.asyncio
+async def test_backfill_funding_applies_history_and_drops_current_hour(mocker):
+    now = datetime.now(UTC)
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    coins = ("BTC", "ETH")
+
+    market_data = mocker.AsyncMock()
+    btc_ticks = [
+        _ftick("BTC", current_hour - timedelta(hours=h)) for h in (3, 2, 1)
+    ] + [_ftick("BTC", current_hour)]  # current hour boundary — must be dropped
+    eth_ticks = [_ftick("ETH", current_hour - timedelta(hours=h)) for h in (2, 1)]
+
+    async def fake_history(coin, since_ms):
+        return btc_ticks if coin == "BTC" else eth_ticks
+
+    market_data.fetch_funding_history = AsyncMock(side_effect=fake_history)
+    recorder = mocker.AsyncMock()
+    strategy = mocker.MagicMock()
+    strategy.warmup_from_history = mocker.MagicMock(return_value=5)
+
+    applied = await _backfill_funding(market_data, recorder, strategy, coins)
+
+    assert applied == 5
+    # save_funding called once per kept tick (3 BTC + 2 ETH = 5; current_hour BTC dropped)
+    assert recorder.save_funding.await_count == 5
+    # warmup_from_history called with the filtered ticks
+    strategy.warmup_from_history.assert_called_once()
+    passed = strategy.warmup_from_history.call_args.args[0]
+    assert len(passed["BTC"]) == 3
+    assert len(passed["ETH"]) == 2
+    assert all(t.ts < current_hour for t in passed["BTC"])
+
+
+@pytest.mark.asyncio
+async def test_backfill_funding_handles_empty_history(mocker):
+    market_data = mocker.AsyncMock()
+    market_data.fetch_funding_history = AsyncMock(return_value=[])
+    recorder = mocker.AsyncMock()
+    strategy = mocker.MagicMock()
+    strategy.warmup_from_history = mocker.MagicMock(return_value=0)
+
+    applied = await _backfill_funding(market_data, recorder, strategy, ("BTC",))
+
+    assert applied == 0
+    assert recorder.save_funding.await_count == 0
+    strategy.warmup_from_history.assert_called_once()

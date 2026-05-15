@@ -84,6 +84,25 @@ class StrategyA(Strategy):
     def open_positions(self) -> list[str]:
         return list(self._positions.keys())
 
+    def warmup_from_history(self, ticks_by_coin: dict[str, list[FundingTick]]) -> int:
+        """Push historical funding ticks into MarketState (ascending ts assumed).
+
+        Skips coins outside the strategy universe and ticks that would violate
+        the monotonic-ts invariant of CoinState. Returns total ticks applied.
+        """
+        applied = 0
+        for coin, ticks in ticks_by_coin.items():
+            if coin not in self._market_state:
+                continue
+            cs = self._market_state.get(coin)
+            for tick in ticks:
+                last = cs.last_tick
+                if last is not None and tick.ts <= last.ts:
+                    continue
+                cs.add_funding(tick)
+                applied += 1
+        return applied
+
     async def on_minute_tick(self, now: datetime, quotes: dict[str, Quote]) -> None:
         for coin, quote in quotes.items():
             self._last_quotes[coin] = quote
