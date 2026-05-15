@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -9,17 +11,27 @@ from frab.api.routes import (
     signals as signals_routes,
     strategies as strategies_routes,
 )
+from frab.events.bus import EventBus
 
 
-def create_app(session_factory: async_sessionmaker[AsyncSession]) -> FastAPI:
+def create_app(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    event_bus: EventBus | None = None,
+) -> FastAPI:
     app = FastAPI(title="frab")
     app.state.session_factory = session_factory
+    app.state.event_bus = event_bus
     app.include_router(strategies_routes.router, prefix="/api/strategies", tags=["strategies"])
     app.include_router(equity_routes.router, prefix="/api/equity", tags=["equity"])
     app.include_router(positions_routes.router, prefix="/api/positions", tags=["positions"])
     app.include_router(signals_routes.router, prefix="/api/signals", tags=["signals"])
     app.include_router(funding_routes.router, prefix="/api/funding", tags=["funding"])
     app.include_router(events_routes.router, prefix="/api/events", tags=["events"])
+
+    if event_bus is not None:
+        from frab.api.ws import router as ws_router
+        app.include_router(ws_router)
 
     @app.get("/healthz")
     async def healthz() -> dict:
