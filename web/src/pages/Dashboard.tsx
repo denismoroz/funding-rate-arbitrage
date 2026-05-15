@@ -18,6 +18,7 @@ import {
   type Fill,
 } from "../lib/api";
 import { formatCurrency, formatRelative, formatNumber } from "../lib/format";
+import { useLiveEvents, type WsStatus } from "../lib/useLiveEvents";
 
 const STRATEGY_ID = 1;
 
@@ -62,9 +63,17 @@ function EquityTooltip({
   );
 }
 
+// ── WS status dot ─────────────────────────────────────────────────────────────
+
+const WS_DOT: Record<WsStatus, string> = {
+  open: "bg-green-500",
+  connecting: "bg-yellow-500",
+  closed: "bg-red-500",
+};
+
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header() {
+function Header({ wsStatus }: { wsStatus: WsStatus }) {
   const stratQ = useQuery({
     queryKey: ["strategies"],
     queryFn: fetchStrategies,
@@ -74,7 +83,6 @@ function Header() {
   const eventsQ = useQuery({
     queryKey: ["events-header"],
     queryFn: () => fetchEvents({ limit: 20 }),
-    refetchInterval: 30_000,
   });
 
   const strategy = stratQ.data?.find((s) => s.id === STRATEGY_ID);
@@ -93,12 +101,25 @@ function Header() {
       )}
 
       {engineEvent && (
-        <span className="ml-auto text-xs text-gray-400">
+        <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400">
           engine:{" "}
           <span className="text-gray-200">{engineEvent.message}</span>
-          <span className="ml-1 text-gray-500">
+          <span className="text-gray-500">
             ({formatRelative(engineEvent.ts)})
           </span>
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${WS_DOT[wsStatus]}`}
+            title={wsStatus}
+          />
+        </span>
+      )}
+
+      {!engineEvent && (
+        <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400">
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${WS_DOT[wsStatus]}`}
+            title={wsStatus}
+          />
         </span>
       )}
     </header>
@@ -111,7 +132,6 @@ function EquityCard() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["equity", STRATEGY_ID],
     queryFn: () => fetchEquity(STRATEGY_ID, { limit: 2000 }),
-    refetchInterval: 30_000,
   });
 
   const slice = data
@@ -171,7 +191,6 @@ function OpenPositions() {
     queryKey: ["positions-open", STRATEGY_ID],
     queryFn: () =>
       fetchPositions({ strategyId: STRATEGY_ID, status: "open" }),
-    refetchInterval: 30_000,
   });
 
   return (
@@ -238,7 +257,6 @@ function RecentSignals() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["signals", STRATEGY_ID],
     queryFn: () => fetchSignals({ strategyId: STRATEGY_ID, limit: 20 }),
-    refetchInterval: 60_000,
   });
 
   return (
@@ -298,7 +316,6 @@ function RecentFills() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["positions-recent", STRATEGY_ID],
     queryFn: () => fetchPositions({ strategyId: STRATEGY_ID, limit: 10 }),
-    refetchInterval: 60_000,
   });
 
   const fills: (Fill & { coin: string })[] = (data ?? [])
@@ -381,7 +398,6 @@ function RecentEvents() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["events"],
     queryFn: () => fetchEvents({ limit: 20 }),
-    refetchInterval: 30_000,
   });
 
   return (
@@ -432,9 +448,11 @@ function RecentEvents() {
 // ── Dashboard page ─────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
+  const { status } = useLiveEvents();
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header />
+      <Header wsStatus={status} />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <EquityCard />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

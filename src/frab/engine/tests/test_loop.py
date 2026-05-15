@@ -606,9 +606,11 @@ async def test_tick_once_publishes_position_opened(market_data, strategy, record
 
     await engine.tick_once(now)
 
-    bus.publish.assert_called_once()
-    event: Event = bus.publish.call_args.args[0]
-    assert event.kind == "position.opened"
+    published_events = [call.args[0] for call in bus.publish.call_args_list]
+    kinds = [e.kind for e in published_events]
+    assert "position.opened" in kinds
+    assert "tick.completed" in kinds
+    event: Event = next(e for e in published_events if e.kind == "position.opened")
     assert event.source == "engine"
     assert event.level == "INFO"
     assert event.payload_json["coin"] == "BTC"
@@ -648,9 +650,11 @@ async def test_tick_once_publishes_position_closed(market_data, strategy, record
 
     await engine.tick_once(now)
 
-    bus.publish.assert_called_once()
-    event: Event = bus.publish.call_args.args[0]
-    assert event.kind == "position.closed"
+    published_events = [call.args[0] for call in bus.publish.call_args_list]
+    kinds = [e.kind for e in published_events]
+    assert "position.closed" in kinds
+    assert "tick.completed" in kinds
+    event: Event = next(e for e in published_events if e.kind == "position.closed")
     assert event.source == "engine"
     assert event.level == "INFO"
     assert event.payload_json["coin"] == "BTC"
@@ -697,11 +701,12 @@ async def test_tick_once_publishes_both_opened_and_closed_in_same_tick(
 
     await engine.tick_once(now)
 
-    assert bus.publish.call_count == 2
+    assert bus.publish.call_count == 3  # position.opened + position.closed + tick.completed
     published_events = [call.args[0] for call in bus.publish.call_args_list]
     kinds = {e.kind for e in published_events}
     assert "position.opened" in kinds
     assert "position.closed" in kinds
+    assert "tick.completed" in kinds
     opened_event = next(e for e in published_events if e.kind == "position.opened")
     closed_event = next(e for e in published_events if e.kind == "position.closed")
     assert opened_event.payload_json["coin"] == "BTC"
@@ -739,7 +744,11 @@ async def test_tick_once_skips_publish_when_open_fill_missing(
 
     outcome = await engine.tick_once(now)
 
-    bus.publish.assert_not_called()
+    # position.opened skipped (no fill), but tick.completed is always published
+    published_events = [call.args[0] for call in bus.publish.call_args_list]
+    kinds = [e.kind for e in published_events]
+    assert "position.opened" not in kinds
+    assert "tick.completed" in kinds
     assert outcome.tick_report is not None
 
 
@@ -817,5 +826,142 @@ async def test_tick_once_skips_publish_when_close_fill_missing(
 
     outcome = await engine.tick_once(now)
 
-    bus.publish.assert_not_called()
+    # position.closed skipped (no fill), but tick.completed is always published
+    published_events = [call.args[0] for call in bus.publish.call_args_list]
+    kinds = [e.kind for e in published_events]
+    assert "position.closed" not in kinds
+    assert "tick.completed" in kinds
     assert outcome.tick_report is not None
+
+
+# ---------------------------------------------------------------------------
+# Test 22: tick.completed published on minute tick (no funding / not hour tick)
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_completed_published_on_minute_tick(market_data, strategy, recorder, mocker):
+    """Minute tick (not hour boundary): tick.completed with is_hour_tick=False,
+    empty opened/closed, and correct total_equity."""
+    bus = mocker.AsyncMock(spec=EventBus)
+    equity = _equity(total=7500.0)
+    strategy.compute_equity = mocker.MagicMock(return_value=equity)
+
+    # Put engine in state where _last_hour is already set to _T0 so the next
+    # minute tick does NOT cross an hour boundary.
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        recorder=recorder,
+        event_bus=bus,
+    )
+    engine._last_hour = _T0.replace(minute=0, second=0, microsecond=0)
+
+    # Tick at _T0 + 1 minute (same hour, no funding)
+    t1 = _T0 + _MINUTE
+    market_data.fetch_quote.return_value = _quote("BTC", ts=t1)
+
+    await engine.tick_once(t1)
+
+    published_events = [call.args[0] for call in bus.publish.call_args_list]
+    tick_events = [e for e in published_events if e.kind == "tick.completed"]
+    assert len(tick_events) == 1
+
+    evt = tick_events[0]
+    assert evt.source == "engine"
+    assert evt.level == "INFO"
+    assert evt.ts == t1
+    assert evt.payload_json["is_hour_tick"] is False
+    assert evt.payload_json["opened_coins"] == []
+    assert evt.payload_json["closed_coins"] == []
+    assert evt.payload_json["total_equity"] == 7500.0
+
+
+# ---------------------------------------------------------------------------
+# Test 23: tick.completed published on hour tick with correct opened/closed
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_completed_published_on_hour_tick(market_data, strategy, recorder, mocker):
+    """Hour tick: tick.completed with is_hour_tick=True and correct opened/closed lists."""
+    now = _T0  # on-the-hour → always crosses hour boundary on first tick
+    bus = mocker.AsyncMock(spec=EventBus)
+    equity = _equity(total=9000.0)
+    strategy.compute_equity = mocker.MagicMock(return_value=equity)
+
+    market_data.fetch_quote.return_value = _quote("BTC", ts=now)
+    market_data.fetch_funding.return_value = _funding("BTC", ts=now)
+    strategy.on_hour_tick.return_value = TickReport(
+        ts=now,
+        signals=(),
+        fills=(
+            _spot_buy_fill("BTC", price=100.0),
+            _perp_sell_fill("BTC", price=100.0),
+        ),
+        opened=("BTC",),
+        closed=(),
+    )
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        recorder=recorder,
+        event_bus=bus,
+    )
+
+    await engine.tick_once(now)
+
+    published_events = [call.args[0] for call in bus.publish.call_args_list]
+    tick_events = [e for e in published_events if e.kind == "tick.completed"]
+    assert len(tick_events) == 1
+
+    evt = tick_events[0]
+    assert evt.source == "engine"
+    assert evt.level == "INFO"
+    assert evt.ts == now
+    assert evt.payload_json["is_hour_tick"] is True
+    assert evt.payload_json["opened_coins"] == ["BTC"]
+    assert evt.payload_json["closed_coins"] == []
+    assert evt.payload_json["total_equity"] == 9000.0
+
+
+async def test_tick_completed_hour_tick_with_closed_coins(market_data, strategy, recorder, mocker):
+    """Hour tick with closed coins: tick.completed includes closed_coins."""
+    now = _T0
+    bus = mocker.AsyncMock(spec=EventBus)
+    equity = _equity(total=8000.0)
+    strategy.compute_equity = mocker.MagicMock(return_value=equity)
+
+    market_data.fetch_quote.return_value = _quote("ETH", ts=now)
+    market_data.fetch_funding.return_value = _funding("ETH", ts=now)
+    strategy.on_hour_tick.return_value = TickReport(
+        ts=now,
+        signals=(),
+        fills=(
+            _spot_sell_fill("ETH", price=110.0),
+            _perp_buy_fill("ETH", price=110.0),
+        ),
+        opened=(),
+        closed=("ETH",),
+    )
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("ETH",),
+        recorder=recorder,
+        event_bus=bus,
+    )
+
+    await engine.tick_once(now)
+
+    published_events = [call.args[0] for call in bus.publish.call_args_list]
+    tick_events = [e for e in published_events if e.kind == "tick.completed"]
+    assert len(tick_events) == 1
+
+    evt = tick_events[0]
+    assert evt.payload_json["is_hour_tick"] is True
+    assert evt.payload_json["opened_coins"] == []
+    assert evt.payload_json["closed_coins"] == ["ETH"]
+    assert evt.payload_json["total_equity"] == 8000.0

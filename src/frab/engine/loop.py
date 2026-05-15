@@ -173,7 +173,22 @@ class Engine:
         equity = self._strategy.compute_equity(now)
         await self._recorder.save_equity(equity)
 
-        # 7. Return
+        # 7. Publish tick.completed (one per minute tick)
+        await self._publish(Event(
+            ts=now,
+            level="INFO",
+            source="engine",
+            kind="tick.completed",
+            message="Tick completed",
+            payload_json={
+                "is_hour_tick": tick_report is not None,
+                "opened_coins": list(tick_report.opened) if tick_report else [],
+                "closed_coins": list(tick_report.closed) if tick_report else [],
+                "total_equity": equity.total_equity,
+            },
+        ))
+
+        # 8. Return
         return TickOutcome(
             ts=now,
             quotes=quotes,
