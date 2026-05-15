@@ -94,3 +94,40 @@ async def deploy_strategy_params(
 
     # 7. Return merged params.
     return StrategyParamsOut.model_validate(merged)
+
+
+@router.post("/{strategy_id}/force-tick")
+async def force_hour_tick(
+    strategy_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Mark the next minute tick to also run hour-tick logic.
+
+    Useful for testing decisions (open/close) without waiting up to an hour.
+    Fires within ~60s on the next wall-clock minute boundary.
+    """
+    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy_row = result.scalar_one_or_none()
+    if strategy_row is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    engine = getattr(request.app.state, "engine", None)
+    live_strategy_id = getattr(request.app.state, "strategy_id", None)
+    if engine is None or live_strategy_id != strategy_id:
+        raise HTTPException(status_code=503, detail="Engine not running for this strategy")
+
+    engine.force_hour_tick()
+
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is not None:
+        await bus.publish(Event(
+            ts=datetime.now(UTC),
+            level="INFO",
+            source="api",
+            kind="engine.force_tick_requested",
+            message=f"Hour tick forced for strategy {strategy_id}",
+            payload_json=None,
+        ))
+
+    return {"status": "scheduled", "message": "Hour tick will fire on the next minute boundary (≤60s)"}

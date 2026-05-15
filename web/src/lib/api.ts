@@ -177,3 +177,10 @@ export function fetchStrategyParams(id: number): Promise<StrategyParams> {
 export function deployStrategyParams(id: number, body: StrategyParamsHot): Promise<StrategyParams> {
   return apiPostJson<StrategyParamsHot, StrategyParams>(`/strategies/${id}/deploy`, body);
 }
+
+export function forceHourTick(id: number): Promise<{ status: string; message: string }> {
+  return apiPostJson<Record<string, never>, { status: string; message: string }>(
+    `/strategies/${id}/force-tick`,
+    {},
+  );
+}

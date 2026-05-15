@@ -53,13 +53,15 @@ async def _seed_strategy(session_factory, *, params_json: dict | None = None) ->
         return row.id
 
 
-def _make_client(session_factory, *, strategy: object = None, strategy_id: int | None = None, event_bus: object = None):
+def _make_client(session_factory, *, strategy: object = None, strategy_id: int | None = None, event_bus: object = None, engine: object = None):
     """Build a test AsyncClient with optional app.state overrides."""
     app = create_app(session_factory, event_bus=event_bus)
     if strategy is not None:
         app.state.strategy = strategy
     if strategy_id is not None:
         app.state.strategy_id = strategy_id
+    if engine is not None:
+        app.state.engine = engine
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test", follow_redirects=True)
 
 
@@ -433,3 +435,47 @@ async def test_direct_deploy_strategy_params_with_event_bus(session_factory):
     mock_bus.publish.assert_awaited_once()
     event = mock_bus.publish.call_args[0][0]
     assert event.kind == "strategy.params_updated"
+
+
+# ---------------------------------------------------------------------------
+# POST /{strategy_id}/force-tick
+# ---------------------------------------------------------------------------
+
+
+async def test_force_tick_calls_engine_and_emits_event(session_factory):
+    from frab.engine.loop import Engine
+
+    sid = await _seed_strategy(session_factory)
+    mock_engine = MagicMock(spec=Engine)
+    mock_bus = MagicMock(spec=EventBus)
+    mock_bus.publish = AsyncMock()
+
+    async with _make_client(
+        session_factory,
+        strategy_id=sid,
+        engine=mock_engine,
+        event_bus=mock_bus,
+    ) as client:
+        resp = await client.post(f"/api/strategies/{sid}/force-tick")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "scheduled"
+    mock_engine.force_hour_tick.assert_called_once_with()
+    mock_bus.publish.assert_awaited_once()
+    assert mock_bus.publish.call_args[0][0].kind == "engine.force_tick_requested"
+
+
+async def test_force_tick_503_when_engine_not_running(session_factory):
+    sid = await _seed_strategy(session_factory)
+
+    async with _make_client(session_factory, strategy_id=sid) as client:
+        resp = await client.post(f"/api/strategies/{sid}/force-tick")
+
+    assert resp.status_code == 503
+
+
+async def test_force_tick_404_when_strategy_missing(session_factory):
+    async with _make_client(session_factory) as client:
+        resp = await client.post("/api/strategies/99999/force-tick")
+
+    assert resp.status_code == 404

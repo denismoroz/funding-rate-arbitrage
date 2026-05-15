@@ -436,6 +436,18 @@ def test_stop_idempotent(mocker):
     assert engine._stop is True
 
 
+def test_force_hour_tick_resets_last_hour(mocker):
+    """force_hour_tick clears _last_hour so the next tick crosses the boundary."""
+    md = mocker.AsyncMock(spec=MarketDataSource)
+    s = mocker.AsyncMock(spec=Strategy)
+    engine = Engine(market_data=md, strategy=s, coins=("BTC",))
+
+    engine._last_hour = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
+    engine.force_hour_tick()
+
+    assert engine._last_hour is None
+
+
 # ---------------------------------------------------------------------------
 # Test 12: run calls tick_once until stop
 # ---------------------------------------------------------------------------

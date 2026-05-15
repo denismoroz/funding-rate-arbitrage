@@ -69,6 +69,16 @@ class Engine:
     def stop(self) -> None:
         self._stop = True
 
+    def force_hour_tick(self) -> None:
+        """Schedule the next minute tick to run hour-tick logic.
+
+        Resets the internal last-hour marker so that the boundary-crossing
+        check in tick_once() fires the funding-fetch + decisions branch even
+        if the current wall-clock minute is mid-hour. Safe to call between
+        ticks (asyncio single-threaded).
+        """
+        self._last_hour = None
+
     async def _publish(self, event: Event) -> None:
         if self._event_bus is None:
             return

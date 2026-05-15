@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchStrategyParams,
   deployStrategyParams,
+  forceHourTick,
   type StrategyParams,
   type StrategyParamsHot,
 } from "../lib/api";
@@ -190,6 +191,18 @@ export default function Settings() {
     mutation.mutate(form);
   }
 
+  const forceTickMutation = useMutation({
+    mutationFn: () => forceHourTick(STRATEGY_ID),
+    onSuccess: (data) => {
+      setSuccessMsg(data.message);
+      setErrorMsg(null);
+    },
+    onError: (err: Error) => {
+      setErrorMsg(err.message);
+      setSuccessMsg(null);
+    },
+  });
+
   const deployDisabled =
     paramsQ.isLoading ||
     !dirty ||
@@ -325,17 +338,31 @@ export default function Settings() {
 
             {/* Deploy button + feedback */}
             <div className="flex flex-col gap-3 pt-2">
-              <button
-                onClick={handleDeploy}
-                disabled={deployDisabled}
-                className={`rounded px-4 py-2 text-sm font-semibold transition-colors ${
-                  deployDisabled
-                    ? "bg-gray-700 text-gray-500 cursor-not-allowed"
-                    : "bg-indigo-600 text-white hover:bg-indigo-500"
-                }`}
-              >
-                {mutation.isPending ? "Deploying…" : "Deploy"}
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleDeploy}
+                  disabled={deployDisabled}
+                  className={`rounded px-4 py-2 text-sm font-semibold transition-colors ${
+                    deployDisabled
+                      ? "bg-gray-700 text-gray-500 cursor-not-allowed"
+                      : "bg-indigo-600 text-white hover:bg-indigo-500"
+                  }`}
+                >
+                  {mutation.isPending ? "Deploying…" : "Deploy"}
+                </button>
+                <button
+                  onClick={() => forceTickMutation.mutate()}
+                  disabled={forceTickMutation.isPending}
+                  title="Schedule an hour-tick on the next minute boundary (≤60s) — runs funding fetch + open/close decisions without waiting for the real hourly boundary."
+                  className={`rounded px-4 py-2 text-sm font-semibold transition-colors ${
+                    forceTickMutation.isPending
+                      ? "bg-gray-700 text-gray-500 cursor-not-allowed"
+                      : "border border-gray-600 bg-gray-800 text-gray-200 hover:bg-gray-700"
+                  }`}
+                >
+                  {forceTickMutation.isPending ? "Scheduling…" : "Force Hour Tick"}
+                </button>
+              </div>
 
               {successMsg && (
                 <p className="text-sm text-green-400">{successMsg}</p>

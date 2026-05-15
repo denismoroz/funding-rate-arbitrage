@@ -172,12 +172,14 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
 
         app.state.strategy = strategy
         app.state.strategy_id = strategy_id
+        app.state.engine = engine
 
         try:
             yield
         finally:
             app.state.strategy = None
             app.state.strategy_id = None
+            app.state.engine = None
             engine.stop()
             await asyncio.gather(engine_task, return_exceptions=True)
             await sink.stop()
