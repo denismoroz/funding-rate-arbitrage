@@ -56,9 +56,14 @@ export function useLiveEvents(): { status: WsStatus; lastEvent: LiveEvent | null
       }
 
       if (kind === "tick.completed") {
+        // Every minute tick produces a row in the events table (engine publishes
+        // tick.completed → EventDbSink writes it). Invalidate the events queries
+        // so RecentEvents and the Header pill pick up the new row.
         const keys: unknown[][] = [
           ["equity", STRATEGY_ID],
           ["signals", STRATEGY_ID],
+          ["events"],
+          ["events-header"],
         ];
 
         const openedCoins = (payload_json?.opened_coins as string[] | undefined) ?? [];
