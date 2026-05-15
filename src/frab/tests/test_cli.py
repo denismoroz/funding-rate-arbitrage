@@ -130,7 +130,7 @@ def test_serve_invokes_uvicorn(tmp_path, monkeypatch, mocker):
 
     assert result.exit_code == 0, result.output
     build_spy.assert_called_once_with(("BTC", "ETH"))
-    run_spy.assert_called_once_with(fake_app, host="127.0.0.1", port=9999)
+    run_spy.assert_called_once_with(fake_app, host="127.0.0.1", port=9999, log_level="info")
 
 
 def test_sync_db_url_strips_aiosqlite():

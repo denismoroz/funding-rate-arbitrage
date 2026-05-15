@@ -109,8 +109,17 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         )
         sink = EventDbSink(session_factory, bus)
 
+        def _on_task_done(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.error("Background task %s failed", task.get_name(), exc_info=exc)
+
         engine_task = asyncio.create_task(engine.run(), name="engine")
         sink_task = asyncio.create_task(sink.run(), name="event-sink")
+        engine_task.add_done_callback(_on_task_done)
+        sink_task.add_done_callback(_on_task_done)
         logger.info("frab serve: engine + sink started (strategy_id=%d, coins=%s)", strategy_id, coins)
 
         try:

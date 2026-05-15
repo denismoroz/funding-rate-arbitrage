@@ -116,10 +116,18 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8000,
     coins: str = "BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE",
+    log_level: str = "INFO",
 ) -> None:
     """Run shadow-trading engine + FastAPI server on the configured DB."""
+    import logging
+
     from frab.server import build_app
+
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    )
 
     coin_tuple = tuple(c.strip().upper() for c in coins.split(",") if c.strip())
     asgi_app = build_app(coin_tuple)
-    uvicorn.run(asgi_app, host=host, port=port)
+    uvicorn.run(asgi_app, host=host, port=port, log_level=log_level.lower())
