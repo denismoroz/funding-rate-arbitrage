@@ -638,3 +638,71 @@ async def test_save_equity_persists_snapshot(session_factory):
     assert row.perp_realized_cum == 500.0
     assert row.funding_cum == 100.0
     assert row.fees_cum == 25.0
+
+
+# ---------------------------------------------------------------------------
+# Idempotency tests (duplicate timeseries rows)
+# ---------------------------------------------------------------------------
+
+
+async def test_save_quote_is_idempotent_on_duplicate_ts(session_factory):
+    exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    quote = Quote(coin="BTC", ts=_TS, bid=29_990.0, ask=30_010.0, mark=30_000.0, spot=29_995.0)
+    await rec.save_quote(quote)
+    await rec.save_quote(quote)  # second call — same (coin, ts)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(select(Price).where(Price.market_id == coin_map["BTC"]))
+        rows = result.scalars().all()
+
+    assert len(rows) == 1
+
+
+async def test_save_funding_is_idempotent_on_duplicate_ts(session_factory):
+    exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    tick = FundingTick(coin="BTC", ts=_TS, rate=0.0001, premium=0.00005, annualized_pct=10.95)
+    await rec.save_funding(tick)
+    await rec.save_funding(tick)  # second call — same (coin, ts)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(
+            select(FundingRate).where(FundingRate.market_id == coin_map["BTC"])
+        )
+        rows = result.scalars().all()
+
+    assert len(rows) == 1
+
+
+async def test_save_tick_report_skips_duplicate_signal(session_factory):
+    exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    ts = datetime(2026, 5, 15, 5, 0, 0, tzinfo=UTC)
+    report = TickReport(
+        ts=ts,
+        signals=(SignalEvent(coin="BTC", ts=ts, signal_value=0.05, regime_pass=True, action="NONE"),),
+        fills=(),
+        opened=(),
+        closed=(),
+    )
+    await rec.save_tick_report(report)
+    await rec.save_tick_report(report)  # second call — same signal (strategy, coin, ts)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(select(Signal).where(Signal.strategy_id == strat_id))
+        rows = result.scalars().all()
+
+    assert len(rows) == 1

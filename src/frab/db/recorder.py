@@ -69,6 +69,17 @@ class DbRecorder:
             return
 
         async with session_scope(self._session_factory) as session:
+            existing = await session.scalar(
+                select(Price.id).where(
+                    Price.market_id == market_id,
+                    Price.ts == quote.ts,
+                )
+            )
+            if existing is not None:
+                logger.debug(
+                    "save_quote: duplicate (market_id=%d, ts=%s) — skipping", market_id, quote.ts
+                )
+                return
             session.add(
                 Price(
                     market_id=market_id,
@@ -87,6 +98,17 @@ class DbRecorder:
             return
 
         async with session_scope(self._session_factory) as session:
+            existing = await session.scalar(
+                select(FundingRate.id).where(
+                    FundingRate.market_id == market_id,
+                    FundingRate.ts == tick.ts,
+                )
+            )
+            if existing is not None:
+                logger.debug(
+                    "save_funding: duplicate (market_id=%d, ts=%s) — skipping", market_id, tick.ts
+                )
+                return
             session.add(
                 FundingRate(
                     market_id=market_id,
@@ -105,6 +127,19 @@ class DbRecorder:
                 if market_id is None:
                     logger.warning(
                         "save_tick_report: unknown coin %r in signals — skipping", event.coin
+                    )
+                    continue
+                existing = await session.scalar(
+                    select(Signal.id).where(
+                        Signal.strategy_id == self._strategy_id,
+                        Signal.market_id == market_id,
+                        Signal.ts == event.ts,
+                    )
+                )
+                if existing is not None:
+                    logger.debug(
+                        "save_tick_report: duplicate signal (market_id=%d, ts=%s) — skipping",
+                        market_id, event.ts,
                     )
                     continue
                 session.add(
