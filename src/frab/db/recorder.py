@@ -12,6 +12,7 @@ from frab.db.models import (
     FundingRate,
     Market,
     Position,
+    PositionFundingAccrual,
     PositionMode,
     PositionStatus,
     Price,
@@ -140,6 +141,13 @@ class DbRecorder:
                     )
                     continue
                 pos.funding_collected += delta
+                session.add(
+                    PositionFundingAccrual(
+                        position_id=position_id,
+                        ts=report.ts,
+                        delta=delta,
+                    )
+                )
 
             # --- Signals ---
             for event in report.signals:

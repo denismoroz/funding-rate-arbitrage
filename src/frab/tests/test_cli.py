@@ -50,7 +50,7 @@ def test_init_db_creates_tables(tmp_path, monkeypatch, mocker):
         engine.dispose()
 
     app_tables = table_names - {"alembic_version"}
-    assert len(app_tables) == 10  # 10 application tables
+    assert len(app_tables) == 11  # 11 application tables
     assert "alembic_version" in table_names
 
 

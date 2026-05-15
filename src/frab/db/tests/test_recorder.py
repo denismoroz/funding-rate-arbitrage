@@ -15,6 +15,7 @@ from frab.db.models import (
     FundingRate,
     Market,
     Position,
+    PositionFundingAccrual,
     PositionMode,
     PositionStatus,
     Price,
@@ -819,3 +820,100 @@ async def test_save_tick_report_skips_duplicate_signal(session_factory):
         rows = result.scalars().all()
 
     assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# PositionFundingAccrual persistence tests
+# ---------------------------------------------------------------------------
+
+
+async def test_save_tick_report_persists_funding_accrual_row(session_factory):
+    exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    open_report = TickReport(
+        ts=_TS,
+        signals=(),
+        fills=(_make_spot_buy("BTC"), _make_perp_sell("BTC")),
+        opened=("BTC",),
+        closed=(),
+    )
+    await rec.save_tick_report(open_report)
+
+    accrual_report = TickReport(
+        ts=_TS2,
+        signals=(),
+        fills=(),
+        opened=(),
+        closed=(),
+        funding_accrued=(("BTC", 0.42),),
+    )
+    await rec.save_tick_report(accrual_report)
+
+    async with session_scope(session_factory) as s:
+        pos_result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = pos_result.scalar_one()
+
+        pfa_result = await s.execute(
+            select(PositionFundingAccrual).where(PositionFundingAccrual.position_id == pos.id)
+        )
+        rows = pfa_result.scalars().all()
+
+    assert len(rows) == 1
+    assert rows[0].position_id == pos.id
+    assert rows[0].ts.replace(tzinfo=None) == _TS2.replace(tzinfo=None)
+    assert rows[0].delta == pytest.approx(0.42)
+
+
+async def test_save_tick_report_multiple_accruals_create_multiple_rows(session_factory):
+    exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    open_report = TickReport(
+        ts=_TS,
+        signals=(),
+        fills=(_make_spot_buy("BTC"), _make_perp_sell("BTC")),
+        opened=("BTC",),
+        closed=(),
+    )
+    await rec.save_tick_report(open_report)
+
+    deltas = [0.10, 0.25, 0.05]
+    ts_offsets = [
+        datetime(2024, 6, 1, 13, 0, 0, tzinfo=UTC),
+        datetime(2024, 6, 1, 14, 0, 0, tzinfo=UTC),
+        datetime(2024, 6, 1, 15, 0, 0, tzinfo=UTC),
+    ]
+    for ts, delta in zip(ts_offsets, deltas):
+        report = TickReport(
+            ts=ts,
+            signals=(),
+            fills=(),
+            opened=(),
+            closed=(),
+            funding_accrued=(("BTC", delta),),
+        )
+        await rec.save_tick_report(report)
+
+    async with session_scope(session_factory) as s:
+        pos_result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = pos_result.scalar_one()
+
+        pfa_result = await s.execute(
+            select(PositionFundingAccrual)
+            .where(PositionFundingAccrual.position_id == pos.id)
+            .order_by(PositionFundingAccrual.ts.asc())
+        )
+        rows = pfa_result.scalars().all()
+
+    assert len(rows) == 3
+    for i, (row, delta) in enumerate(zip(rows, deltas)):
+        assert row.position_id == pos.id
+        assert row.delta == pytest.approx(delta)
+    assert rows[0].ts < rows[1].ts < rows[2].ts

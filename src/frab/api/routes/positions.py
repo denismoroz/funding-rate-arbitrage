@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
-from frab.api.schemas import FillOut, PositionOut
-from frab.db.models import Fill, Market, Position, PositionStatus
+from frab.api.schemas import FillOut, PositionFundingAccrualOut, PositionOut
+from frab.db.models import Fill, Market, Position, PositionFundingAccrual, PositionStatus
 
 router = APIRouter()
 
@@ -68,3 +68,24 @@ async def list_positions(
         }
         out.append(PositionOut.model_validate(pos_dict))
     return out
+
+
+@router.get("/{position_id}/funding-history", response_model=list[PositionFundingAccrualOut])
+async def get_position_funding_history(
+    position_id: int,
+    limit: int = 500,
+    session: AsyncSession = Depends(get_session),
+) -> list[PositionFundingAccrualOut]:
+    position = await session.get(Position, position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+
+    limit = min(limit, 5000)
+    result = await session.execute(
+        select(PositionFundingAccrual)
+        .where(PositionFundingAccrual.position_id == position_id)
+        .order_by(PositionFundingAccrual.ts.asc())
+        .limit(limit)
+    )
+    rows = result.scalars().all()
+    return [PositionFundingAccrualOut.model_validate(r) for r in rows]

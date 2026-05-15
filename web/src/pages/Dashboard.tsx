@@ -17,6 +17,7 @@ import {
   fetchSignals,
   fetchEvents,
   fetchFundingHistory,
+  fetchPositionFundingHistory,
   type EquitySnapshot,
   type Fill,
   type Position,
@@ -250,26 +251,19 @@ function PositionDetailsModal({
     queryFn: () => fetchFundingHistory(position.coin, { limit: 200 }),
   });
 
+  const { data: accruals } = useQuery({
+    queryKey: ["funding-accruals", position.id],
+    queryFn: () => fetchPositionFundingHistory(position.id, { limit: 500 }),
+  });
+
   // API returns newest-first; reverse for chronological chart
   const chronological = (data ?? []).slice().reverse();
-  const openedMs = new Date(position.opened_at).getTime();
 
-  const cumulative = (() => {
+  const realCumulative = (() => {
     let acc = 0;
-    return chronological.map((r) => {
-      const tsMs = new Date(r.ts).getTime();
-      // Hourly accrual = |perp_units| * mark * rate. We don't have mark per hour
-      // on this endpoint, so approximate with entry_perp_price for the chart.
-      const hourlyFunding =
-        tsMs >= openedMs
-          ? Math.abs(position.perp_units) * position.entry_perp_price * r.rate
-          : 0;
-      acc += hourlyFunding;
-      return {
-        ts: r.ts,
-        rate_apr: r.annualized_pct,
-        cum_funding: acc,
-      };
+    return (accruals ?? []).map((a) => {
+      acc += a.delta;
+      return { ts: a.ts, cum_funding: acc };
     });
   })();
 
@@ -323,7 +317,7 @@ function PositionDetailsModal({
               Funding rate (% APR)
             </h4>
             <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={cumulative}>
+              <LineChart data={chronological.map((r) => ({ ts: r.ts, rate_apr: r.annualized_pct }))}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis
                   dataKey="ts"
@@ -363,7 +357,7 @@ function PositionDetailsModal({
               Cumulative funding for this position ($, since open)
             </h4>
             <ResponsiveContainer width="100%" height={140}>
-              <LineChart data={cumulative}>
+              <LineChart data={realCumulative}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis
                   dataKey="ts"
@@ -400,11 +394,6 @@ function PositionDetailsModal({
                 />
               </LineChart>
             </ResponsiveContainer>
-
-            <p className="mt-2 text-[10px] text-gray-400">
-              Cumulative chart approximates accrual using entry perp price (not
-              live mark) — actual collected is shown above.
-            </p>
           </>
         )}
       </div>

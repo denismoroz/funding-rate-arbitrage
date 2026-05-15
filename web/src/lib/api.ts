@@ -134,6 +134,13 @@ export type Event = {
   payload_json: Record<string, unknown> | null;
 };
 
+export type PositionFundingAccrual = {
+  id: number;
+  position_id: number;
+  ts: string;
+  delta: number;
+};
+
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
 export function fetchStrategies(): Promise<Strategy[]> {
@@ -189,6 +196,18 @@ export function fetchEvents(opts?: { limit?: number }): Promise<Event[]> {
   const params = new URLSearchParams();
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   return apiFetch<Event[]>(`/events?${params}`);
+}
+
+export function fetchPositionFundingHistory(
+  positionId: number,
+  opts?: { limit?: number },
+): Promise<PositionFundingAccrual[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return apiFetch<PositionFundingAccrual[]>(
+    `/positions/${positionId}/funding-history${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export function fetchStrategyParams(id: number): Promise<StrategyParams> {

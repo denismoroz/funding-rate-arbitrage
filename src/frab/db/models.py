@@ -148,6 +148,21 @@ class Fill(Base):
     is_paper: Mapped[bool] = mapped_column(default=True)
 
 
+class PositionFundingAccrual(Base):
+    """Per-tick funding delta attributed to a single open position.
+
+    Paper mode: written by the strategy via DbRecorder on each hour-tick.
+    Live mode (future): can be written from exchange `userFundingHistory` feed.
+    """
+    __tablename__ = "position_funding_accruals"
+    __table_args__ = (Index("ix_pfa_position_ts", "position_id", "ts"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    position_id: Mapped[int] = mapped_column(ForeignKey("positions.id", ondelete="CASCADE"))
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    delta: Mapped[float]
+
+
 class EquitySnapshot(Base):
     __tablename__ = "equity_snapshots"
     __table_args__ = (Index("ix_equity_lookup", "strategy_id", "ts"),)

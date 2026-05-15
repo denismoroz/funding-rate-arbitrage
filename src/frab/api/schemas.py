@@ -125,6 +125,15 @@ class EventOut(_UtcAwareOut):
     payload_json: dict | None
 
 
+class PositionFundingAccrualOut(_UtcAwareOut):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    position_id: int
+    ts: datetime
+    delta: float
+
+
 class StrategyParamsOut(BaseModel):
     coins: list[str]
     entry_threshold: float
