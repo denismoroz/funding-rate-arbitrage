@@ -8,7 +8,43 @@ async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function apiPostJson<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg: string;
+    try {
+      const json = (await res.json()) as unknown;
+      msg = typeof json === "object" && json !== null && "detail" in json
+        ? String((json as Record<string, unknown>).detail)
+        : JSON.stringify(json);
+    } catch {
+      msg = res.statusText;
+    }
+    throw new Error(`${res.status}: ${msg}`);
+  }
+  return res.json() as Promise<TRes>;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+export type StrategyParams = {
+  coins: string[];
+  entry_threshold: number;
+  exit_threshold: number;
+  min_hold_hours: number;
+  signal_window_hours: number;
+  concurrency_cap: number;
+  position_size_usdc: number;
+};
+
+export type StrategyParamsHot = Pick<
+  StrategyParams,
+  "entry_threshold" | "exit_threshold" | "min_hold_hours" | "concurrency_cap" | "position_size_usdc"
+>;
 
 export type Strategy = {
   id: number;
@@ -132,4 +168,12 @@ export function fetchEvents(opts?: { limit?: number }): Promise<Event[]> {
   const params = new URLSearchParams();
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   return apiFetch<Event[]>(`/events?${params}`);
+}
+
+export function fetchStrategyParams(id: number): Promise<StrategyParams> {
+  return apiFetch<StrategyParams>(`/strategies/${id}/params`);
+}
+
+export function deployStrategyParams(id: number, body: StrategyParamsHot): Promise<StrategyParams> {
+  return apiPostJson<StrategyParamsHot, StrategyParams>(`/strategies/${id}/deploy`, body);
 }

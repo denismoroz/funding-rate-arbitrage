@@ -84,6 +84,27 @@ class StrategyA(Strategy):
     def open_positions(self) -> list[str]:
         return list(self._positions.keys())
 
+    def update_hot_params(
+        self,
+        *,
+        entry_threshold: float,
+        exit_threshold: float,
+        min_hold_hours: int,
+        concurrency_cap: int,
+        position_size_usdc: float,
+    ) -> None:
+        """Atomically swap hot params. Preserves cold fields (coins, signal_window_hours).
+        Called between ticks; asyncio single-thread guarantees no race."""
+        self._params = StrategyAParams(
+            coins=self._params.coins,
+            entry_threshold=entry_threshold,
+            exit_threshold=exit_threshold,
+            min_hold_hours=min_hold_hours,
+            signal_window_hours=self._params.signal_window_hours,
+            concurrency_cap=concurrency_cap,
+            position_size_usdc=position_size_usdc,
+        )
+
     def warmup_from_history(self, ticks_by_coin: dict[str, list[FundingTick]]) -> int:
         """Push historical funding ticks into MarketState (ascending ts assumed).
 

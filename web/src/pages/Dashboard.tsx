@@ -18,6 +18,7 @@ import {
   type Fill,
 } from "../lib/api";
 import { formatCurrency, formatRelative, formatNumber } from "../lib/format";
+import { useNow } from "../lib/useNow";
 import { useLiveEvents, type WsStatus } from "../lib/useLiveEvents";
 
 const STRATEGY_ID = 1;
@@ -73,7 +74,8 @@ const WS_DOT: Record<WsStatus, string> = {
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header({ wsStatus }: { wsStatus: WsStatus }) {
+function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" }) {
+  const now = useNow();
   const stratQ = useQuery({
     queryKey: ["strategies"],
     queryFn: fetchStrategies,
@@ -94,6 +96,21 @@ function Header({ wsStatus }: { wsStatus: WsStatus }) {
     <header className="flex items-center gap-4 border-b border-gray-200 bg-gray-900 px-6 py-3">
       <span className="text-lg font-bold tracking-tight text-white">frab</span>
 
+      <nav className="flex items-center gap-3 text-sm">
+        <a
+          href="#/"
+          className={route === "dashboard" ? "text-white" : "text-gray-400 hover:text-gray-200"}
+        >
+          Dashboard
+        </a>
+        <a
+          href="#/settings"
+          className={route === "settings" ? "text-white" : "text-gray-400 hover:text-gray-200"}
+        >
+          Settings
+        </a>
+      </nav>
+
       {strategy && (
         <span className="rounded-full bg-indigo-700 px-2.5 py-0.5 text-xs font-medium text-white">
           {strategy.name} {strategy.version} · {strategy.status}
@@ -105,7 +122,7 @@ function Header({ wsStatus }: { wsStatus: WsStatus }) {
           engine:{" "}
           <span className="text-gray-200">{engineEvent.message}</span>
           <span className="text-gray-500">
-            ({formatRelative(engineEvent.ts)})
+            ({formatRelative(engineEvent.ts, now)})
           </span>
           <span
             className={`inline-block h-2 w-2 rounded-full ${WS_DOT[wsStatus]}`}
@@ -187,6 +204,7 @@ function EquityCard() {
 // ── Open positions ─────────────────────────────────────────────────────────────
 
 function OpenPositions() {
+  const now = useNow();
   const { data, isLoading, error } = useQuery({
     queryKey: ["positions-open", STRATEGY_ID],
     queryFn: () =>
@@ -221,7 +239,7 @@ function OpenPositions() {
                 <tr key={p.id} className="border-b border-gray-50">
                   <td className="py-1 pr-3 font-medium">{p.coin}</td>
                   <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(p.opened_at)}
+                    {formatRelative(p.opened_at, now)}
                   </td>
                   <td className="py-1 pr-3 text-right">
                     {formatCurrency(p.entry_spot_price)}
@@ -254,6 +272,7 @@ const ACTION_COLOR: Record<string, string> = {
 };
 
 function RecentSignals() {
+  const now = useNow();
   const { data, isLoading, error } = useQuery({
     queryKey: ["signals", STRATEGY_ID],
     queryFn: () => fetchSignals({ strategyId: STRATEGY_ID, limit: 20 }),
@@ -282,7 +301,7 @@ function RecentSignals() {
               {(data ?? []).map((s) => (
                 <tr key={s.id} className="border-b border-gray-50">
                   <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(s.ts)}
+                    {formatRelative(s.ts, now)}
                   </td>
                   <td className="py-1 pr-3 font-medium">{s.coin}</td>
                   <td
@@ -313,6 +332,7 @@ function RecentSignals() {
 // ── Recent fills ───────────────────────────────────────────────────────────────
 
 function RecentFills() {
+  const now = useNow();
   const { data, isLoading, error } = useQuery({
     queryKey: ["positions-recent", STRATEGY_ID],
     queryFn: () => fetchPositions({ strategyId: STRATEGY_ID, limit: 10 }),
@@ -348,7 +368,7 @@ function RecentFills() {
               {fills.map((f) => (
                 <tr key={f.id} className="border-b border-gray-50">
                   <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(f.ts)}
+                    {formatRelative(f.ts, now)}
                   </td>
                   <td className="py-1 pr-3 font-medium">{f.coin}</td>
                   <td className="py-1 pr-3">{f.leg}</td>
@@ -395,6 +415,7 @@ const LEVEL_COLOR: Record<string, string> = {
 };
 
 function RecentEvents() {
+  const now = useNow();
   const { data, isLoading, error } = useQuery({
     queryKey: ["events"],
     queryFn: () => fetchEvents({ limit: 20 }),
@@ -423,7 +444,7 @@ function RecentEvents() {
               {(data ?? []).map((e) => (
                 <tr key={e.id} className="border-b border-gray-50">
                   <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(e.ts)}
+                    {formatRelative(e.ts, now)}
                   </td>
                   <td
                     className={`py-1 pr-3 font-semibold ${LEVEL_COLOR[e.level] ?? "text-gray-600"}`}
@@ -447,12 +468,14 @@ function RecentEvents() {
 
 // ── Dashboard page ─────────────────────────────────────────────────────────────
 
+export { Header };
+
 export default function Dashboard() {
   const { status } = useLiveEvents();
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header wsStatus={status} />
+      <Header wsStatus={status} route="dashboard" />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <EquityCard />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

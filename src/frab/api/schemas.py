@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _UtcAwareOut(BaseModel):
@@ -123,3 +123,27 @@ class EventOut(_UtcAwareOut):
     kind: str
     message: str
     payload_json: dict | None
+
+
+class StrategyParamsOut(BaseModel):
+    coins: list[str]
+    entry_threshold: float
+    exit_threshold: float
+    min_hold_hours: int
+    signal_window_hours: int
+    concurrency_cap: int
+    position_size_usdc: float
+
+
+class StrategyParamsIn(BaseModel):
+    entry_threshold: float = Field(gt=0, le=5.0)
+    exit_threshold: float = Field(ge=-2.0, le=5.0)
+    min_hold_hours: int = Field(ge=0, le=720)
+    concurrency_cap: int = Field(ge=1, le=20)
+    position_size_usdc: float = Field(gt=0, le=1_000_000)
+
+    @model_validator(mode="after")
+    def _check_exit_below_entry(self) -> "StrategyParamsIn":
+        if self.exit_threshold >= self.entry_threshold:
+            raise ValueError("exit_threshold must be strictly less than entry_threshold")
+        return self

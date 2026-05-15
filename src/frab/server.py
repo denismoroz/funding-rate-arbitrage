@@ -170,9 +170,14 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         engine_task.add_done_callback(_on_task_done)
         logger.info("frab serve: engine + sink started (strategy_id=%d, coins=%s)", strategy_id, coins)
 
+        app.state.strategy = strategy
+        app.state.strategy_id = strategy_id
+
         try:
             yield
         finally:
+            app.state.strategy = None
+            app.state.strategy_id = None
             engine.stop()
             await asyncio.gather(engine_task, return_exceptions=True)
             await sink.stop()
