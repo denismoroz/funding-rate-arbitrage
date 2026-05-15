@@ -114,6 +114,16 @@ export type Signal = {
   action: "NONE" | "OPEN" | "CLOSE";
 };
 
+export type FundingRate = {
+  id: number;
+  market_id: number;
+  coin: string;
+  ts: string;
+  rate: number;
+  premium: number | null;
+  annualized_pct: number;
+};
+
 export type Event = {
   id: number;
   ts: string;
@@ -162,6 +172,17 @@ export function fetchSignals(opts?: {
     params.set("strategy_id", String(opts.strategyId));
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   return apiFetch<Signal[]>(`/signals?${params}`);
+}
+
+export function fetchFundingHistory(
+  coin: string,
+  opts?: { limit?: number; since?: string },
+): Promise<FundingRate[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.since != null) params.set("since", opts.since);
+  const qs = params.toString();
+  return apiFetch<FundingRate[]>(`/funding/${coin}${qs ? `?${qs}` : ""}`);
 }
 
 export function fetchEvents(opts?: { limit?: number }): Promise<Event[]> {

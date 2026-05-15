@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart,
   Line,
+  ReferenceLine,
   XAxis,
   YAxis,
   Tooltip,
@@ -14,8 +16,10 @@ import {
   fetchPositions,
   fetchSignals,
   fetchEvents,
+  fetchFundingHistory,
   type EquitySnapshot,
   type Fill,
+  type Position,
 } from "../lib/api";
 import { formatCurrency, formatRelative, formatNumber } from "../lib/format";
 import { useNow } from "../lib/useNow";
@@ -232,10 +236,187 @@ function EquityCard() {
   );
 }
 
+// ── Position details modal ────────────────────────────────────────────────────
+
+function PositionDetailsModal({
+  position,
+  onClose,
+}: {
+  position: Position;
+  onClose: () => void;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["funding", position.coin],
+    queryFn: () => fetchFundingHistory(position.coin, { limit: 200 }),
+  });
+
+  // API returns newest-first; reverse for chronological chart
+  const chronological = (data ?? []).slice().reverse();
+  const openedMs = new Date(position.opened_at).getTime();
+
+  const cumulative = (() => {
+    let acc = 0;
+    return chronological.map((r) => {
+      const tsMs = new Date(r.ts).getTime();
+      // Hourly accrual = |perp_units| * mark * rate. We don't have mark per hour
+      // on this endpoint, so approximate with entry_perp_price for the chart.
+      const hourlyFunding =
+        tsMs >= openedMs
+          ? Math.abs(position.perp_units) * position.entry_perp_price * r.rate
+          : 0;
+      acc += hourlyFunding;
+      return {
+        ts: r.ts,
+        rate_apr: r.annualized_pct,
+        cum_funding: acc,
+      };
+    });
+  })();
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-3xl rounded-lg bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-baseline justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">
+              {position.coin} · funding history
+            </h3>
+            <p className="text-xs text-gray-500">
+              Opened {formatRelative(position.opened_at)} · Entry perp $
+              {formatNumber(position.entry_perp_price, 4)} · Funding so far{" "}
+              <span
+                className={
+                  position.funding_collected >= 0
+                    ? "text-green-600"
+                    : "text-red-500"
+                }
+              >
+                {formatCurrency(position.funding_collected)}
+              </span>
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        {isLoading && <Skeleton rows={6} />}
+        {error instanceof Error && <ErrorMsg message={error.message} />}
+
+        {!isLoading && !error && chronological.length === 0 && (
+          <p className="text-sm text-gray-400">No funding history yet.</p>
+        )}
+
+        {!isLoading && !error && chronological.length > 0 && (
+          <>
+            <h4 className="mb-1 text-xs font-medium text-gray-500">
+              Funding rate (% APR)
+            </h4>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={cumulative}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis
+                  dataKey="ts"
+                  tickFormatter={(v: string) =>
+                    new Date(v).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  }
+                  tick={{ fontSize: 11 }}
+                  minTickGap={60}
+                />
+                <YAxis
+                  domain={["auto", "auto"]}
+                  tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                  tick={{ fontSize: 11 }}
+                  width={55}
+                />
+                <Tooltip
+                  formatter={(v: number) => [`${v.toFixed(3)}%`, "APR"]}
+                  labelFormatter={(v: string) =>
+                    new Date(v).toLocaleString()
+                  }
+                />
+                <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />
+                <Line
+                  type="monotone"
+                  dataKey="rate_apr"
+                  stroke="#6366f1"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+
+            <h4 className="mb-1 mt-3 text-xs font-medium text-gray-500">
+              Cumulative funding for this position ($, since open)
+            </h4>
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={cumulative}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis
+                  dataKey="ts"
+                  tickFormatter={(v: string) =>
+                    new Date(v).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  }
+                  tick={{ fontSize: 11 }}
+                  minTickGap={60}
+                />
+                <YAxis
+                  domain={["auto", "auto"]}
+                  tickFormatter={(v: number) =>
+                    Math.abs(v) >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`
+                  }
+                  tick={{ fontSize: 11 }}
+                  width={70}
+                />
+                <Tooltip
+                  formatter={(v: number) => [formatCurrency(v), "cum funding"]}
+                  labelFormatter={(v: string) =>
+                    new Date(v).toLocaleString()
+                  }
+                />
+                <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />
+                <Line
+                  type="monotone"
+                  dataKey="cum_funding"
+                  stroke="#16a34a"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+
+            <p className="mt-2 text-[10px] text-gray-400">
+              Cumulative chart approximates accrual using entry perp price (not
+              live mark) — actual collected is shown above.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Open positions ─────────────────────────────────────────────────────────────
 
 function OpenPositions() {
   const now = useNow();
+  const [selected, setSelected] = useState<Position | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["positions-open", STRATEGY_ID],
     queryFn: () =>
@@ -267,7 +448,12 @@ function OpenPositions() {
             </thead>
             <tbody>
               {data.map((p) => (
-                <tr key={p.id} className="border-b border-gray-50">
+                <tr
+                  key={p.id}
+                  className="cursor-pointer border-b border-gray-50 hover:bg-gray-50"
+                  onClick={() => setSelected(p)}
+                  title="Click to see funding history"
+                >
                   <td className="py-1 pr-3 font-medium">{p.coin}</td>
                   <td className="py-1 pr-3 text-gray-500">
                     {formatRelative(p.opened_at, now)}
@@ -278,7 +464,13 @@ function OpenPositions() {
                   <td className="py-1 pr-3 text-right">
                     {formatCurrency(p.entry_perp_price)}
                   </td>
-                  <td className="py-1 pr-3 text-right text-green-600">
+                  <td
+                    className={`py-1 pr-3 text-right ${
+                      p.funding_collected >= 0
+                        ? "text-green-600"
+                        : "text-red-500"
+                    }`}
+                  >
                     {formatCurrency(p.funding_collected)}
                   </td>
                   <td className="py-1 text-right text-red-500">
@@ -289,6 +481,12 @@ function OpenPositions() {
             </tbody>
           </table>
         </div>
+      )}
+      {selected && (
+        <PositionDetailsModal
+          position={selected}
+          onClose={() => setSelected(null)}
+        />
       )}
     </div>
   );
