@@ -1,11 +1,29 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
-class StrategyOut(BaseModel):
+class _UtcAwareOut(BaseModel):
+    """Base for response models — stamps UTC tzinfo on naive datetime fields.
+
+    DB stores datetimes in UTC but without tzinfo (SQLite limitation). Without
+    this, Pydantic emits `2026-05-15T06:26:00` which JavaScript parses as the
+    user's local time and renders the dashboard hours off.
+    """
+
+    @model_validator(mode="after")
+    def _attach_utc_to_naive(self) -> Self:
+        for name in self.__class__.model_fields:
+            value = getattr(self, name)
+            if isinstance(value, datetime) and value.tzinfo is None:
+                object.__setattr__(self, name, value.replace(tzinfo=UTC))
+        return self
+
+
+class StrategyOut(_UtcAwareOut):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -17,7 +35,7 @@ class StrategyOut(BaseModel):
     stopped_at: datetime | None
 
 
-class EquityOut(BaseModel):
+class EquityOut(_UtcAwareOut):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -32,7 +50,7 @@ class EquityOut(BaseModel):
     fees_cum: float
 
 
-class FillOut(BaseModel):
+class FillOut(_UtcAwareOut):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -47,7 +65,7 @@ class FillOut(BaseModel):
     is_paper: bool
 
 
-class PositionOut(BaseModel):
+class PositionOut(_UtcAwareOut):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -70,7 +88,7 @@ class PositionOut(BaseModel):
     fills: list[FillOut]
 
 
-class SignalOut(BaseModel):
+class SignalOut(_UtcAwareOut):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -83,7 +101,7 @@ class SignalOut(BaseModel):
     action: str
 
 
-class FundingRateOut(BaseModel):
+class FundingRateOut(_UtcAwareOut):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -95,7 +113,7 @@ class FundingRateOut(BaseModel):
     annualized_pct: float
 
 
-class EventOut(BaseModel):
+class EventOut(_UtcAwareOut):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
