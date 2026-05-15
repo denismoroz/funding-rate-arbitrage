@@ -50,6 +50,27 @@ class _PositionRecord:
     fees_paid: float = 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class OpenPositionSnapshot:
+    """DB-sourced snapshot used to rehydrate StrategyA after engine restart."""
+    coin: str
+    opened_at: datetime
+    spot_qty: float
+    perp_qty: float          # positive magnitude — sign is implicit (short)
+    entry_spot_price: float
+    entry_perp_price: float
+    funding_collected: float
+    fees_paid: float
+
+
+@dataclass(frozen=True, slots=True)
+class AccumulatorsSnapshot:
+    cash: float
+    realized_pnl_cum: float
+    funding_cum: float
+    fees_cum: float
+
+
 class StrategyA(Strategy):
     name = "strategy_a"
     version = "v1"
@@ -83,6 +104,36 @@ class StrategyA(Strategy):
 
     def open_positions(self) -> list[str]:
         return list(self._positions.keys())
+
+    def rehydrate(
+        self,
+        *,
+        positions: list[OpenPositionSnapshot],
+        accumulators: AccumulatorsSnapshot | None = None,
+    ) -> None:
+        """Restore in-memory state from a DB snapshot after engine restart.
+
+        Replaces `_positions` and (if `accumulators` provided) overrides
+        cash/realized_pnl/funding/fees with persisted values. Must be called
+        before `engine.run()` starts ticking.
+        """
+        self._positions = {
+            snap.coin: _PositionRecord(
+                opened_at=snap.opened_at,
+                spot_qty=snap.spot_qty,
+                perp_qty=snap.perp_qty,
+                entry_spot_price=snap.entry_spot_price,
+                entry_perp_price=snap.entry_perp_price,
+                funding_collected=snap.funding_collected,
+                fees_paid=snap.fees_paid,
+            )
+            for snap in positions
+        }
+        if accumulators is not None:
+            self._cash = accumulators.cash
+            self._realized_pnl_cum = accumulators.realized_pnl_cum
+            self._funding_cum = accumulators.funding_cum
+            self._fees_cum = accumulators.fees_cum
 
     def update_hot_params(
         self,

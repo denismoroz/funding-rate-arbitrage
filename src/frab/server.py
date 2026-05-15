@@ -11,7 +11,16 @@ from fastapi import FastAPI
 from sqlalchemy import select
 
 from frab.api.app import create_app
-from frab.db.models import Exchange, FundingRate, Market, PositionMode, Strategy
+from frab.db.models import (
+    EquitySnapshot,
+    Exchange,
+    FundingRate,
+    Market,
+    Position,
+    PositionMode,
+    PositionStatus,
+    Strategy,
+)
 from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.engine.loop import Engine
@@ -20,7 +29,12 @@ from frab.exchanges.base import FundingTick
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.paper import PaperExecutor
 from frab.settings import get_settings
-from frab.strategies.strategy_a import StrategyA, StrategyAParams
+from frab.strategies.strategy_a import (
+    AccumulatorsSnapshot,
+    OpenPositionSnapshot,
+    StrategyA,
+    StrategyAParams,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +108,67 @@ async def _load_funding_from_db(
     return applied
 
 
+async def _rehydrate_strategy_from_db(
+    session_factory,
+    strategy: StrategyA,
+    strategy_id: int,
+) -> None:
+    """Restore in-memory positions + cash/accumulators after engine restart.
+
+    Reads OPEN positions and the latest equity snapshot for this strategy.
+    Leaves construction defaults in place if nothing persisted (fresh start).
+    """
+    async with session_scope(session_factory) as s:
+        pos_rows = (await s.execute(
+            select(Position, Market.coin)
+            .join(Market, Position.market_id == Market.id)
+            .where(
+                Position.strategy_id == strategy_id,
+                Position.status == PositionStatus.OPEN,
+            )
+        )).all()
+
+        last_eq = (await s.execute(
+            select(EquitySnapshot)
+            .where(EquitySnapshot.strategy_id == strategy_id)
+            .order_by(EquitySnapshot.ts.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+
+    snapshots = [
+        OpenPositionSnapshot(
+            coin=coin,
+            opened_at=pos.opened_at if pos.opened_at.tzinfo is not None
+                      else pos.opened_at.replace(tzinfo=UTC),
+            spot_qty=pos.spot_units,
+            perp_qty=abs(pos.perp_units),
+            entry_spot_price=pos.entry_spot_price,
+            entry_perp_price=pos.entry_perp_price,
+            funding_collected=pos.funding_collected,
+            fees_paid=pos.fees_paid,
+        )
+        for pos, coin in pos_rows
+    ]
+
+    accumulators = None
+    if last_eq is not None:
+        accumulators = AccumulatorsSnapshot(
+            cash=last_eq.cash,
+            realized_pnl_cum=last_eq.perp_realized_cum,
+            funding_cum=last_eq.funding_cum,
+            fees_cum=last_eq.fees_cum,
+        )
+
+    if snapshots or accumulators is not None:
+        strategy.rehydrate(positions=snapshots, accumulators=accumulators)
+        logger.info(
+            "rehydrate_strategy: positions=%d, cash=%s, funding_cum=%s",
+            len(snapshots),
+            accumulators.cash if accumulators else "default",
+            accumulators.funding_cum if accumulators else "default",
+        )
+
+
 async def _resolve_exchange(session_factory) -> tuple[int, float, float]:
     async with session_scope(session_factory) as s:
         result = await s.execute(select(Exchange).where(Exchange.name == EXCHANGE_NAME))
@@ -147,6 +222,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         await _load_funding_from_db(
             session_factory, strategy, coins, params.signal_window_hours
         )
+        await _rehydrate_strategy_from_db(session_factory, strategy, strategy_id)
         engine = Engine(
             market_data=market_data,
             strategy=strategy,

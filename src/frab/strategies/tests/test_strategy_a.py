@@ -7,7 +7,12 @@ import pytest
 
 from frab.exchanges.base import Executor, FillReport, FundingTick, Leg, OrderRequest, Quote, Side
 from frab.strategies.base import EquitySnapshot, TickReport
-from frab.strategies.strategy_a import StrategyA, StrategyAParams
+from frab.strategies.strategy_a import (
+    AccumulatorsSnapshot,
+    OpenPositionSnapshot,
+    StrategyA,
+    StrategyAParams,
+)
 
 HOUR = timedelta(hours=1)
 T0 = datetime(2023, 11, 14, 22, 0, 0, tzinfo=UTC)  # base datetime
@@ -377,6 +382,63 @@ async def test_funding_accrual_for_open_position(executor):
 
     # TickReport carries the per-coin funding delta so recorder can persist it
     assert report.funding_accrued == (("BTC", pytest.approx(0.1, abs=1e-9)),)
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_restores_positions_and_accrues_next_tick(executor):
+    """After rehydrate, an existing OPEN position receives funding on next hour-tick."""
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=1, signal_window_hours=1),
+        executor,
+    )
+
+    strat.rehydrate(
+        positions=[
+            OpenPositionSnapshot(
+                coin="BTC",
+                opened_at=T0,
+                spot_qty=10.0,
+                perp_qty=10.0,
+                entry_spot_price=100.0,
+                entry_perp_price=100.0,
+                funding_collected=0.5,
+                fees_paid=0.2,
+            )
+        ],
+        accumulators=AccumulatorsSnapshot(
+            cash=1234.0,
+            realized_pnl_cum=0.0,
+            funding_cum=0.5,
+            fees_cum=0.2,
+        ),
+    )
+
+    assert "BTC" in strat.open_positions()
+    assert strat.cash == 1234.0
+    assert strat.funding_cum == 0.5
+
+    # Next hour-tick: funding should accrue on the rehydrated position
+    t1 = T0 + HOUR
+    await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
+    report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
+
+    # Δfunding = 10 * 100 * 0.0001 = 0.1
+    assert report.funding_accrued == (("BTC", pytest.approx(0.1, abs=1e-9)),)
+    assert strat.funding_cum == pytest.approx(0.6, abs=1e-9)
+    assert strat.cash == pytest.approx(1234.1, abs=1e-9)
+
+
+def test_rehydrate_without_accumulators_keeps_defaults(executor):
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=3, position_size_usdc=1000.0),
+        executor,
+    )
+    initial_cash = strat.cash
+
+    strat.rehydrate(positions=[], accumulators=None)
+
+    assert strat.open_positions() == []
+    assert strat.cash == initial_cash  # untouched
 
 
 @pytest.mark.asyncio
