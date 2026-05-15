@@ -88,9 +88,17 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
   });
 
   const strategy = stratQ.data?.find((s) => s.id === STRATEGY_ID);
-  const engineEvent = eventsQ.data?.find((e) =>
-    e.kind.startsWith("engine."),
-  );
+
+  // Engine liveness: a tick.completed within the last 90s means the engine
+  // is alive regardless of whether the latest engine.* event happens to be
+  // a stale 'engine.stopping' from a previous process shutdown.
+  const lastTick = eventsQ.data?.find((e) => e.kind === "tick.completed");
+  const lastTickAgeMs = lastTick ? now - new Date(lastTick.ts).getTime() : Infinity;
+  const engineAlive = lastTickAgeMs <= 90_000;
+  const engineEvent = engineAlive
+    ? lastTick
+    : eventsQ.data?.find((e) => e.kind.startsWith("engine."));
+  const engineLabel = engineAlive ? "running" : engineEvent?.message;
 
   return (
     <header className="flex items-center gap-4 border-b border-gray-200 bg-gray-900 px-6 py-3">
@@ -120,7 +128,7 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
       {engineEvent && (
         <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400">
           engine:{" "}
-          <span className="text-gray-200">{engineEvent.message}</span>
+          <span className="text-gray-200">{engineLabel}</span>
           <span className="text-gray-500">
             ({formatRelative(engineEvent.ts, now)})
           </span>
