@@ -106,6 +106,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             strategy=strategy,
             coins=coins,
             recorder=recorder,
+            event_bus=bus,
         )
         sink = EventDbSink(session_factory, bus)
 

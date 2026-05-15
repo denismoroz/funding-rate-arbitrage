@@ -12,7 +12,8 @@ from frab.engine.loop import (
     Recorder,
     TickOutcome,
 )
-from frab.exchanges.base import FundingTick, MarketDataSource, Quote
+from frab.events.bus import Event, EventBus
+from frab.exchanges.base import FillReport, FundingTick, Leg, MarketDataSource, Quote, Side
 from frab.strategies.base import EquitySnapshot, SignalEvent, Strategy, TickReport
 
 # Reference datetime: 2023-11-14 22:13:20 UTC (a known epoch anchor)
@@ -55,6 +56,26 @@ def _equity(ts: datetime = _T0, total=6000.0):
 
 def _tick_report(ts: datetime = _T0):
     return TickReport(ts=ts, signals=(), fills=(), opened=(), closed=())
+
+
+def _spot_buy_fill(coin="BTC", price=100.0, qty=10.0):
+    return FillReport(coin=coin, leg=Leg.SPOT, side=Side.BUY, ts=_T0, qty=qty,
+                      price=price, fee=0.07, slippage_bps=2.0, is_paper=True)
+
+
+def _perp_sell_fill(coin="BTC", price=100.0, qty=10.0):
+    return FillReport(coin=coin, leg=Leg.PERP, side=Side.SELL, ts=_T0, qty=qty,
+                      price=price, fee=0.035, slippage_bps=2.0, is_paper=True)
+
+
+def _spot_sell_fill(coin="BTC", price=110.0, qty=10.0):
+    return FillReport(coin=coin, leg=Leg.SPOT, side=Side.SELL, ts=_T0, qty=qty,
+                      price=price, fee=0.07, slippage_bps=2.0, is_paper=True)
+
+
+def _perp_buy_fill(coin="BTC", price=110.0, qty=10.0):
+    return FillReport(coin=coin, leg=Leg.PERP, side=Side.BUY, ts=_T0, qty=qty,
+                      price=price, fee=0.035, slippage_bps=2.0, is_paper=True)
 
 
 # ---------------------------------------------------------------------------
@@ -524,3 +545,277 @@ async def test_run_does_not_tick_after_stop_called_during_sleep(market_data, str
 
     # stop was called during sleep → break before tick
     assert strategy.compute_equity.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Test 15: tick_once without event_bus runs cleanly
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_once_without_event_bus_does_not_publish(market_data, strategy, recorder):
+    now = _T0
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = TickReport(
+        ts=now,
+        signals=(),
+        fills=(_spot_buy_fill("BTC"), _perp_sell_fill("BTC")),
+        opened=("BTC",),
+        closed=(),
+    )
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        recorder=recorder,
+    )
+
+    outcome = await engine.tick_once(now)
+
+    assert outcome.tick_report is not None
+    recorder.save_tick_report.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test 16: tick_once publishes position.opened
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_once_publishes_position_opened(market_data, strategy, recorder, mocker):
+    now = _T0
+    bus = mocker.AsyncMock(spec=EventBus)
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = TickReport(
+        ts=now,
+        signals=(),
+        fills=(_spot_buy_fill("BTC", price=100.0, qty=10.0), _perp_sell_fill("BTC", price=100.0, qty=10.0)),
+        opened=("BTC",),
+        closed=(),
+    )
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        recorder=recorder,
+        event_bus=bus,
+    )
+
+    await engine.tick_once(now)
+
+    bus.publish.assert_called_once()
+    event: Event = bus.publish.call_args.args[0]
+    assert event.kind == "position.opened"
+    assert event.source == "engine"
+    assert event.level == "INFO"
+    assert event.payload_json["coin"] == "BTC"
+    assert event.payload_json["spot_entry_price"] == 100.0
+    assert event.payload_json["spot_qty"] == 10.0
+    assert event.payload_json["perp_entry_price"] == 100.0
+    assert event.payload_json["perp_qty"] == 10.0
+    assert event.payload_json["is_paper"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test 17: tick_once publishes position.closed
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_once_publishes_position_closed(market_data, strategy, recorder, mocker):
+    now = _T0
+    bus = mocker.AsyncMock(spec=EventBus)
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = TickReport(
+        ts=now,
+        signals=(),
+        fills=(_spot_sell_fill("BTC", price=110.0, qty=10.0), _perp_buy_fill("BTC", price=110.0, qty=10.0)),
+        opened=(),
+        closed=("BTC",),
+    )
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        recorder=recorder,
+        event_bus=bus,
+    )
+
+    await engine.tick_once(now)
+
+    bus.publish.assert_called_once()
+    event: Event = bus.publish.call_args.args[0]
+    assert event.kind == "position.closed"
+    assert event.source == "engine"
+    assert event.level == "INFO"
+    assert event.payload_json["coin"] == "BTC"
+    assert event.payload_json["spot_exit_price"] == 110.0
+    assert event.payload_json["spot_qty"] == 10.0
+    assert event.payload_json["perp_exit_price"] == 110.0
+    assert event.payload_json["perp_qty"] == 10.0
+    assert event.payload_json["is_paper"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test 18: tick_once publishes both opened and closed in same tick
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_once_publishes_both_opened_and_closed_in_same_tick(
+    market_data, strategy, recorder, mocker
+):
+    now = _T0
+    bus = mocker.AsyncMock(spec=EventBus)
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = TickReport(
+        ts=now,
+        signals=(),
+        fills=(
+            _spot_buy_fill("BTC", price=100.0),
+            _perp_sell_fill("BTC", price=100.0),
+            _spot_sell_fill("ETH", price=110.0),
+            _perp_buy_fill("ETH", price=110.0),
+        ),
+        opened=("BTC",),
+        closed=("ETH",),
+    )
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC", "ETH"),
+        recorder=recorder,
+        event_bus=bus,
+    )
+
+    await engine.tick_once(now)
+
+    assert bus.publish.call_count == 2
+    published_events = [call.args[0] for call in bus.publish.call_args_list]
+    kinds = {e.kind for e in published_events}
+    assert "position.opened" in kinds
+    assert "position.closed" in kinds
+    opened_event = next(e for e in published_events if e.kind == "position.opened")
+    closed_event = next(e for e in published_events if e.kind == "position.closed")
+    assert opened_event.payload_json["coin"] == "BTC"
+    assert closed_event.payload_json["coin"] == "ETH"
+
+
+# ---------------------------------------------------------------------------
+# Test 19: tick_once skips publish when open fill missing
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_once_skips_publish_when_open_fill_missing(
+    market_data, strategy, recorder, mocker
+):
+    now = _T0
+    bus = mocker.AsyncMock(spec=EventBus)
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = TickReport(
+        ts=now,
+        signals=(),
+        fills=(),
+        opened=("BTC",),
+        closed=(),
+    )
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        recorder=recorder,
+        event_bus=bus,
+    )
+
+    outcome = await engine.tick_once(now)
+
+    bus.publish.assert_not_called()
+    assert outcome.tick_report is not None
+
+
+# ---------------------------------------------------------------------------
+# Test 20: run publishes engine.started and engine.stopping
+# ---------------------------------------------------------------------------
+
+
+async def test_run_publishes_engine_started_and_stopping(market_data, strategy, mocker):
+    t0 = _T0
+    clock = mocker.MagicMock(
+        side_effect=[
+            t0,               # engine.started
+            t0,               # first loop iteration: now
+            t0 + timedelta(seconds=30),  # second loop iteration: now (after stop)
+            t0 + timedelta(seconds=60),  # engine.stopping
+        ]
+    )
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = _tick_report()
+
+    bus = mocker.AsyncMock(spec=EventBus)
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        clock_fn=clock,
+        event_bus=bus,
+    )
+
+    async def fake_sleep(s):
+        engine.stop()
+
+    engine._sleep = fake_sleep
+
+    await engine.run()
+
+    assert bus.publish.call_count >= 2
+    all_events = [call.args[0] for call in bus.publish.call_args_list]
+    assert all_events[0].kind == "engine.started"
+    assert all_events[-1].kind == "engine.stopping"
+
+
+# ---------------------------------------------------------------------------
+# Test 21: tick_once skips publish when close fill missing
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_once_skips_publish_when_close_fill_missing(
+    market_data, strategy, recorder, mocker
+):
+    now = _T0
+    bus = mocker.AsyncMock(spec=EventBus)
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = TickReport(
+        ts=now,
+        signals=(),
+        fills=(),
+        opened=(),
+        closed=("BTC",),
+    )
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        recorder=recorder,
+        event_bus=bus,
+    )
+
+    outcome = await engine.tick_once(now)
+
+    bus.publish.assert_not_called()
+    assert outcome.tick_report is not None

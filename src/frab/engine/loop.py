@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
-from frab.exchanges.base import FundingTick, MarketDataSource, Quote
+from frab.events.bus import Event, EventBus
+from frab.exchanges.base import FundingTick, Leg, MarketDataSource, Quote, Side
 from frab.strategies.base import EquitySnapshot, Strategy, TickReport
 
 
@@ -51,6 +52,7 @@ class Engine:
         recorder: Recorder | None = None,
         clock_fn: Callable[[], datetime] | None = None,
         sleep_fn: Callable[[float], Awaitable[None]] | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         if len(coins) == 0:
             raise ValueError("coins must be non-empty")
@@ -60,11 +62,17 @@ class Engine:
         self._recorder = recorder if recorder is not None else NullRecorder()
         self._clock_fn = clock_fn if clock_fn is not None else (lambda: datetime.now(UTC))
         self._sleep = sleep_fn if sleep_fn is not None else asyncio.sleep
+        self._event_bus = event_bus
         self._stop = False
         self._last_hour: datetime | None = None
 
     def stop(self) -> None:
         self._stop = True
+
+    async def _publish(self, event: Event) -> None:
+        if self._event_bus is None:
+            return
+        await self._event_bus.publish(event)
 
     async def tick_once(self, now: datetime) -> TickOutcome:
         # 1. Fetch quotes concurrently
@@ -93,6 +101,70 @@ class Engine:
             tick_report = await self._strategy.on_hour_tick(now, funding)
             await self._recorder.save_tick_report(tick_report)
             self._last_hour = current_hour
+
+            # Publish position.opened events
+            for coin in tick_report.opened:
+                spot = next(
+                    (f for f in tick_report.fills if f.coin == coin and f.leg == Leg.SPOT and f.side == Side.BUY),
+                    None,
+                )
+                perp = next(
+                    (f for f in tick_report.fills if f.coin == coin and f.leg == Leg.PERP and f.side == Side.SELL),
+                    None,
+                )
+                if spot is None or perp is None:
+                    continue
+                await self._publish(Event(
+                    ts=now,
+                    level="INFO",
+                    source="engine",
+                    kind="position.opened",
+                    message=f"Opened paper position on {coin}",
+                    payload_json={
+                        "coin": coin,
+                        "spot_entry_price": spot.price,
+                        "spot_qty": spot.qty,
+                        "spot_fee": spot.fee,
+                        "spot_slippage_bps": spot.slippage_bps,
+                        "perp_entry_price": perp.price,
+                        "perp_qty": perp.qty,
+                        "perp_fee": perp.fee,
+                        "perp_slippage_bps": perp.slippage_bps,
+                        "is_paper": spot.is_paper,
+                    },
+                ))
+
+            # Publish position.closed events
+            for coin in tick_report.closed:
+                spot = next(
+                    (f for f in tick_report.fills if f.coin == coin and f.leg == Leg.SPOT and f.side == Side.SELL),
+                    None,
+                )
+                perp = next(
+                    (f for f in tick_report.fills if f.coin == coin and f.leg == Leg.PERP and f.side == Side.BUY),
+                    None,
+                )
+                if spot is None or perp is None:
+                    continue
+                await self._publish(Event(
+                    ts=now,
+                    level="INFO",
+                    source="engine",
+                    kind="position.closed",
+                    message=f"Closed paper position on {coin}",
+                    payload_json={
+                        "coin": coin,
+                        "spot_exit_price": spot.price,
+                        "spot_qty": spot.qty,
+                        "spot_fee": spot.fee,
+                        "spot_slippage_bps": spot.slippage_bps,
+                        "perp_exit_price": perp.price,
+                        "perp_qty": perp.qty,
+                        "perp_fee": perp.fee,
+                        "perp_slippage_bps": perp.slippage_bps,
+                        "is_paper": spot.is_paper,
+                    },
+                ))
         else:
             funding = None
             tick_report = None
@@ -111,6 +183,14 @@ class Engine:
         )
 
     async def run(self) -> None:
+        await self._publish(Event(
+            ts=self._clock_fn(),
+            level="INFO",
+            source="engine",
+            kind="engine.started",
+            message=f"Engine started for coins {list(self._coins)}",
+            payload_json={"coins": list(self._coins)},
+        ))
         while not self._stop:
             now = self._clock_fn()
             next_minute = (now + timedelta(minutes=1)).replace(second=0, microsecond=0)
@@ -119,3 +199,11 @@ class Engine:
             if self._stop:
                 break
             await self.tick_once(next_minute)
+        await self._publish(Event(
+            ts=self._clock_fn(),
+            level="INFO",
+            source="engine",
+            kind="engine.stopping",
+            message="Engine stopping",
+            payload_json=None,
+        ))
