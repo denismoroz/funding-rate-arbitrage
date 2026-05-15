@@ -116,6 +116,70 @@ def test_help_shows_commands():
     assert "init-db" in result.stdout
     assert "seed" in result.stdout
     assert "serve" in result.stdout
+    assert "backfill" in result.stdout
+
+
+def test_backfill_fetches_and_writes(tmp_path, monkeypatch, mocker):
+    from datetime import UTC, datetime
+
+    from frab.exchanges.base import FundingTick
+
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("FRAB_DATA_DIR", str(tmp_path))
+
+    runner.invoke(app, ["init-db"])
+    runner.invoke(app, ["seed"])
+
+    base = datetime(2026, 5, 15, 4, 0, tzinfo=UTC)
+    fake_hl = mocker.MagicMock()
+    fake_hl.fetch_funding_history = mocker.AsyncMock(side_effect=lambda coin, since_ms: [
+        FundingTick(coin=coin, ts=base, rate=0.0001, premium=None, annualized_pct=0.876),
+    ])
+    fake_hl.aclose = mocker.AsyncMock()
+    mocker.patch("frab.cli.HLMarketData", return_value=fake_hl)
+
+    result = runner.invoke(app, ["backfill", "--hours", "24", "--coins", "BTC,ETH"])
+
+    assert result.exit_code == 0, result.output
+    assert "Backfill complete" in result.output
+    assert "BTC: 1 added" in result.output
+    assert "ETH: 1 added" in result.output
+
+    engine = sqlalchemy.create_engine(f"sqlite:///{db_path}", future=True)
+    try:
+        with Session(engine) as session:
+            from frab.db.models import FundingRate
+            count = session.execute(select(FundingRate)).scalars().all()
+            assert len(count) == 2
+    finally:
+        engine.dispose()
+
+
+def test_backfill_is_idempotent(tmp_path, monkeypatch, mocker):
+    from datetime import UTC, datetime
+
+    from frab.exchanges.base import FundingTick
+
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv("FRAB_DATA_DIR", str(tmp_path))
+
+    runner.invoke(app, ["init-db"])
+    runner.invoke(app, ["seed"])
+
+    base = datetime(2026, 5, 15, 4, 0, tzinfo=UTC)
+    fake_hl = mocker.MagicMock()
+    fake_hl.fetch_funding_history = mocker.AsyncMock(side_effect=lambda coin, since_ms: [
+        FundingTick(coin=coin, ts=base, rate=0.0001, premium=None, annualized_pct=0.876),
+    ])
+    fake_hl.aclose = mocker.AsyncMock()
+    mocker.patch("frab.cli.HLMarketData", return_value=fake_hl)
+
+    runner.invoke(app, ["backfill", "--coins", "BTC"])
+    result2 = runner.invoke(app, ["backfill", "--coins", "BTC"])
+
+    assert "BTC: 0 added" in result2.output  # second run is no-op
 
 
 def test_serve_invokes_uvicorn(tmp_path, monkeypatch, mocker):

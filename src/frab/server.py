@@ -4,25 +4,23 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC
 from typing import AsyncIterator
 
 from fastapi import FastAPI
 from sqlalchemy import select
 
 from frab.api.app import create_app
-from frab.db.models import Exchange, PositionMode, Strategy
+from frab.db.models import Exchange, FundingRate, Market, PositionMode, Strategy
 from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.engine.loop import Engine
 from frab.events.bus import EventBus, EventDbSink
-from frab.exchanges.base import FundingTick, MarketDataSource
+from frab.exchanges.base import FundingTick
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.paper import PaperExecutor
 from frab.settings import get_settings
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
-
-BACKFILL_HOURS = 24
 
 logger = logging.getLogger(__name__)
 
@@ -55,43 +53,44 @@ async def _ensure_strategy(session_factory, params_json: dict) -> int:
         return row.id
 
 
-async def _backfill_funding(
-    market_data: MarketDataSource,
-    recorder: DbRecorder,
+async def _load_funding_from_db(
+    session_factory,
     strategy: StrategyA,
     coins: tuple[str, ...],
-    *,
-    hours: int = BACKFILL_HOURS,
+    window_hours: int,
 ) -> int:
-    """Prime the strategy's funding history from the exchange.
+    """Prime the strategy's MarketState from the latest funding rows in DB.
 
-    Fetches the last `hours` of fundingHistory per coin in parallel, writes each
-    tick to the DB (idempotent), and pushes them into the strategy's MarketState
-    so smoothed_signal() becomes non-None without waiting through the warmup.
-
-    Ticks at or after the current hour boundary are dropped — the engine's first
-    hour-tick will fetch and apply that tick itself, and CoinState rejects
-    duplicates by ts.
+    Pulls up to `window_hours` rows per coin (most recent first, then reversed
+    to ascending order). No network calls — historical data must already have
+    been written by `frab backfill` or accumulated by a prior `frab serve` run.
     """
-    now = datetime.now(UTC)
-    current_hour = now.replace(minute=0, second=0, microsecond=0)
-    since_ms = int((now - timedelta(hours=hours)).timestamp() * 1000)
-
-    async def one(coin: str) -> tuple[str, list[FundingTick]]:
-        ticks = await market_data.fetch_funding_history(coin, since_ms)
-        kept = [t for t in ticks if t.ts < current_hour]
-        return coin, kept
-
-    results = await asyncio.gather(*(one(c) for c in coins))
-    ticks_by_coin: dict[str, list[FundingTick]] = {coin: ticks for coin, ticks in results}
-
-    for coin, ticks in ticks_by_coin.items():
-        for tick in ticks:
-            await recorder.save_funding(tick)
+    ticks_by_coin: dict[str, list[FundingTick]] = {}
+    async with session_scope(session_factory) as s:
+        for coin in coins:
+            stmt = (
+                select(FundingRate)
+                .join(Market, FundingRate.market_id == Market.id)
+                .where(Market.coin == coin)
+                .order_by(FundingRate.ts.desc())
+                .limit(window_hours)
+            )
+            result = await s.execute(stmt)
+            rows = result.scalars().all()
+            ticks_by_coin[coin] = [
+                FundingTick(
+                    coin=coin,
+                    ts=fr.ts if fr.ts.tzinfo is not None else fr.ts.replace(tzinfo=UTC),
+                    rate=fr.rate,
+                    premium=fr.premium,
+                    annualized_pct=fr.annualized_pct,
+                )
+                for fr in reversed(rows)
+            ]
 
     applied = strategy.warmup_from_history(ticks_by_coin)
     per_coin = {c: len(ts) for c, ts in ticks_by_coin.items()}
-    logger.info("backfill_funding: applied=%d, per_coin=%s", applied, per_coin)
+    logger.info("load_funding_from_db: applied=%d, per_coin=%s", applied, per_coin)
     return applied
 
 
@@ -145,7 +144,9 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             mode=PositionMode.PAPER,
         )
         await recorder.prime()
-        await _backfill_funding(market_data, recorder, strategy, coins)
+        await _load_funding_from_db(
+            session_factory, strategy, coins, params.signal_window_hours
+        )
         engine = Engine(
             market_data=market_data,
             strategy=strategy,

@@ -2,23 +2,21 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.routing import APIWebSocketRoute
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from frab.db.models import Exchange, Strategy
+from frab.db.models import Exchange, FundingRate, Market, Strategy
 from frab.db.session import init_db, make_session_factory, session_scope
-from frab.exchanges.base import FundingTick
 from frab.server import (
     DEFAULT_COINS,
     EXCHANGE_NAME,
     STRATEGY_NAME,
     STRATEGY_VERSION,
-    _backfill_funding,
     _ensure_strategy,
+    _load_funding_from_db,
     _resolve_exchange,
     build_app,
 )
@@ -121,62 +119,113 @@ def test_build_app_returns_fastapi_with_routes(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _backfill_funding
+# _load_funding_from_db
 # ---------------------------------------------------------------------------
 
-def _ftick(coin: str, ts: datetime, rate: float = 0.0001) -> FundingTick:
-    return FundingTick(
-        coin=coin,
-        ts=ts,
-        rate=rate,
-        premium=None,
-        annualized_pct=rate * 8760 * 100,
-    )
+async def _seed_funding(factory, exchange_id: int, coin: str, ticks: list[tuple[datetime, float]]) -> None:
+    async with session_scope(factory) as s:
+        market = (await s.execute(
+            select(Market).where(Market.exchange_id == exchange_id, Market.coin == coin)
+        )).scalar_one_or_none()
+        if market is None:
+            market = Market(exchange_id=exchange_id, coin=coin, min_size=0.01, tick_size=0.01)
+            s.add(market)
+            await s.flush()
+        for ts, rate in ticks:
+            s.add(FundingRate(
+                market_id=market.id,
+                ts=ts,
+                rate=rate,
+                premium=None,
+                annualized_pct=rate * 8760 * 100,
+            ))
 
 
 @pytest.mark.asyncio
-async def test_backfill_funding_applies_history_and_drops_current_hour(mocker):
-    now = datetime.now(UTC)
-    current_hour = now.replace(minute=0, second=0, microsecond=0)
-    coins = ("BTC", "ETH")
+async def test_load_funding_from_db_primes_strategy_in_ascending_order(mocker):
+    engine, factory = await _factory()
+    try:
+        async with session_scope(factory) as s:
+            exc = Exchange(
+                name=EXCHANGE_NAME, funding_interval_h=1,
+                spot_taker_bps=7.0, perp_taker_bps=3.5,
+            )
+            s.add(exc)
+            await s.flush()
+            exchange_id = exc.id
 
-    market_data = mocker.AsyncMock()
-    btc_ticks = [
-        _ftick("BTC", current_hour - timedelta(hours=h)) for h in (3, 2, 1)
-    ] + [_ftick("BTC", current_hour)]  # current hour boundary — must be dropped
-    eth_ticks = [_ftick("ETH", current_hour - timedelta(hours=h)) for h in (2, 1)]
+        base = datetime(2026, 5, 15, 4, 0, tzinfo=UTC)
+        await _seed_funding(factory, exchange_id, "BTC", [
+            (base, 0.0001),
+            (base + timedelta(hours=1), 0.0002),
+            (base + timedelta(hours=2), 0.0003),
+        ])
+        await _seed_funding(factory, exchange_id, "ETH", [(base, 0.00005)])
 
-    async def fake_history(coin, since_ms):
-        return btc_ticks if coin == "BTC" else eth_ticks
+        strategy = mocker.MagicMock()
+        strategy.warmup_from_history = mocker.MagicMock(return_value=4)
 
-    market_data.fetch_funding_history = AsyncMock(side_effect=fake_history)
-    recorder = mocker.AsyncMock()
-    strategy = mocker.MagicMock()
-    strategy.warmup_from_history = mocker.MagicMock(return_value=5)
+        applied = await _load_funding_from_db(factory, strategy, ("BTC", "ETH"), window_hours=12)
 
-    applied = await _backfill_funding(market_data, recorder, strategy, coins)
-
-    assert applied == 5
-    # save_funding called once per kept tick (3 BTC + 2 ETH = 5; current_hour BTC dropped)
-    assert recorder.save_funding.await_count == 5
-    # warmup_from_history called with the filtered ticks
-    strategy.warmup_from_history.assert_called_once()
-    passed = strategy.warmup_from_history.call_args.args[0]
-    assert len(passed["BTC"]) == 3
-    assert len(passed["ETH"]) == 2
-    assert all(t.ts < current_hour for t in passed["BTC"])
+        assert applied == 4
+        passed = strategy.warmup_from_history.call_args.args[0]
+        assert [t.ts for t in passed["BTC"]] == [
+            base, base + timedelta(hours=1), base + timedelta(hours=2),
+        ]
+        # Re-attach UTC tzinfo even if DB stripped it
+        assert all(t.ts.tzinfo == UTC for t in passed["BTC"])
+        assert len(passed["ETH"]) == 1
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_backfill_funding_handles_empty_history(mocker):
-    market_data = mocker.AsyncMock()
-    market_data.fetch_funding_history = AsyncMock(return_value=[])
-    recorder = mocker.AsyncMock()
-    strategy = mocker.MagicMock()
-    strategy.warmup_from_history = mocker.MagicMock(return_value=0)
+async def test_load_funding_from_db_empty_db_returns_zero(mocker):
+    engine, factory = await _factory()
+    try:
+        strategy = mocker.MagicMock()
+        strategy.warmup_from_history = mocker.MagicMock(return_value=0)
 
-    applied = await _backfill_funding(market_data, recorder, strategy, ("BTC",))
+        applied = await _load_funding_from_db(factory, strategy, ("BTC",), window_hours=12)
 
-    assert applied == 0
-    assert recorder.save_funding.await_count == 0
-    strategy.warmup_from_history.assert_called_once()
+        assert applied == 0
+        passed = strategy.warmup_from_history.call_args.args[0]
+        assert passed == {"BTC": []}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_load_funding_from_db_respects_window_limit(mocker):
+    engine, factory = await _factory()
+    try:
+        async with session_scope(factory) as s:
+            exc = Exchange(
+                name=EXCHANGE_NAME, funding_interval_h=1,
+                spot_taker_bps=7.0, perp_taker_bps=3.5,
+            )
+            s.add(exc)
+            await s.flush()
+            exchange_id = exc.id
+
+        base = datetime(2026, 5, 15, 4, 0, tzinfo=UTC)
+        # Seed 5 rows but request window=3 — should return latest 3 only
+        await _seed_funding(factory, exchange_id, "BTC", [
+            (base + timedelta(hours=h), 0.0001 * h) for h in range(5)
+        ])
+
+        strategy = mocker.MagicMock()
+        strategy.warmup_from_history = mocker.MagicMock(return_value=3)
+
+        await _load_funding_from_db(factory, strategy, ("BTC",), window_hours=3)
+
+        passed = strategy.warmup_from_history.call_args.args[0]
+        assert len(passed["BTC"]) == 3
+        # Latest 3 are hours 2,3,4 — ascending in output
+        assert [t.ts for t in passed["BTC"]] == [
+            base + timedelta(hours=2),
+            base + timedelta(hours=3),
+            base + timedelta(hours=4),
+        ]
+    finally:
+        await engine.dispose()

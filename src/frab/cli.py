@@ -1,3 +1,5 @@
+import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import typer
@@ -5,13 +7,19 @@ import uvicorn
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 import sqlalchemy
 
 from frab.settings import PROJECT_ROOT, get_settings
-from frab.db.models import Exchange, Market
+from frab.db.models import Exchange, FundingRate, Market
+from frab.db.session import session_scope
+from frab.exchanges.base import MarketDataSource
+from frab.exchanges.hyperliquid import HLMarketData
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+
+EXCHANGE_NAME = "hyperliquid"
 
 HYPERLIQUID_SPEC = {
     "name": "hyperliquid",
@@ -109,6 +117,87 @@ def seed() -> None:
         f"exchanges: {added_exchanges} added, {skipped_exchanges} skipped; "
         f"markets: {added_markets} added, {skipped_markets} skipped."
     )
+
+
+async def _backfill_funding_async(
+    session_factory: async_sessionmaker[AsyncSession],
+    market_data: MarketDataSource,
+    coins: tuple[str, ...],
+    hours: int,
+) -> dict[str, int]:
+    """Fetch HL funding history for each coin, write idempotently to DB.
+
+    Returns {coin: ticks_added}.
+    """
+    now = datetime.now(UTC)
+    since_ms = int((now - timedelta(hours=hours)).timestamp() * 1000)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(select(Exchange).where(Exchange.name == EXCHANGE_NAME))
+        exc = result.scalar_one_or_none()
+        if exc is None:
+            raise RuntimeError(f"Exchange {EXCHANGE_NAME!r} not seeded; run `frab seed` first.")
+        markets_result = await s.execute(select(Market).where(Market.exchange_id == exc.id))
+        coin_to_market_id = {m.coin: m.id for m in markets_result.scalars().all()}
+
+    counts: dict[str, int] = {}
+    for coin in coins:
+        market_id = coin_to_market_id.get(coin)
+        if market_id is None:
+            typer.echo(f"  {coin}: unknown coin (not seeded), skipped")
+            counts[coin] = 0
+            continue
+        ticks = await market_data.fetch_funding_history(coin, since_ms)
+        added = 0
+        async with session_scope(session_factory) as s:
+            for tick in ticks:
+                existing = await s.scalar(
+                    select(FundingRate.id).where(
+                        FundingRate.market_id == market_id,
+                        FundingRate.ts == tick.ts,
+                    )
+                )
+                if existing is not None:
+                    continue
+                s.add(FundingRate(
+                    market_id=market_id,
+                    ts=tick.ts,
+                    rate=tick.rate,
+                    premium=tick.premium,
+                    annualized_pct=tick.annualized_pct,
+                ))
+                added += 1
+        counts[coin] = added
+    return counts
+
+
+@app.command()
+def backfill(
+    hours: int = 24,
+    coins: str = "BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE",
+) -> None:
+    """Fetch funding history from Hyperliquid and write to DB (idempotent)."""
+    settings = get_settings()
+    coin_tuple = tuple(c.strip().upper() for c in coins.split(",") if c.strip())
+
+    async def _run() -> dict[str, int]:
+        engine = create_async_engine(settings.db_url, future=True)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        market_data = HLMarketData(
+            api_url=settings.hl_api_url,
+            timeout_s=settings.hl_request_timeout_s,
+        )
+        try:
+            return await _backfill_funding_async(session_factory, market_data, coin_tuple, hours)
+        finally:
+            await market_data.aclose()
+            await engine.dispose()
+
+    counts = asyncio.run(_run())
+    total = sum(counts.values())
+    typer.echo(f"Backfill complete — {total} ticks added across {len(coin_tuple)} coins:")
+    for coin, n in counts.items():
+        typer.echo(f"  {coin}: {n} added")
 
 
 @app.command()
