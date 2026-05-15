@@ -209,6 +209,9 @@ research/data/
 # Application runtime data (SQLite, etc.)
 data/
 
+# Service logs (launchd LaunchAgents write here)
+logs/
+
 # Ruff stuff:
 .ruff_cache/
 
