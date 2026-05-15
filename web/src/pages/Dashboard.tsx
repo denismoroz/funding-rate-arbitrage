@@ -260,12 +260,15 @@ function PositionDetailsModal({
   const chronological = (data ?? []).slice().reverse();
 
   const realCumulative = (() => {
+    const series = [{ ts: position.opened_at, cum_funding: 0 }];
     let acc = 0;
-    return (accruals ?? []).map((a) => {
+    for (const a of accruals ?? []) {
       acc += a.delta;
-      return { ts: a.ts, cum_funding: acc };
-    });
+      series.push({ ts: a.ts, cum_funding: acc });
+    }
+    return series;
   })();
+  const showDots = realCumulative.length < 10;
 
   return (
     <div
@@ -390,7 +393,7 @@ function PositionDetailsModal({
                   dataKey="cum_funding"
                   stroke="#16a34a"
                   strokeWidth={2}
-                  dot={false}
+                  dot={showDots ? { r: 3, fill: "#16a34a" } : false}
                 />
               </LineChart>
             </ResponsiveContainer>
