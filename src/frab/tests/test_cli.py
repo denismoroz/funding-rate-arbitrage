@@ -115,6 +115,22 @@ def test_help_shows_commands():
     assert result.exit_code == 0
     assert "init-db" in result.stdout
     assert "seed" in result.stdout
+    assert "serve" in result.stdout
+
+
+def test_serve_invokes_uvicorn(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'x.db'}")
+    monkeypatch.setenv("FRAB_DATA_DIR", str(tmp_path))
+
+    fake_app = object()
+    build_spy = mocker.patch("frab.server.build_app", return_value=fake_app)
+    run_spy = mocker.patch("frab.cli.uvicorn.run")
+
+    result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "9999", "--coins", "BTC,ETH"])
+
+    assert result.exit_code == 0, result.output
+    build_spy.assert_called_once_with(("BTC", "ETH"))
+    run_spy.assert_called_once_with(fake_app, host="127.0.0.1", port=9999)
 
 
 def test_sync_db_url_strips_aiosqlite():

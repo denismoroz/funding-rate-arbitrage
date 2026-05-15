@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import typer
+import uvicorn
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import select
@@ -108,3 +109,17 @@ def seed() -> None:
         f"exchanges: {added_exchanges} added, {skipped_exchanges} skipped; "
         f"markets: {added_markets} added, {skipped_markets} skipped."
     )
+
+
+@app.command()
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    coins: str = "BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE",
+) -> None:
+    """Run shadow-trading engine + FastAPI server on the configured DB."""
+    from frab.server import build_app
+
+    coin_tuple = tuple(c.strip().upper() for c in coins.split(",") if c.strip())
+    asgi_app = build_app(coin_tuple)
+    uvicorn.run(asgi_app, host=host, port=port)
