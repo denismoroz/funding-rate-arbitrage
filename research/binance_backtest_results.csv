@@ -1,0 +1,13 @@
+exchange,mode,period,annual,max_dd,calmar,sharpe,trades,tim_pct,median_wait_h
+Binance,dynamic_aggressive,full,7.43,0.29,25.3,37.17,30,100.0,0
+Binance,dynamic_aggressive,last_90d,-0.75,0.27,-2.8,-2.8,6,100.0,0
+Binance,dynamic_balanced,full,5.56,0.07,75.9,31.73,10,55.2,1735
+Binance,dynamic_balanced,last_90d,0.0,0.0,0.0,0.0,0,0.0,2160
+Binance,baseline_30_120,full,3.73,0.07,54.2,29.1,8,35.9,4062
+Binance,baseline_30_120,last_90d,0.0,0.0,0.0,0.0,0,0.0,2160
+HL,dynamic_aggressive,full,10.33,0.8,12.9,32.9,92,100.0,0
+HL,dynamic_aggressive,last_90d,1.75,0.06,31.7,8.4,7,100.0,0
+HL,dynamic_balanced,full,10.41,0.2,50.9,35.78,89,83.8,270
+HL,dynamic_balanced,last_90d,-0.07,0.05,-1.3,-0.56,3,13.4,1870
+HL,baseline_30_120,full,9.54,0.11,86.2,34.52,60,71.4,223
+HL,baseline_30_120,last_90d,0.0,0.0,0.0,0.0,0,0.0,2160
