@@ -233,4 +233,84 @@ Regime detector: автоматическое переключение межд�
 
 ---
 
+## Rebalance branch — scale-in/scale-out + rotation (v0.0 → v0.5)
+
+Параллельная ветка исследования: вместо бинарного "open full / close full" — **постепенный вход/выход** + **ротация** капитала между монетами по силе funding. Принципиально другая идея: убрать хардкод `min_hold` и `exit_threshold`, заменить их **экономикой движений** (хочешь выйти — плати fees; есть лучше монета — переезжай).
+
+**Архитектура:**
+- 4 слота (`n_slots_total = 4`), из них до 2 в активной фазе одновременно (`n_main_cap = 2`). Остальные 2 — buffer для ротации (новый coin growing пока старый shrinking).
+- State machine: `empty → growing → holding → shrinking → empty`.
+- Per-tranche accounting: каждый "транш" = 10% от full position ($100 spot + $100 perp), со своим entry_price, накопленным funding, fees. P&L позиции = сумма по траншам.
+- Ротация: если в неудерживаемой монете `ma12 > current + rotation_delta_apr (10%)` — старый слот в `shrinking`, новый в `growing`.
+- Frozen-growing unwind (Fix A): если slot замёрз на partial fill (signal упал ниже entry threshold) и unrealized P&L достиг breakeven — сворачивается.
+- Aave overlay: idle капитал может accrue 5% APR baseline (в v0.5 убран для честных метрик).
+
+**Универс:** U11 = BTC, ETH, SOL, AVAX, LINK, AAVE, DOGE, UNI, ARB, OP, TIA. Capital base = peak observed (~$4.4k = ~2.2 слота).
+
+### Итерации
+
+| # | Файл | Что | Pure annual full | Calmar full | Annual last_90d | Заметка |
+|---|---|---|---|---|---|---|
+| v0.0 | `rebalance_v0.py` | baseline mechanism (4 slots, 10% tranches, rotation, signal-based exit at 10% APR) | 5-7%* | 8-12* | −0.65 to 0.82* | * с Aave overlay |
+| v0.1 | `rebalance_v01.py` | +Aave 5% baseline, drop breakeven gate, fix window-scoped metrics | 7-9%* | 4-19* | 0.7-4.5%* | * с Aave |
+| v0.2 | `rebalance_v02.py` | +Fix A (frozen-growing unwind), asymmetric entry/exit (15%/12%), window-aware %usdc | 8.76* | 6.84* | 5.00%* | * Aave давала +3.94% |
+| v0.3 | `rebalance_v03.py` | exit_signal_threshold 0.12 → 0.00 (hold-til-zero) | 8.76* | 6.84* | 5.00%* | **null result** — ротация всегда срабатывает РАНЬШЕ exit floor. Exit threshold — dead code. |
+| v0.4 | `rebalance_v04.py` | derived entry threshold: `2 × (aave + target_alpha + fee_drag) ≈ 0.15` | 8.96* | 4.77* | 5.00%* | Magic 15% оказалась экономически выведена. |
+| v0.5 | `rebalance_v05.py` | **drop Aave overlay** + sweep floor (0/5/10/15) | 4.82 → 8.26 | 3.6 → 4.4 | 0 → 1.52 | Pure strategy без подушек. |
+
+\* — с Aave income overlay (~3.94% padding).
+
+### Ключевая находка v0.5 — Aave маскировал реальные числа
+
+| config (no Aave overlay) | floor | annual_full | calmar_full | annual_90d | dd_full | dd_90d |
+|---|---|---|---|---|---|---|
+| v05_no_floor | 0% | **8.26%** | 4.03 | **−1.06%** | 2.05% | 0.45% |
+| v05_floor_5 | 5% | 8.41% | 3.58 | 1.17% | 2.35% | 0.11% |
+| v05_floor_10 | 10% | 7.44% | 4.44 | **1.52%** | 1.68% | 0.03% |
+| **v05_floor_15** (derived) | 15% | **4.82%** | 3.74 | 0.00% | 1.29% | 0.00% |
+
+**Floor=15% (derived from economics = 2 × (Aave 5% + fee_drag 2.5%)) — рекомендация.** Не самый высокий annual, но единственный с экономическим обоснованием. Floor=10% даёт лучшие cold-market числа, **но это подгонка под текущий рынок** — нет принципа, который бы её обосновывал, и при изменении Aave rate / fees / market regime она перестанет быть оптимальной.
+
+### Сравнение rebalance vs two_phase_exit (pure strategy, без Aave)
+
+| Strategy | Full annual | Full Calmar | Full DD | 90d annual | 90d Calmar |
+|---|---|---|---|---|---|
+| **two_phase (entry=0.15)** | **13.03%** | **114.4** | 0.11% | −0.07% | −1.3 |
+| baseline_DynAgg | 11.19% | 14.8 | 0.76% | **2.79%** | 51.2 |
+| baseline_COMBO (prod) | 9.93% | 100.9 | 0.10% | 0.00% | 0 |
+| rebalance v0.5 floor=10 | 7.44% | 4.44 | 1.68% | 1.52% | 51.2 |
+| rebalance v0.5 floor=15 | 4.82% | 3.74 | 1.29% | 0.00% | 0 |
+
+**Вывод:** rebalance ветка **не доминирует** two_phase_exit ни на одном горизонте. Two_phase — лучший на full period (13.03% / Calmar 114, в **2.7× больше annual** при **30× лучше Calmar**). DynAgg — лучший на last_90d (2.79% vs наши 1.52%). Rebalance занимает нишу "стабильно мало" — DD скромнее на cold market, но и upside меньше.
+
+### Дополнительные наблюдения
+
+1. **exit_signal_threshold — dead code.** В v0.3 проверили все значения 0.00 / 0.05 / 0.12 / −0.05 — идентичные результаты. Rotation срабатывает раньше, exit threshold никогда не доходит до триггера. В v1.0 можно его удалить из API.
+
+2. **Frozen-growing unwind (Fix A) — обязательный фикс**, без него партишн позиции зависают навсегда и блокируют слот. До Fix A: 4.54% annual last_90d (trapped). После: 5.00% (= match Aave через корректный exit). Чистый win.
+
+3. **Capital usage:** peak ~$4.4k, average ~$3.5k. Стратегия использует ~2 слота из 4 в нормальном режиме, поднимается до 2.2-2.5 во время ротации.
+
+4. **fast_tick (6h tick)** даёт чуть выше calmar при цене 3-4× fees. Не рекомендуется — увеличение churn без понятной выгоды.
+
+### Вердикт по rebalance ветке
+
+**Не превзошла two_phase_exit.** Хорошие свойства (нет хардкода `min_hold`/`exit_threshold`, плавный вход/выход, естественная защита от спайков на входе) не компенсируют **проигрыш в annual returns и Calmar в 30× раз**. Архитектурно интересна, но pure performance уступает.
+
+**Что можно ещё посмотреть, если возвращаться:**
+1. Combined approach: two_phase signal exit logic + tranche-based entry (10% step). Может дать ramp-in benefit без потери spike capture.
+2. Сделать rotation **более избирательным** — сейчас trigger на любом `+10% APR delta`. Может надо требовать persistence (delta держится N часов).
+3. Тестировать на других периодах (2024 hot, 2025 mixed) — может в горячем рынке rebalance дисциплина даёт что-то чего two_phase не может.
+
+### Файлы ветки
+
+- [rebalance_v0.py](rebalance_v0.py), [rebalance_v0_results.csv](rebalance_v0_results.csv)
+- [rebalance_v01.py](rebalance_v01.py), [rebalance_v01_results.csv](rebalance_v01_results.csv)
+- [rebalance_v02.py](rebalance_v02.py), [rebalance_v02_results.csv](rebalance_v02_results.csv)
+- [rebalance_v03.py](rebalance_v03.py), [rebalance_v03_results.csv](rebalance_v03_results.csv)
+- [rebalance_v04.py](rebalance_v04.py), [rebalance_v04_results.csv](rebalance_v04_results.csv)
+- [rebalance_v05.py](rebalance_v05.py), [rebalance_v05_results.csv](rebalance_v05_results.csv)
+
+---
+
 *Документ составлен 2026-05-16. Числа из CSV — точные, без округления сверх исходных 2 знаков после запятой.*
