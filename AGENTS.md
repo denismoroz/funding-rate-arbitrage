@@ -41,7 +41,46 @@
 | local mac | **dev** — здесь идёт разработка, новые фичи, тесты | `/Users/d/prj/funding-rate-arbitrage` |
 | `10.8.0.5` (mbp2.local) | **prod** — always-on paper-trading | `ssh dis@10.8.0.5`, `/Users/dis/prj/funding-rate-arbitrage` |
 
-Prod-инстанс крутится 24/7 (mac не уходит в sleep), source-of-truth для оценки live pace стратегии. Web UI: `http://10.8.0.5:5173/`. Deploy: `git push` на main → SSH → `git pull && uv sync && cd web && npm install && cd .. && launchctl kickstart -k gui/$(id -u)/com.frab.engine`.
+Prod-инстанс крутится 24/7 (mac не уходит в sleep), source-of-truth для оценки live pace стратегии. Web UI: `http://10.8.0.5:5173/`.
+
+### 1.1 Prod (10.8.0.5) — пути и особенности
+
+`ssh dis@10.8.0.5` запускается в non-interactive shell с пустым PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) — `~/.zshrc` (где грузится nvm) **не выполняется**. Поэтому `uv` и `npm` надо звать по абсолютному пути или экспортить PATH вручную.
+
+| Что | Путь |
+|-----|------|
+| Repo | `/Users/dis/prj/funding-rate-arbitrage` |
+| `uv` | `/Users/dis/.local/bin/uv` |
+| `node`/`npm` (nvm) | `/Users/dis/.nvm/versions/node/v24.15.0/bin/` |
+| LaunchAgent plists | `/Users/dis/Library/LaunchAgents/com.frab.{engine,web}.plist` |
+| Логи | `/Users/dis/prj/funding-rate-arbitrage/logs/{engine,web}.{out,err}.log` |
+| Backend (loopback) | `http://127.0.0.1:8765` |
+| Web (LAN) | `http://10.8.0.5:5173/` |
+
+**Deploy recipe (стандартный, без миграций):**
+
+```bash
+ssh dis@10.8.0.5 'cd /Users/dis/prj/funding-rate-arbitrage && \
+  git pull --ff-only origin main && \
+  /Users/dis/.local/bin/uv sync && \
+  export PATH=/Users/dis/.nvm/versions/node/v24.15.0/bin:$PATH && \
+  cd web && npm install && cd .. && \
+  launchctl kickstart -k gui/$(id -u)/com.frab.engine && \
+  launchctl kickstart -k gui/$(id -u)/com.frab.web'
+```
+
+**Если есть Alembic миграции** — добавь `&& /Users/dis/.local/bin/uv run alembic upgrade head` перед kickstart, и сначала забэкапь БД: `cp data/frab.db data/frab.db.bak-$(date +%Y%m%d-%H%M%S)`.
+
+**Если меняется plist template** (новые env, новые ProgramArguments) — `launchctl kickstart` не подхватит изменения, нужен полный reinstall:
+
+```bash
+ssh dis@10.8.0.5 'export PATH=/Users/dis/.local/bin:/Users/dis/.nvm/versions/node/v24.15.0/bin:$PATH && \
+  cd /Users/dis/prj/funding-rate-arbitrage && bash deploy/launchd/install.sh both'
+```
+
+**Гочи:**
+- `pgrep -f "frab serve" | xargs -r kill -9` без предварительного `launchctl bootout` бесполезен — KeepAlive перезапустит процесс за секунды. Порядок всегда: `bootout` → `kill` (cleanup orphan'ов) → `bootstrap`/`install.sh`.
+- `install.sh` сам вызывает `command -v uv` и `command -v npm` — поэтому PATH надо экспортить **до** запуска скрипта, иначе он упадёт с `uv not found`.
 
 ---
 
