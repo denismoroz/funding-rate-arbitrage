@@ -458,7 +458,8 @@ function OpenPositions() {
               <tr className="border-b border-gray-100 text-left text-gray-500">
                 <th className="pb-1 pr-3">Coin</th>
                 <th className="pb-1 pr-3">Opened</th>
-                <th className="pb-1 pr-3 text-right">Notional</th>
+                <th className="pb-1 pr-3 text-right">Spot entry</th>
+                <th className="pb-1 pr-3 text-right">Perp entry</th>
                 <th className="pb-1 pr-3 text-right">Spot now</th>
                 <th className="pb-1 pr-3 text-right">Perp unreal</th>
                 <th className="pb-1 pr-3 text-right">Funding</th>
@@ -483,9 +484,10 @@ function OpenPositions() {
                     {formatRelative(p.opened_at, now)}
                   </td>
                   <td className="py-1 pr-3 text-right">
-                    {p.notional_at_entry != null
-                      ? formatCurrency(p.notional_at_entry)
-                      : "—"}
+                    {formatCurrency(p.spot_units * p.entry_spot_price)}
+                  </td>
+                  <td className="py-1 pr-3 text-right">
+                    {formatCurrency(Math.abs(p.perp_units) * p.entry_perp_price)}
                   </td>
                   <td className="py-1 pr-3 text-right">
                     {p.spot_value_now != null
@@ -789,8 +791,10 @@ export default function Dashboard() {
       <Header wsStatus={status} route="dashboard" />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <EquityCard />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <OpenPositions />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="md:col-span-2">
+            <OpenPositions />
+          </div>
           <RecentSignals />
         </div>
         <RecentFills />
