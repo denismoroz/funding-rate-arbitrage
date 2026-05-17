@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 
 from frab.engine.loop import (
@@ -977,3 +978,95 @@ async def test_tick_completed_hour_tick_with_closed_coins(market_data, strategy,
     assert evt.payload_json["opened_coins"] == []
     assert evt.payload_json["closed_coins"] == ["ETH"]
     assert evt.payload_json["total_equity"] == 8000.0
+
+
+# ---------------------------------------------------------------------------
+# Test 24: run skips tick on transient error and continues
+# ---------------------------------------------------------------------------
+
+
+async def test_run_skips_tick_on_transient_error_and_continues(market_data, strategy, mocker):
+    t0 = _T0
+    clock = mocker.MagicMock(
+        side_effect=[
+            t0,                          # engine.started
+            t0,                          # iteration 1: now
+            t0 + timedelta(seconds=60),  # iteration 2: now
+            t0 + timedelta(seconds=120), # iteration 3: now (stop already set)
+            t0 + timedelta(seconds=120), # engine.stopping
+        ]
+    )
+
+    # First fetch_quote raises ConnectTimeout; subsequent calls return a valid quote.
+    market_data.fetch_quote.side_effect = [
+        httpx.ConnectTimeout("boom"),
+        _quote("BTC"),
+        _quote("BTC"),
+    ]
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = _tick_report()
+
+    bus = mocker.AsyncMock(spec=EventBus)
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        clock_fn=clock,
+        event_bus=bus,
+    )
+
+    tick_count = 0
+
+    async def fake_sleep(s):
+        nonlocal tick_count
+        tick_count += 1
+        if tick_count >= 3:
+            engine.stop()
+
+    engine._sleep = fake_sleep
+
+    await engine.run()
+
+    all_events = [call.args[0] for call in bus.publish.call_args_list]
+    kinds = [e.kind for e in all_events]
+
+    assert "tick.skipped" in kinds
+    assert "tick.completed" in kinds
+
+    skipped = next(e for e in all_events if e.kind == "tick.skipped")
+    assert skipped.level == "WARNING"
+    assert skipped.source == "engine"
+    assert skipped.payload_json["error_type"] == "ConnectTimeout"
+
+
+# ---------------------------------------------------------------------------
+# Test 25: run does not swallow non-transient exceptions
+# ---------------------------------------------------------------------------
+
+
+async def test_run_does_not_swallow_non_transient_exceptions(market_data, strategy, mocker):
+    t0 = _T0
+    clock = mocker.MagicMock(
+        side_effect=[
+            t0,                          # engine.started
+            t0,                          # iteration 1: now
+        ]
+    )
+
+    market_data.fetch_quote.side_effect = ValueError("not a network error")
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        clock_fn=clock,
+    )
+
+    async def fake_sleep(s):
+        pass
+
+    engine._sleep = fake_sleep
+
+    with pytest.raises(ValueError, match="not a network error"):
+        await engine.run()

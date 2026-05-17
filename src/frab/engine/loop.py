@@ -2,13 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
+import httpx
+import tenacity
+
 from frab.events.bus import Event, EventBus
 from frab.exchanges.base import FundingTick, Leg, MarketDataSource, Quote, Side
 from frab.strategies.base import EquitySnapshot, Strategy, TickReport
+
+logger = logging.getLogger(__name__)
+
+TRANSIENT_TICK_ERRORS = (httpx.HTTPError, tenacity.RetryError, asyncio.TimeoutError, ConnectionError)
 
 
 @runtime_checkable
@@ -223,7 +231,19 @@ class Engine:
             await self._sleep(delay_s)
             if self._stop:
                 break
-            await self.tick_once(next_minute)
+            try:
+                await self.tick_once(next_minute)
+            except TRANSIENT_TICK_ERRORS as exc:
+                logger.warning("tick_skipped at %s: %s", next_minute, exc, exc_info=True)
+                await self._publish(Event(
+                    ts=next_minute,
+                    level="WARNING",
+                    source="engine",
+                    kind="tick.skipped",
+                    message=f"Tick skipped due to transient error: {type(exc).__name__}",
+                    payload_json={"error_type": type(exc).__name__, "error_message": str(exc)},
+                ))
+                continue
         await self._publish(Event(
             ts=self._clock_fn(),
             level="INFO",
