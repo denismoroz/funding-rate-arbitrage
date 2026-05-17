@@ -5,9 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
-from frab.api.schemas import StrategyOut, StrategyParamsIn, StrategyParamsOut
+from frab.api.schemas import StrategyOut
 from frab.db.models import Strategy
 from frab.events.bus import Event
+from frab.strategies.registry import get_strategy_spec
 
 router = APIRouter()
 
@@ -31,56 +32,83 @@ async def get_strategy(
     return StrategyOut.model_validate(strategy)
 
 
-@router.get("/{strategy_id}/params", response_model=StrategyParamsOut)
+@router.get("/{strategy_id}/params")
 async def get_strategy_params(
     strategy_id: int,
     session: AsyncSession = Depends(get_session),
-) -> StrategyParamsOut:
+) -> dict:
     result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
     strategy = result.scalar_one_or_none()
     if strategy is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
-    return StrategyParamsOut.model_validate(strategy.params_json)
+
+    try:
+        spec = get_strategy_spec(strategy.name)
+        schema = spec.hot_param_schema()
+        hot_schema_serialized = {
+            k: {
+                "type": v.type,
+                "label": v.label,
+                "min_value": v.min_value,
+                "max_value": v.max_value,
+                "exclusive_min": v.exclusive_min,
+                "exclusive_max": v.exclusive_max,
+                "description": v.description,
+            }
+            for k, v in schema.items()
+        }
+    except KeyError:
+        hot_schema_serialized = {}  # unknown/legacy strategy — show params read-only
+
+    return {
+        "strategy_name": strategy.name,
+        "version": strategy.version,
+        "params": dict(strategy.params_json),
+        "hot_schema": hot_schema_serialized,
+    }
 
 
-@router.post("/{strategy_id}/deploy", response_model=StrategyParamsOut)
+@router.post("/{strategy_id}/deploy")
 async def deploy_strategy_params(
     strategy_id: int,
-    params_in: StrategyParamsIn,
+    body: dict,
     request: Request,
     session: AsyncSession = Depends(get_session),
-) -> StrategyParamsOut:
-    # 1. Load strategy; 404 if missing.
+) -> dict:
     result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
     strategy_row = result.scalar_one_or_none()
     if strategy_row is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
 
-    # 2. Check engine is running for this strategy.
+    # Resolve spec via registry
+    try:
+        spec = get_strategy_spec(strategy_row.name)
+    except KeyError:
+        raise HTTPException(
+            status_code=501,
+            detail=f"Strategy {strategy_row.name!r} is not registered — cannot hot-deploy",
+        )
+
+    # Engine check (must be running for this strategy)
     live_strategy = getattr(request.app.state, "strategy", None)
     live_strategy_id = getattr(request.app.state, "strategy_id", None)
     if live_strategy is None or live_strategy_id != strategy_id:
         raise HTTPException(status_code=503, detail="Engine not running for this strategy")
 
-    # 3. Build merged dict: keep cold fields, override hot fields.
+    # Validate body against spec
+    try:
+        validated = spec.validate_hot_params(body)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    # Apply to live + persist to DB
+    spec.apply_hot_params(live_strategy, validated)
     old_params = dict(strategy_row.params_json)
-    hot_fields = {
-        "entry_threshold": params_in.entry_threshold,
-        "exit_threshold": params_in.exit_threshold,
-        "min_hold_hours": params_in.min_hold_hours,
-        "concurrency_cap": params_in.concurrency_cap,
-        "position_size_usdc": params_in.position_size_usdc,
-    }
-    merged = {**old_params, **hot_fields}
-
-    # 4. Call live strategy's update_hot_params.
-    live_strategy.update_hot_params(**hot_fields)
-
-    # 5. Persist merged params to DB.
+    merged = {**old_params, **validated}
     strategy_row.params_json = merged
     await session.flush()
 
-    # 6. Publish event to bus if available.
+    # Publish event
     bus = getattr(request.app.state, "event_bus", None)
     if bus is not None:
         await bus.publish(Event(
@@ -88,12 +116,15 @@ async def deploy_strategy_params(
             level="INFO",
             source="api",
             kind="strategy.params_updated",
-            message=f"Strategy {strategy_id} params updated",
+            message=f"Strategy {strategy_id} ({strategy_row.name}) params updated",
             payload_json={"old": old_params, "new": merged},
         ))
 
-    # 7. Return merged params.
-    return StrategyParamsOut.model_validate(merged)
+    return {
+        "strategy_name": strategy_row.name,
+        "version": strategy_row.version,
+        "params": merged,
+    }
 
 
 @router.post("/{strategy_id}/force-tick")

@@ -53,19 +53,16 @@ def test_parse_params_override_whitespace():
 
 
 def test_parse_params_override_invalid_json():
-    # Must not raise; returns None and logs warning
     result = parse_params_override("not json")
     assert result is None
 
 
 def test_parse_params_override_valid_json_but_not_dict():
-    # A JSON string is valid JSON but not a dict
     result = parse_params_override('"string"')
     assert result is None
 
 
 def test_parse_params_override_valid_json_array():
-    # A JSON array is valid JSON but not a dict
     result = parse_params_override('[1, 2, 3]')
     assert result is None
 
@@ -117,7 +114,6 @@ def test_strategy_a_spec_build_with_override(mocker):
 def test_strategy_a_spec_build_unknown_key_ignored(mocker):
     executor = mocker.MagicMock()
     spec = _StrategyASpec()
-    # Should not raise; unknown key is silently ignored with a warning
     strategy, params_json = spec.build(
         coins=("BTC",),
         params_override={"unknown_key": 999, "entry_threshold": 0.20},
@@ -209,3 +205,204 @@ def test_two_phase_dynamic_spec_build_returns_correct_params_json_keys(mocker):
         "fee_round_trip_annual",
     }
     assert set(params_json.keys()) == expected_keys
+
+
+# ---------------------------------------------------------------------------
+# _StrategyASpec.validate_hot_params
+# ---------------------------------------------------------------------------
+
+_VALID_A_BODY = {
+    "entry_threshold": 0.50,
+    "exit_threshold": -0.10,
+    "min_hold_hours": 24,
+    "concurrency_cap": 5,
+    "position_size_usdc": 500.0,
+}
+
+
+def test_strategy_a_validate_hot_params_valid():
+    spec = _StrategyASpec()
+    result = spec.validate_hot_params(_VALID_A_BODY)
+    assert result["entry_threshold"] == pytest.approx(0.50)
+    assert result["exit_threshold"] == pytest.approx(-0.10)
+    assert result["min_hold_hours"] == 24
+    assert result["concurrency_cap"] == 5
+    assert result["position_size_usdc"] == pytest.approx(500.0)
+
+
+def test_strategy_a_validate_hot_params_missing_field():
+    spec = _StrategyASpec()
+    body = {k: v for k, v in _VALID_A_BODY.items() if k != "min_hold_hours"}
+    with pytest.raises(ValueError, match="missing required hot param"):
+        spec.validate_hot_params(body)
+
+
+def test_strategy_a_validate_hot_params_bad_type():
+    spec = _StrategyASpec()
+    body = {**_VALID_A_BODY, "entry_threshold": "not_a_number"}
+    with pytest.raises(ValueError, match="entry_threshold"):
+        spec.validate_hot_params(body)
+
+
+def test_strategy_a_validate_hot_params_entry_threshold_zero():
+    spec = _StrategyASpec()
+    # exclusive_min: must be > 0
+    body = {**_VALID_A_BODY, "entry_threshold": 0.0}
+    with pytest.raises(ValueError, match="entry_threshold"):
+        spec.validate_hot_params(body)
+
+
+def test_strategy_a_validate_hot_params_entry_threshold_too_large():
+    spec = _StrategyASpec()
+    body = {**_VALID_A_BODY, "entry_threshold": 6.0}
+    with pytest.raises(ValueError, match="entry_threshold"):
+        spec.validate_hot_params(body)
+
+
+def test_strategy_a_validate_hot_params_exit_threshold_too_low():
+    spec = _StrategyASpec()
+    body = {**_VALID_A_BODY, "exit_threshold": -3.0}
+    with pytest.raises(ValueError, match="exit_threshold"):
+        spec.validate_hot_params(body)
+
+
+def test_strategy_a_validate_hot_params_position_size_zero():
+    spec = _StrategyASpec()
+    # exclusive_min: must be > 0
+    body = {**_VALID_A_BODY, "position_size_usdc": 0.0}
+    with pytest.raises(ValueError, match="position_size_usdc"):
+        spec.validate_hot_params(body)
+
+
+def test_strategy_a_validate_hot_params_exit_ge_entry_cross_field():
+    spec = _StrategyASpec()
+    # exit == entry: cross-field violation
+    body = {**_VALID_A_BODY, "exit_threshold": 0.50, "entry_threshold": 0.50}
+    with pytest.raises(ValueError, match="exit_threshold must be strictly less than entry_threshold"):
+        spec.validate_hot_params(body)
+
+
+def test_strategy_a_validate_hot_params_exit_above_entry_cross_field():
+    spec = _StrategyASpec()
+    body = {**_VALID_A_BODY, "exit_threshold": 0.60, "entry_threshold": 0.50}
+    with pytest.raises(ValueError, match="exit_threshold must be strictly less than entry_threshold"):
+        spec.validate_hot_params(body)
+
+
+def test_strategy_a_validate_hot_params_type_coercion():
+    spec = _StrategyASpec()
+    # Strings that represent numbers should be coerced
+    body = {
+        "entry_threshold": "0.50",
+        "exit_threshold": "-0.10",
+        "min_hold_hours": "24",
+        "concurrency_cap": "5",
+        "position_size_usdc": "500.0",
+    }
+    result = spec.validate_hot_params(body)
+    assert result["min_hold_hours"] == 24
+    assert isinstance(result["min_hold_hours"], int)
+    assert result["concurrency_cap"] == 5
+    assert isinstance(result["concurrency_cap"], int)
+
+
+# ---------------------------------------------------------------------------
+# _TwoPhaseDynamicSpec.validate_hot_params
+# ---------------------------------------------------------------------------
+
+_VALID_TPD_BODY = {
+    "entry_threshold": 0.20,
+    "base_min_hold_hours": 48,
+    "safety_mult": 6.0,
+    "cap_min_hold_hours": 360,
+    "phase1_negative_patience": 48,
+    "phase1_breakeven_cap_hours": 360,
+    "phase2_exit_threshold": -0.05,
+    "concurrency_cap": 5,
+    "position_size_usdc": 500.0,
+    "fee_round_trip_annual": 18.396,
+}
+
+
+def test_two_phase_dynamic_validate_hot_params_valid():
+    spec = _TwoPhaseDynamicSpec()
+    result = spec.validate_hot_params(_VALID_TPD_BODY)
+    assert result["entry_threshold"] == pytest.approx(0.20)
+    assert result["base_min_hold_hours"] == 48
+    assert result["safety_mult"] == pytest.approx(6.0)
+    assert result["cap_min_hold_hours"] == 360
+    assert result["phase1_negative_patience"] == 48
+    assert result["phase1_breakeven_cap_hours"] == 360
+    assert result["phase2_exit_threshold"] == pytest.approx(-0.05)
+    assert result["concurrency_cap"] == 5
+    assert result["position_size_usdc"] == pytest.approx(500.0)
+    assert result["fee_round_trip_annual"] == pytest.approx(18.396)
+
+
+def test_two_phase_dynamic_validate_hot_params_missing_field():
+    spec = _TwoPhaseDynamicSpec()
+    body = {k: v for k, v in _VALID_TPD_BODY.items() if k != "fee_round_trip_annual"}
+    with pytest.raises(ValueError, match="fee_round_trip_annual"):
+        spec.validate_hot_params(body)
+
+
+def test_two_phase_dynamic_validate_hot_params_bad_type():
+    spec = _TwoPhaseDynamicSpec()
+    body = {**_VALID_TPD_BODY, "safety_mult": "oops"}
+    with pytest.raises(ValueError, match="safety_mult"):
+        spec.validate_hot_params(body)
+
+
+def test_two_phase_dynamic_validate_hot_params_entry_threshold_zero():
+    spec = _TwoPhaseDynamicSpec()
+    body = {**_VALID_TPD_BODY, "entry_threshold": 0.0}
+    with pytest.raises(ValueError, match="entry_threshold"):
+        spec.validate_hot_params(body)
+
+
+def test_two_phase_dynamic_validate_hot_params_concurrency_cap_too_large():
+    spec = _TwoPhaseDynamicSpec()
+    body = {**_VALID_TPD_BODY, "concurrency_cap": 99}
+    with pytest.raises(ValueError, match="concurrency_cap"):
+        spec.validate_hot_params(body)
+
+
+def test_two_phase_dynamic_validate_hot_params_position_size_zero():
+    spec = _TwoPhaseDynamicSpec()
+    body = {**_VALID_TPD_BODY, "position_size_usdc": 0.0}
+    with pytest.raises(ValueError, match="position_size_usdc"):
+        spec.validate_hot_params(body)
+
+
+def test_two_phase_dynamic_validate_hot_params_base_min_hold_below_one():
+    spec = _TwoPhaseDynamicSpec()
+    body = {**_VALID_TPD_BODY, "base_min_hold_hours": 0}
+    with pytest.raises(ValueError, match="base_min_hold_hours"):
+        spec.validate_hot_params(body)
+
+
+def test_two_phase_dynamic_validate_hot_params_fee_zero():
+    spec = _TwoPhaseDynamicSpec()
+    body = {**_VALID_TPD_BODY, "fee_round_trip_annual": 0.0}
+    with pytest.raises(ValueError, match="fee_round_trip_annual"):
+        spec.validate_hot_params(body)
+
+
+# ---------------------------------------------------------------------------
+# apply_hot_params delegates correctly
+# ---------------------------------------------------------------------------
+
+def test_strategy_a_apply_hot_params(mocker):
+    spec = _StrategyASpec()
+    mock_strategy = mocker.MagicMock()
+    validated = dict(_VALID_A_BODY)
+    spec.apply_hot_params(mock_strategy, validated)
+    mock_strategy.update_hot_params.assert_called_once_with(**validated)
+
+
+def test_two_phase_dynamic_apply_hot_params(mocker):
+    spec = _TwoPhaseDynamicSpec()
+    mock_strategy = mocker.MagicMock()
+    validated = dict(_VALID_TPD_BODY)
+    spec.apply_hot_params(mock_strategy, validated)
+    mock_strategy.update_hot_params.assert_called_once_with(**validated)

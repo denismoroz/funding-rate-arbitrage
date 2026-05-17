@@ -31,20 +31,28 @@ async function apiPostJson<TReq, TRes>(path: string, body: TReq): Promise<TRes> 
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type StrategyParams = {
-  coins: string[];
-  entry_threshold: number;
-  exit_threshold: number;
-  min_hold_hours: number;
-  signal_window_hours: number;
-  concurrency_cap: number;
-  position_size_usdc: number;
-};
+export interface HotFieldSpec {
+  type: "float" | "int";
+  label: string;
+  min_value: number | null;
+  max_value: number | null;
+  exclusive_min: boolean;
+  exclusive_max: boolean;
+  description: string;
+}
 
-export type StrategyParamsHot = Pick<
-  StrategyParams,
-  "entry_threshold" | "exit_threshold" | "min_hold_hours" | "concurrency_cap" | "position_size_usdc"
->;
+export interface StrategyParamsResponse {
+  strategy_name: string;
+  version: string;
+  params: Record<string, unknown>;
+  hot_schema: Record<string, HotFieldSpec>;
+}
+
+export interface DeployResponse {
+  strategy_name: string;
+  version: string;
+  params: Record<string, unknown>;
+}
 
 export type Strategy = {
   id: number;
@@ -210,12 +218,15 @@ export function fetchPositionFundingHistory(
   );
 }
 
-export function fetchStrategyParams(id: number): Promise<StrategyParams> {
-  return apiFetch<StrategyParams>(`/strategies/${id}/params`);
+export function fetchStrategyParams(id: number): Promise<StrategyParamsResponse> {
+  return apiFetch<StrategyParamsResponse>(`/strategies/${id}/params`);
 }
 
-export function deployStrategyParams(id: number, body: StrategyParamsHot): Promise<StrategyParams> {
-  return apiPostJson<StrategyParamsHot, StrategyParams>(`/strategies/${id}/deploy`, body);
+export function deployStrategyParams(
+  id: number,
+  body: Record<string, number>,
+): Promise<DeployResponse> {
+  return apiPostJson<Record<string, number>, DeployResponse>(`/strategies/${id}/deploy`, body);
 }
 
 export function forceHourTick(id: number): Promise<{ status: string; message: string }> {
