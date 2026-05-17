@@ -1,0 +1,353 @@
+"""Unit tests for TwoPhaseDecision logic."""
+from __future__ import annotations
+import pytest
+from frab.engine.two_phase_signals import (
+    TwoPhaseDecision,
+    compute_position_min_hold,
+    decide_two_phase,
+    update_consec_negative,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_BASE_EXIT_PARAMS: dict = dict(
+    in_position=True,
+    smoothed_signal_annual=0.05,
+    entry_threshold=0.10,
+    hours_in_position=750,
+    position_min_hold_hours=720,
+    gross_funding_so_far=2.0,
+    total_fees_paid=4.2,
+    consec_negative_hours=0,
+    current_hourly_income_quote=0.001,
+    phase1_negative_patience=72,
+    phase1_breakeven_cap_hours=720,
+    phase2_exit_threshold=-0.10,
+)
+
+
+def _decide(**overrides) -> TwoPhaseDecision:
+    params = {**_BASE_EXIT_PARAMS, **overrides}
+    return decide_two_phase(**params)
+
+
+# ---------------------------------------------------------------------------
+# compute_position_min_hold
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "entry_signal, safety_mult, base, cap, expected",
+    [
+        # typical C-config: 5 × 183.96 = 919.8 → capped at 720
+        (0.10,  5.0, 24, 720, 720),
+        # 5 × 122.64 = 613.2 → int = 613
+        (0.15,  5.0, 24, 720, 613),
+        # 5 × 61.32 = 306.6 → int = 306
+        (0.30,  5.0, 24, 720, 306),
+        # 5 × 367.92 = 1839.6 → capped at 720
+        (0.05,  5.0, 24, 720, 720),
+        # 5 × 36.792 = 183.96 → int = 183
+        (0.50,  5.0, 24, 720, 183),
+        # 5 × 18.396 = 91.98 → int = 91
+        (1.00,  5.0, 24, 720,  91),
+        # 5 × 3.6792 = 18.396 < base=24 → 24
+        (5.00,  5.0, 24, 720,  24),
+        # rate=0 → cap
+        (0.0,   5.0, 24, 720, 720),
+        # rate<0 → cap
+        (-0.10, 5.0, 24, 720, 720),
+        # 3 × 183.96 = 551.88 → int = 551
+        (0.10,  3.0, 24, 720, 551),
+        # 10 × 183.96 = 1839.6 → capped at 720
+        (0.10, 10.0, 24, 720, 720),
+    ],
+)
+def test_compute_position_min_hold(
+    entry_signal: float,
+    safety_mult: float,
+    base: int,
+    cap: int,
+    expected: int,
+) -> None:
+    result = compute_position_min_hold(
+        entry_signal_annual=entry_signal,
+        safety_mult=safety_mult,
+        base_min_hold_hours=base,
+        cap_min_hold_hours=cap,
+    )
+    assert result == expected
+
+
+def test_compute_position_min_hold_custom_fee() -> None:
+    """VIP fee tier (half of retail) produces half the min_hold (before clamping)."""
+    # fee=9.198, entry=0.15, mult=5.0: 5 × (9.198/0.15) = 5 × 61.32 = 306.6 → 306
+    result = compute_position_min_hold(
+        entry_signal_annual=0.15,
+        safety_mult=5.0,
+        base_min_hold_hours=24,
+        cap_min_hold_hours=720,
+        fee_round_trip_annual=9.198,
+    )
+    assert result == 306
+
+
+# ---------------------------------------------------------------------------
+# update_consec_negative
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "prev, signal, expected",
+    [
+        (0,  0.10,  0),   # positive resets from 0
+        (5,  0.10,  0),   # positive resets from 5
+        (0, -0.05,  1),   # first negative
+        (5, -0.05,  6),   # increment
+        (5,  0.0,   0),   # zero is NOT negative (strict <0)
+        (5,  None,  5),   # no data, hold counter unchanged
+    ],
+)
+def test_update_consec_negative(
+    prev: int,
+    signal: float | None,
+    expected: int,
+) -> None:
+    result = update_consec_negative(
+        prev_consec_negative=prev,
+        smoothed_signal_annual=signal,
+    )
+    assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 1: Entry decisions (in_position=False)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "smoothed, entry_threshold, expected",
+    [
+        (None,   0.10, TwoPhaseDecision.NONE),   # no signal
+        (0.05,   0.10, TwoPhaseDecision.NONE),   # below threshold
+        (0.10,   0.10, TwoPhaseDecision.NONE),   # equal — strict >, not triggered
+        (0.15,   0.10, TwoPhaseDecision.OPEN),   # above threshold
+        (-0.05,  0.10, TwoPhaseDecision.NONE),   # negative
+    ],
+)
+def test_decide_entry_branch(
+    smoothed: float | None,
+    entry_threshold: float,
+    expected: TwoPhaseDecision,
+) -> None:
+    result = decide_two_phase(
+        in_position=False,
+        smoothed_signal_annual=smoothed,
+        entry_threshold=entry_threshold,
+        hours_in_position=0,
+        position_min_hold_hours=720,
+        gross_funding_so_far=0.0,
+        total_fees_paid=0.0,
+        consec_negative_hours=0,
+        current_hourly_income_quote=0.0,
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+    )
+    assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 2: Locked by dynamic min_hold
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "gross, fees, consec_neg, income, smoothed",
+    [
+        # not in profit, consec would trigger phase1_neg if unlocked
+        (2.0, 4.2, 100, 0.001, 0.05),
+        # in profit, smoothed below phase2 threshold — would be CLOSE_PHASE2 if unlocked
+        (5.0, 4.2,   0, 0.001, -1.0),
+        # not in profit, income would trigger phase1_cap if unlocked
+        (2.0, 4.2,   0, 0.0001, 0.05),
+    ],
+)
+def test_decide_locked_by_min_hold(
+    gross: float,
+    fees: float,
+    consec_neg: int,
+    income: float,
+    smoothed: float,
+) -> None:
+    result = decide_two_phase(
+        in_position=True,
+        smoothed_signal_annual=smoothed,
+        entry_threshold=0.10,
+        hours_in_position=100,       # < position_min_hold_hours=720
+        position_min_hold_hours=720,
+        gross_funding_so_far=gross,
+        total_fees_paid=fees,
+        consec_negative_hours=consec_neg,
+        current_hourly_income_quote=income,
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+    )
+    assert result == TwoPhaseDecision.NONE
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 3: Phase 1 (not in_profit), no exit
+# ---------------------------------------------------------------------------
+
+
+def test_decide_phase1_no_exit() -> None:
+    """Not in profit, within patience, breakeven reachable — stay."""
+    result = _decide(
+        gross_funding_so_far=2.0,
+        total_fees_paid=4.2,
+        hours_in_position=750,
+        position_min_hold_hours=720,
+        consec_negative_hours=20,       # < patience=72
+        current_hourly_income_quote=0.01,  # remaining=2.2, htb=220 < cap=720
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+    )
+    assert result == TwoPhaseDecision.NONE
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 4: Phase 1, CLOSE_PHASE1_NEG
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "consec_neg, patience, expected",
+    [
+        (73, 72, TwoPhaseDecision.CLOSE_PHASE1_NEG),  # strict > patience
+        (72, 72, TwoPhaseDecision.NONE),              # boundary — equality NOT trigger
+    ],
+)
+def test_decide_phase1_neg(
+    consec_neg: int,
+    patience: int,
+    expected: TwoPhaseDecision,
+) -> None:
+    result = _decide(
+        gross_funding_so_far=2.0,
+        total_fees_paid=4.2,
+        consec_negative_hours=consec_neg,
+        phase1_negative_patience=patience,
+        # ensure breakeven cap won't fire first (income high enough)
+        current_hourly_income_quote=1.0,
+        phase1_breakeven_cap_hours=720,
+    )
+    assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 5: Phase 1, CLOSE_PHASE1_CAP
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "income, gross, fees, expected",
+    [
+        # remaining=2.0, htb=2000 > cap=720 → CLOSE_PHASE1_CAP
+        (0.001, 2.2, 4.2, TwoPhaseDecision.CLOSE_PHASE1_CAP),
+        # remaining=2.0, htb=400 < cap=720 → NONE
+        (0.005, 2.2, 4.2, TwoPhaseDecision.NONE),
+        # income=0 (or negative), consec within patience → NONE (cap branch needs income>0)
+        (0.0,   2.2, 4.2, TwoPhaseDecision.NONE),
+    ],
+)
+def test_decide_phase1_cap(
+    income: float,
+    gross: float,
+    fees: float,
+    expected: TwoPhaseDecision,
+) -> None:
+    result = _decide(
+        gross_funding_so_far=gross,
+        total_fees_paid=fees,
+        current_hourly_income_quote=income,
+        consec_negative_hours=20,   # well within patience=72
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+    )
+    assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 6: Phase 2 (in_profit)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "smoothed, p2_threshold, expected",
+    [
+        # above threshold → stay
+        (-0.05, -0.10, TwoPhaseDecision.NONE),
+        # boundary — equality NOT trigger (strict <)
+        (-0.10, -0.10, TwoPhaseDecision.NONE),
+        # below threshold → close
+        (-0.15, -0.10, TwoPhaseDecision.CLOSE_PHASE2),
+        # well below → close
+        (-1.00, -0.10, TwoPhaseDecision.CLOSE_PHASE2),
+    ],
+)
+def test_decide_phase2(
+    smoothed: float,
+    p2_threshold: float,
+    expected: TwoPhaseDecision,
+) -> None:
+    result = _decide(
+        gross_funding_so_far=5.0,
+        total_fees_paid=4.2,
+        smoothed_signal_annual=smoothed,
+        phase2_exit_threshold=p2_threshold,
+        consec_negative_hours=0,
+        current_hourly_income_quote=0.001,
+    )
+    assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 7: Phase 1 priority over Phase 2
+# ---------------------------------------------------------------------------
+
+
+def test_decide_phase1_priority_over_phase2() -> None:
+    """Not in profit → must stay in Phase 1, even if signal would trigger Phase 2."""
+    # smoothed=-1.0 would trigger CLOSE_PHASE2 if in_profit, but gross < fees
+    result = _decide(
+        gross_funding_so_far=2.0,
+        total_fees_paid=4.2,        # not in profit
+        smoothed_signal_annual=-1.0,
+        consec_negative_hours=20,   # within patience → no CLOSE_PHASE1_NEG
+        phase1_negative_patience=72,
+        current_hourly_income_quote=0.001,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+    )
+    # remaining=2.2, htb=2200 > 720 → CLOSE_PHASE1_CAP (NOT CLOSE_PHASE2)
+    assert result == TwoPhaseDecision.CLOSE_PHASE1_CAP
+
+
+def test_decide_phase1_priority_neg_trigger() -> None:
+    """Not in profit + consec > patience → CLOSE_PHASE1_NEG, not CLOSE_PHASE2."""
+    result = _decide(
+        gross_funding_so_far=2.0,
+        total_fees_paid=4.2,        # not in profit
+        smoothed_signal_annual=-1.0,
+        consec_negative_hours=80,   # > patience=72
+        phase1_negative_patience=72,
+        current_hourly_income_quote=0.001,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+    )
+    assert result == TwoPhaseDecision.CLOSE_PHASE1_NEG
