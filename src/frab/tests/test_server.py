@@ -13,13 +13,12 @@ from frab.db.session import init_db, make_session_factory, session_scope
 from frab.server import (
     DEFAULT_COINS,
     EXCHANGE_NAME,
-    STRATEGY_NAME,
-    STRATEGY_VERSION,
     _ensure_strategy,
     _load_funding_from_db,
     _resolve_exchange,
     build_app,
 )
+from frab.strategies.registry import get_strategy_spec
 
 
 async def _factory():
@@ -31,16 +30,17 @@ async def _factory():
 async def test_ensure_strategy_creates_when_missing():
     engine, factory = await _factory()
     try:
+        spec = get_strategy_spec("strategy_a")
         params = {"coins": list(DEFAULT_COINS), "concurrency_cap": 3}
-        sid = await _ensure_strategy(factory, params)
+        sid = await _ensure_strategy(factory, params, name=spec.name, version=spec.version)
         assert sid > 0
 
         async with session_scope(factory) as s:
             row = (await s.execute(
                 select(Strategy).where(Strategy.id == sid)
             )).scalar_one()
-            assert row.name == STRATEGY_NAME
-            assert row.version == STRATEGY_VERSION
+            assert row.name == spec.name
+            assert row.version == spec.version
             assert row.params_json == params
     finally:
         await engine.dispose()
@@ -49,8 +49,9 @@ async def test_ensure_strategy_creates_when_missing():
 async def test_ensure_strategy_reuses_existing_row():
     engine, factory = await _factory()
     try:
-        sid1 = await _ensure_strategy(factory, {"v": 1})
-        sid2 = await _ensure_strategy(factory, {"v": 2})  # different params, same name/version
+        spec = get_strategy_spec("strategy_a")
+        sid1 = await _ensure_strategy(factory, {"v": 1}, name=spec.name, version=spec.version)
+        sid2 = await _ensure_strategy(factory, {"v": 2}, name=spec.name, version=spec.version)  # different params, same name/version
         assert sid1 == sid2
 
         async with session_scope(factory) as s:

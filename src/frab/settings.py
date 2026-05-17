@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     paper_extra_slip_bps: float = Field(default=2.0)
 
+    strategy_name: str = Field(default="strategy_a")  # "strategy_a" | "strategy_c"
+    strategy_params_json: str = Field(default="")     # optional JSON override of default params
+
     log_level: str = Field(default="INFO")
 
     def model_post_init(self, __context: object) -> None:

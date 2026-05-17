@@ -29,36 +29,34 @@ from frab.exchanges.base import FundingTick
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.paper import PaperExecutor
 from frab.settings import get_settings
+from frab.strategies.base import Strategy as StrategyBase
+from frab.strategies.registry import get_strategy_spec, parse_params_override
 from frab.strategies.strategy_a import (
     AccumulatorsSnapshot,
     OpenPositionSnapshot,
-    StrategyA,
-    StrategyAParams,
 )
 
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_COINS: tuple[str, ...] = ("BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE")
-STRATEGY_NAME = "strategy_a"
-STRATEGY_VERSION = "v1"
 EXCHANGE_NAME = "hyperliquid"
 
 
-async def _ensure_strategy(session_factory, params_json: dict) -> int:
+async def _ensure_strategy(session_factory, params_json: dict, *, name: str, version: str) -> int:
     async with session_scope(session_factory) as s:
         result = await s.execute(
             select(Strategy).where(
-                Strategy.name == STRATEGY_NAME,
-                Strategy.version == STRATEGY_VERSION,
+                Strategy.name == name,
+                Strategy.version == version,
             )
         )
         existing = result.scalar_one_or_none()
         if existing is not None:
             return existing.id
         row = Strategy(
-            name=STRATEGY_NAME,
-            version=STRATEGY_VERSION,
+            name=name,
+            version=version,
             params_json=params_json,
             status="idle",
         )
@@ -69,7 +67,7 @@ async def _ensure_strategy(session_factory, params_json: dict) -> int:
 
 async def _load_funding_from_db(
     session_factory,
-    strategy: StrategyA,
+    strategy: StrategyBase,
     coins: tuple[str, ...],
     window_hours: int,
 ) -> int:
@@ -110,7 +108,7 @@ async def _load_funding_from_db(
 
 async def _rehydrate_strategy_from_db(
     session_factory,
-    strategy: StrategyA,
+    strategy: StrategyBase,
     strategy_id: int,
 ) -> None:
     """Restore in-memory positions + cash/accumulators after engine restart.
@@ -188,17 +186,6 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        params = StrategyAParams(coins=coins)
-        params_json = {
-            "coins": list(coins),
-            "entry_threshold": params.entry_threshold,
-            "exit_threshold": params.exit_threshold,
-            "min_hold_hours": params.min_hold_hours,
-            "signal_window_hours": params.signal_window_hours,
-            "concurrency_cap": params.concurrency_cap,
-            "position_size_usdc": params.position_size_usdc,
-        }
-        strategy_id = await _ensure_strategy(session_factory, params_json)
         exchange_id, spot_bps, perp_bps = await _resolve_exchange(session_factory)
 
         market_data = HLMarketData(
@@ -211,7 +198,18 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             perp_taker_bps=perp_bps,
             extra_slip_bps=settings.paper_extra_slip_bps,
         )
-        strategy = StrategyA(params=params, executor=executor)
+
+        spec = get_strategy_spec(settings.strategy_name)
+        params_override = parse_params_override(settings.strategy_params_json)
+        strategy, params_json = spec.build(
+            coins=coins,
+            params_override=params_override,
+            executor=executor,
+        )
+
+        strategy_id = await _ensure_strategy(
+            session_factory, params_json, name=spec.name, version=spec.version
+        )
         recorder = DbRecorder(
             session_factory,
             strategy_id=strategy_id,
@@ -219,8 +217,11 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             mode=PositionMode.PAPER,
         )
         await recorder.prime()
+
+        # Derive signal_window_hours from strategy params for DB warmup
+        signal_window_hours = params_json.get("signal_window_hours", 12)
         await _load_funding_from_db(
-            session_factory, strategy, coins, params.signal_window_hours
+            session_factory, strategy, coins, signal_window_hours
         )
         await _rehydrate_strategy_from_db(session_factory, strategy, strategy_id)
         engine = Engine(
@@ -244,7 +245,10 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         await sink.wait_until_subscribed()
         engine_task = asyncio.create_task(engine.run(), name="engine")
         engine_task.add_done_callback(_on_task_done)
-        logger.info("frab serve: engine + sink started (strategy_id=%d, coins=%s)", strategy_id, coins)
+        logger.info(
+            "frab serve: started (strategy=%s/%s, strategy_id=%d, coins=%s)",
+            spec.name, spec.version, strategy_id, coins,
+        )
 
         app.state.strategy = strategy
         app.state.strategy_id = strategy_id
