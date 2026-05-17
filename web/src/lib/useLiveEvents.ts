@@ -4,16 +4,17 @@ import type { LiveEvent } from "./ws";
 
 export type WsStatus = "connecting" | "open" | "closed";
 
-const STRATEGY_ID = 1;
 const MAX_BACKOFF_MS = 30_000;
 
-export function useLiveEvents(): { status: WsStatus; lastEvent: LiveEvent | null } {
+export function useLiveEvents(strategyId?: number): { status: WsStatus; lastEvent: LiveEvent | null } {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<WsStatus>("connecting");
   const [lastEvent, setLastEvent] = useState<LiveEvent | null>(null);
 
   // Use refs so the effect closure always sees the current values without
   // needing to be recreated on every state change.
+  const strategyIdRef = useRef<number | undefined>(strategyId);
+  strategyIdRef.current = strategyId;
   const backoffRef = useRef<number>(1_000);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -39,6 +40,7 @@ export function useLiveEvents(): { status: WsStatus; lastEvent: LiveEvent | null
       setLastEvent(parsed);
 
       const { kind, payload_json } = parsed;
+      const sid = strategyIdRef.current;
 
       if (kind === "engine.started" || kind === "engine.stopping") {
         invalidate([["events"], ["events-header"], ["strategies"]]);
@@ -47,10 +49,10 @@ export function useLiveEvents(): { status: WsStatus; lastEvent: LiveEvent | null
 
       if (kind === "position.opened" || kind === "position.closed") {
         invalidate([
-          ["positions-open", STRATEGY_ID],
-          ["positions-recent", STRATEGY_ID],
+          ["positions-open", sid],
+          ["positions-recent", sid],
           ["events"],
-          ["equity", STRATEGY_ID],
+          ["equity", sid],
         ]);
         return;
       }
@@ -60,8 +62,8 @@ export function useLiveEvents(): { status: WsStatus; lastEvent: LiveEvent | null
         // tick.completed → EventDbSink writes it). Invalidate the events queries
         // so RecentEvents and the Header pill pick up the new row.
         const keys: unknown[][] = [
-          ["equity", STRATEGY_ID],
-          ["signals", STRATEGY_ID],
+          ["equity", sid],
+          ["signals", sid],
           ["events"],
           ["events-header"],
         ];
@@ -70,8 +72,8 @@ export function useLiveEvents(): { status: WsStatus; lastEvent: LiveEvent | null
         const closedCoins = (payload_json?.closed_coins as string[] | undefined) ?? [];
 
         if (openedCoins.length > 0 || closedCoins.length > 0) {
-          keys.push(["positions-open", STRATEGY_ID]);
-          keys.push(["positions-recent", STRATEGY_ID]);
+          keys.push(["positions-open", sid]);
+          keys.push(["positions-recent", sid]);
         }
 
         invalidate(keys);

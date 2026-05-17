@@ -42,6 +42,8 @@ async def test_ensure_strategy_creates_when_missing():
             assert row.name == spec.name
             assert row.version == spec.version
             assert row.params_json == params
+            assert row.status == "running"
+            assert row.started_at is not None
     finally:
         await engine.dispose()
 
@@ -57,6 +59,44 @@ async def test_ensure_strategy_reuses_existing_row():
         async with session_scope(factory) as s:
             rows = (await s.execute(select(Strategy))).scalars().all()
             assert len(rows) == 1
+            assert rows[0].status == "running"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_marks_status_running_and_cleans_up_leftovers():
+    """_ensure_strategy must mark the active strategy as 'running' and sweep
+    any previously-running strategies to 'stopped' (crash recovery)."""
+    engine, factory = await _factory()
+    try:
+        # Seed a leftover 'running' strategy from a previous (crashed) process.
+        spec = get_strategy_spec("strategy_a")
+        async with session_scope(factory) as s:
+            leftover = Strategy(
+                name="other_strategy",
+                version="v0",
+                params_json={},
+                status="running",
+            )
+            s.add(leftover)
+            await s.flush()
+            leftover_id = leftover.id
+
+        sid = await _ensure_strategy(factory, {"v": 1}, name=spec.name, version=spec.version)
+
+        async with session_scope(factory) as s:
+            # The newly-ensured strategy must be running.
+            active = (await s.get(Strategy, sid))
+            assert active is not None
+            assert active.status == "running"
+            assert active.started_at is not None
+
+            # The leftover must have been swept to stopped.
+            old = (await s.get(Strategy, leftover_id))
+            assert old is not None
+            assert old.status == "stopped"
+            assert old.stopped_at is not None
     finally:
         await engine.dispose()
 

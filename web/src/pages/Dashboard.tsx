@@ -25,8 +25,7 @@ import {
 import { formatCurrency, formatRelative, formatNumber } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { useLiveEvents, type WsStatus } from "../lib/useLiveEvents";
-
-const STRATEGY_ID = 1;
+import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
@@ -81,6 +80,7 @@ const WS_DOT: Record<WsStatus, string> = {
 
 function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" }) {
   const now = useNow();
+  const strategyId = useActiveStrategyId();
   const stratQ = useQuery({
     queryKey: ["strategies"],
     queryFn: fetchStrategies,
@@ -92,7 +92,7 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
     queryFn: () => fetchEvents({ limit: 20 }),
   });
 
-  const strategy = stratQ.data?.find((s) => s.id === STRATEGY_ID);
+  const strategy = stratQ.data?.find((s) => s.id === strategyId);
 
   // Engine liveness: a tick.completed within the last 90s means the engine
   // is alive regardless of whether the latest engine.* event happens to be
@@ -159,9 +159,11 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
 // ── Equity card ───────────────────────────────────────────────────────────────
 
 function EquityCard() {
+  const strategyId = useActiveStrategyId();
   const { data, isLoading, error } = useQuery({
-    queryKey: ["equity", STRATEGY_ID],
-    queryFn: () => fetchEquity(STRATEGY_ID, { limit: 2000 }),
+    queryKey: ["equity", strategyId],
+    queryFn: () => fetchEquity(strategyId!, { limit: 2000 }),
+    enabled: !!strategyId,
   });
 
   const slice = data
@@ -408,11 +410,13 @@ function PositionDetailsModal({
 
 function OpenPositions() {
   const now = useNow();
+  const strategyId = useActiveStrategyId();
   const [selected, setSelected] = useState<Position | null>(null);
   const { data, isLoading, error } = useQuery({
-    queryKey: ["positions-open", STRATEGY_ID],
+    queryKey: ["positions-open", strategyId],
     queryFn: () =>
-      fetchPositions({ strategyId: STRATEGY_ID, status: "open" }),
+      fetchPositions({ strategyId: strategyId!, status: "open" }),
+    enabled: !!strategyId,
   });
 
   return (
@@ -494,9 +498,11 @@ const ACTION_COLOR: Record<string, string> = {
 
 function RecentSignals() {
   const now = useNow();
+  const strategyId = useActiveStrategyId();
   const { data, isLoading, error } = useQuery({
-    queryKey: ["signals", STRATEGY_ID],
-    queryFn: () => fetchSignals({ strategyId: STRATEGY_ID, limit: 20 }),
+    queryKey: ["signals", strategyId],
+    queryFn: () => fetchSignals({ strategyId: strategyId!, limit: 20 }),
+    enabled: !!strategyId,
   });
 
   return (
@@ -554,9 +560,11 @@ function RecentSignals() {
 
 function RecentFills() {
   const now = useNow();
+  const strategyId = useActiveStrategyId();
   const { data, isLoading, error } = useQuery({
-    queryKey: ["positions-recent", STRATEGY_ID],
-    queryFn: () => fetchPositions({ strategyId: STRATEGY_ID, limit: 10 }),
+    queryKey: ["positions-recent", strategyId],
+    queryFn: () => fetchPositions({ strategyId: strategyId!, limit: 10 }),
+    enabled: !!strategyId,
   });
 
   const fills: (Fill & { coin: string })[] = (data ?? [])
@@ -692,7 +700,8 @@ function RecentEvents() {
 export { Header };
 
 export default function Dashboard() {
-  const { status } = useLiveEvents();
+  const strategyId = useActiveStrategyId();
+  const { status } = useLiveEvents(strategyId);
 
   return (
     <div className="min-h-screen bg-gray-50">

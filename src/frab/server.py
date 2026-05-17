@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -45,6 +45,17 @@ EXCHANGE_NAME = "hyperliquid"
 
 async def _ensure_strategy(session_factory, params_json: dict, *, name: str, version: str) -> int:
     async with session_scope(session_factory) as s:
+        # Defensive cleanup: mark any leftover 'running' strategies as 'stopped'
+        # (handles crash recovery when previous process exited uncleanly).
+        leftover = await s.execute(
+            select(Strategy).where(Strategy.status == "running")
+        )
+        now_utc = datetime.now(UTC)
+        for st in leftover.scalars().all():
+            st.status = "stopped"
+            st.stopped_at = now_utc
+
+        # Find or create the strategy row.
         result = await s.execute(
             select(Strategy).where(
                 Strategy.name == name,
@@ -52,17 +63,20 @@ async def _ensure_strategy(session_factory, params_json: dict, *, name: str, ver
             )
         )
         existing = result.scalar_one_or_none()
-        if existing is not None:
-            return existing.id
-        row = Strategy(
-            name=name,
-            version=version,
-            params_json=params_json,
-            status="idle",
-        )
-        s.add(row)
-        await s.flush()
-        return row.id
+        if existing is None:
+            existing = Strategy(
+                name=name,
+                version=version,
+                params_json=params_json,
+                status="idle",
+            )
+            s.add(existing)
+            await s.flush()
+
+        # Mark this strategy as running.
+        existing.status = "running"
+        existing.started_at = now_utc
+        return existing.id
 
 
 async def _load_funding_from_db(
@@ -257,6 +271,15 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         try:
             yield
         finally:
+            try:
+                async with session_scope(session_factory) as s:
+                    row = await s.get(Strategy, app.state.strategy_id)
+                    if row is not None:
+                        row.status = "stopped"
+                        row.stopped_at = datetime.now(UTC)
+            except Exception:
+                logger.exception("failed to mark strategy as stopped on shutdown")
+
             app.state.strategy = None
             app.state.strategy_id = None
             app.state.engine = None

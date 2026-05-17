@@ -8,9 +8,8 @@ import {
   type StrategyParamsHot,
 } from "../lib/api";
 import { useLiveEvents } from "../lib/useLiveEvents";
+import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Header } from "./Dashboard";
-
-const STRATEGY_ID = 1;
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
@@ -126,12 +125,14 @@ function NumberInput({
 // ── Settings page ─────────────────────────────────────────────────────────────
 
 export default function Settings() {
-  const { status } = useLiveEvents();
+  const strategyId = useActiveStrategyId();
+  const { status } = useLiveEvents(strategyId);
   const queryClient = useQueryClient();
 
   const paramsQ = useQuery({
-    queryKey: ["strategy-params", STRATEGY_ID],
-    queryFn: () => fetchStrategyParams(STRATEGY_ID),
+    queryKey: ["strategy-params", strategyId],
+    queryFn: () => fetchStrategyParams(strategyId!),
+    enabled: !!strategyId,
   });
 
   // Form state
@@ -168,7 +169,7 @@ export default function Settings() {
   }
 
   const mutation = useMutation({
-    mutationFn: (body: StrategyParamsHot) => deployStrategyParams(STRATEGY_ID, body),
+    mutationFn: (body: StrategyParamsHot) => deployStrategyParams(strategyId!, body),
     onSuccess: (data) => {
       const now = new Date();
       const hms = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -176,7 +177,7 @@ export default function Settings() {
       setErrorMsg(null);
       setForm(hotFromParams(data));
       setInitialized(true);
-      void queryClient.invalidateQueries({ queryKey: ["strategy-params", STRATEGY_ID] });
+      void queryClient.invalidateQueries({ queryKey: ["strategy-params", strategyId] });
       void queryClient.invalidateQueries({ queryKey: ["events"] });
       void queryClient.invalidateQueries({ queryKey: ["events-header"] });
     },
@@ -192,7 +193,7 @@ export default function Settings() {
   }
 
   const forceTickMutation = useMutation({
-    mutationFn: () => forceHourTick(STRATEGY_ID),
+    mutationFn: () => forceHourTick(strategyId!),
     onSuccess: (data) => {
       setSuccessMsg(data.message);
       setErrorMsg(null);
@@ -204,6 +205,7 @@ export default function Settings() {
   });
 
   const deployDisabled =
+    !strategyId ||
     paramsQ.isLoading ||
     !dirty ||
     hasFieldErrors ||
@@ -352,7 +354,7 @@ export default function Settings() {
                 </button>
                 <button
                   onClick={() => forceTickMutation.mutate()}
-                  disabled={forceTickMutation.isPending}
+                  disabled={forceTickMutation.isPending || !strategyId}
                   title="Schedule an hour-tick on the next minute boundary (≤60s) — runs funding fetch + open/close decisions without waiting for the real hourly boundary."
                   className={`rounded px-4 py-2 text-sm font-semibold transition-colors ${
                     forceTickMutation.isPending
