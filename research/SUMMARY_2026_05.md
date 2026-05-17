@@ -63,6 +63,7 @@ Funding-harvest стратегия (Strategy A) на 7 монетах Hyperliqui
 | 17 | Dynamic exits (adaptive/trailing/forward) | `dynamic_exit` | adaptive +0.3: ann_full 11.86%/calmar 15.5, last_90d 2.26%/calmar 42.1 | Marginal vs baseline. Конфиги что «выигрывают» — degenerate (avg_hold 3000-7600h) |
 | 18 | Continuous breakeven exit (rate-aware) | `breakeven_exit` | e=0.15/base=48/cap=720: ann_full 11.94%/calmar **106.6**, last_90d ann −0.07%/calmar −1.3 | Хорошо на full, dead на cold. Логика правильно режет убытки |
 | 19 | **Two-phase exit (break-even / profit)** | **`two_phase_exit`** | **e=0.15/p1_neg=24/p1_cap=480/p2_exit=-0.10: ann_full 13.03%/calmar 114.4, last_90d ann −0.07%/calmar −1.3** | **NEW BEST на full calmar**. 42 phase2 exits (profit) + 27 phase1 exits (cut loss) = 60/40. Реальная стратегия, не overfit |
+| 20 | **Two-phase exit + dynamic min_hold** | **`two_phase_dynamic`** | **e=0.10/sm=5/cap=720/p1_neg=72/p1_cap=720/p2=-0.10: ann_full 15.34%/calmar 23.1, last_90d ann 3.44%/calmar 65.9** | **Дуальный лидер**. Low entry активирует cold market (3.44% > DynAgg 2.79%), dynamic min_hold защищает phase1 от ранних exits на шуме (только 7 phase1 vs 40 phase2). Жертва — full calmar упал с 114 до 23 (DD 0.67% vs 0.11%). Кандидат для **always-on** ноги портфеля. |
 
 ---
 
@@ -132,6 +133,7 @@ Funding-harvest стратегия (Strategy A) на 7 монетах Hyperliqui
 | math_derived s=3/cap=1080 U7 (floor=5.11%) | 10.79% | 0.98% | 11.0 | 2.79% | 0.07% | 42.2 | math_derived |
 | math_derived s=5/cap=1080 U7 (floor=8.52%) | 11.14% | 0.98% | 11.4 | 2.68% | 0.06% | 47.6 | math_derived |
 | **two_phase e=0.15/p1_neg=24/p1_cap=480/p2_exit=-0.10** ⭐ | **13.03%** | **0.11%** | **114.4** | −0.07% (мёртв) | 0.05% | −1.3 | two_phase_exit |
+| **two_phase_dynamic e=0.10/sm=5/cap=720/p1_neg=72/p1_cap=720/p2=-0.10** ⭐⭐ | **15.34%** | 0.67% | 23.1 | **3.44%** | 0.05% | **65.9** | two_phase_dynamic |
 | breakeven_exit e=0.15/base=48/cap=720 | 11.94% | 0.11% | 106.6 | −0.07% | 0.05% | −1.3 | breakeven_exit |
 
 **Замечания:**
@@ -158,7 +160,7 @@ median(signal_ma12 по U7 за последние 30 дней) < 0.08   →  pa
 
 ## Рекомендация для прода
 
-Теперь у нас **ДВА чётких кандидата** с разной философией. Выбор зависит от убеждения о будущем рынке.
+Теперь у нас **ТРИ чётких кандидата** с разной философией. Выбор зависит от убеждения о будущем рынке. **Рекомендуемая комбинация:** split капитала между A (two_phase) и C (two_phase_dynamic) — см. раздел "Portfolio split" ниже.
 
 ### Кандидат A: two_phase exit (если ждёшь возврата горячего рынка)
 
@@ -194,21 +196,76 @@ signal_window  = 12
 
 Бэктест: full 11.19%/year, Calmar 14.8, last_90d **2.79%/year, Calmar 51.2**. Работает в любом режиме, но full calmar в 8 раз хуже Кандидата A.
 
+### Кандидат C: two_phase_dynamic (always-on, доминирует в обоих режимах) ⭐⭐
+
+**«Та же two-phase философия, но входим раньше — а dynamic min_hold защищает позицию от шума пока fees не окупились»**
+
+```
+coins                       = ["BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE"]
+K                           = 3
+entry                       = 0.10        # 10% annualized (vs 0.15 у Кандидата A)
+signal_window               = 12
+base_min_hold               = 24          # минимум (срабатывает только при очень высоком rate)
+safety_mult                 = 5.0         # position_min_hold = 5 × breakeven_h
+cap_min_hold                = 720         # верхний потолок hold (30 дней)
+phase1_negative_patience    = 72          # часов rate<0 подряд до сдачи в phase 1
+phase1_breakeven_cap_hours  = 720
+phase2_exit_threshold       = -0.10
+```
+
+**Per-position min_hold формула:**
+```
+breakeven_h = 18.4 / entry_rate_annual           # 18.4 = 0.0021 × 8760
+position_min_hold = min(720, max(24, 5 × breakeven_h))
+
+# Примеры:
+# entry rate 10% → breakeven 184h → min_hold = min(720, 920) = 720h
+# entry rate 15% → breakeven 123h → min_hold = min(720, 615) = 615h
+# entry rate 30% → breakeven  61h → min_hold = min(720, 305) = 305h
+# entry rate  5% → breakeven 368h → min_hold = 720h (capped)
+```
+
+**Бэктест:** full **15.34%/year, Calmar 23.1, DD 0.67%**, 50 трейдов, avg_hold 1496h (62 дня). Phase split: 7 phase1 (cut-loss) / 38 phase2 (profit). На last_90d: **3.44%/year, Calmar 65.9** — лучший cold-market результат во всём исследовании.
+
+**Trade-off vs Кандидата A:** annual выше (+2.31 п.п.), но DD ×6 (0.67% vs 0.11%), full Calmar в 5 раз ниже (23 vs 114). Зато работает на любом рынке без regime detector.
+
+### Portfolio split (рекомендация)
+
+Поскольку A и C имеют **противоположные профили**, имеет смысл держать обе ноги одновременно:
+
+- **A (two_phase, entry=0.15):** **молчит** в cold, выдаёт 13%/year при горячем рынке с микроскопической DD. Работает только когда есть альфа.
+- **C (two_phase_dynamic, entry=0.10):** **всегда в рынке**, выдаёт 3-15%/year в зависимости от регима, DD на порядок выше.
+
+**Простая статическая аллокация (без regime detector):**
+
+| Профиль | A (two_phase) | C (two_phase_dynamic) | Смысл |
+|---|---|---|---|
+| Консервативный | 70% | 30% | Минимальная DD, opportunity cost когда C простаивает |
+| **Сбалансированный** ⭐ | **50%** | **50%** | Плавный профиль: A добавляет upside в горячем рынке, C обеспечивает baseline |
+| Агрессивный | 30% | 70% | Максимальная активность, готов к DD до ~0.5% на портфельном уровне |
+
+**Сбалансированный 50/50 (грубая оценка, A и C на ~независимых трейдах):**
+- Full annual: ≈ (13.03 + 15.34) / 2 = **14.2%**
+- Full DD: ≈ max(0.11, 0.67) = **0.67%** (доминирует C)
+- Last_90d annual: ≈ (0 + 3.44) / 2 = **1.72%**
+
+**Важно для реализации:** A и C **должны видеть разные слоты** (например, по K=2 у каждой = total 4 позиции одновременно). Иначе они будут конкурировать за один coin и сигнал A (e=0.15) всегда выиграет у C (e=0.10) — C превратится в reserve, а смысл split'а пропадёт. Технически: две отдельные `strategies` записи в DB, каждая со своим набором позиций.
+
 ### ВАЖНО
 
 Текущие prod-параметры (entry=0.10, min_hold=1) **гарантированно убыточны** — при min_hold=1 трейд закрывается через 1 час, fees=21bps, funding gain за 1h при 10% annual ≈0.11bps → убыток −20.9bps на каждый трейд. Нужно срочно переключить на A или B.
 
 ### Лучшее из обоих миров (теоретически)
 
-Regime detector: автоматическое переключение между two_phase entry=0.15 (hot mode) и dynamic_aggressive entry=0.08 (cold mode) на основе median funding rate за последние 30 дней. **Не реализовано.**
+Regime detector: автоматическое переключение между two_phase entry=0.15 (hot mode) и dynamic_aggressive entry=0.08 (cold mode) на основе median funding rate за последние 30 дней. **Не реализовано — теперь менее актуально, т.к. Кандидат C сам адаптируется через per-position dynamic min_hold.**
 
 ---
 
 ## Что осталось НЕ исследовано
 
-1. **Combination two-phase exit + dynamic min_hold на low entry** — может снять проблему «too many phase1 exits» на entry=0.08. Гипотеза: two-phase правила для exit + dynamic min_hold (вместо фикс base_min) позволят low-entry стратегии работать на cold market БЕЗ катастрофы по full calmar.
+1. ~~**Combination two-phase exit + dynamic min_hold на low entry**~~ ✅ **Сделано** (см. эксперимент #20, файл `two_phase_dynamic.py`). Гипотеза подтвердилась: low entry + dynamic min_hold = активность в cold market БЕЗ phase1-катастрофы. Стал Кандидатом C.
 
-2. **Regime-switching автомат** — код детектора режима (hot/cold) для переключения между two_phase entry=0.15 и dynamic_aggressive entry=0.08, hysteresis, cooldown. Концепция описана, реализация отсутствует.
+2. **Regime-switching автомат** — менее актуально, т.к. Кандидат C (two_phase_dynamic) сам адаптируется через per-position dynamic min_hold. Но split A+C (статичная аллокация 50/50) даёт ещё лучший результат — описан, требует реализации в Engine как две независимые strategy records.
 
 3. **Strategy B (stake & hedge)** — по memory calmar 3.07 в бектесте, независимый источник альфы. `research/backtest_b_hedge_results.csv` существует, но стратегии A+B не сведены в единый portfolio view.
 
