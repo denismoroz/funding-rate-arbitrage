@@ -92,6 +92,9 @@ class PositionOut(_UtcAwareOut):
     perp_unrealized: float | None = None
     notional_at_entry: float | None = None
     net_mtm: float | None = None
+    # Cost/projection fields:
+    slippage_cost: float | None = None      # Sum of bid-ask spread cost paid (open + close)
+    breakeven_at: datetime | None = None    # Projected breakeven date based on latest signal
 
 
 class SignalOut(_UtcAwareOut):

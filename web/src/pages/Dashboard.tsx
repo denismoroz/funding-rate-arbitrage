@@ -406,6 +406,28 @@ function PositionDetailsModal({
   );
 }
 
+// ── Open positions helpers ─────────────────────────────────────────────────────
+
+function formatRelativeFuture(iso: string | null, nowMs: number): string {
+  if (!iso) return "—";
+  const diffMs = new Date(iso).getTime() - nowMs;
+  if (diffMs <= 0) return "passed";
+  const days = Math.floor(diffMs / (24 * 3600 * 1000));
+  const hours = Math.floor((diffMs % (24 * 3600 * 1000)) / (3600 * 1000));
+  if (days >= 1) return `in ${days}d ${hours}h`;
+  if (hours >= 1) return `in ${hours}h`;
+  const mins = Math.floor(diffMs / (60 * 1000));
+  return `in ${mins}m`;
+}
+
+function beColor(iso: string | null, nowMs: number): string {
+  if (!iso) return "text-gray-500";
+  const diffMs = new Date(iso).getTime() - nowMs;
+  if (diffMs <= 0) return "text-gray-500";
+  if (diffMs < 7 * 24 * 3600 * 1000) return "text-amber-600";
+  return "text-gray-700";
+}
+
 // ── Open positions ─────────────────────────────────────────────────────────────
 
 function OpenPositions() {
@@ -441,7 +463,9 @@ function OpenPositions() {
                 <th className="pb-1 pr-3 text-right">Perp unreal</th>
                 <th className="pb-1 pr-3 text-right">Funding</th>
                 <th className="pb-1 pr-3 text-right">Fees</th>
-                <th className="pb-1 text-right">Net P/L</th>
+                <th className="pb-1 pr-3 text-right">Slip</th>
+                <th className="pb-1 pr-3 text-right">Net P/L</th>
+                <th className="pb-1 text-right">BE date</th>
               </tr>
             </thead>
             <tbody>
@@ -495,8 +519,11 @@ function OpenPositions() {
                   <td className="py-1 pr-3 text-right text-red-500">
                     {formatCurrency(p.fees_paid)}
                   </td>
+                  <td className="py-1 pr-3 text-right text-red-500">
+                    {p.slippage_cost !== null ? formatCurrency(p.slippage_cost) : "—"}
+                  </td>
                   <td
-                    className={`py-1 text-right ${
+                    className={`py-1 pr-3 text-right ${
                       p.net_mtm == null
                         ? "text-gray-400"
                         : p.net_mtm > 0
@@ -507,6 +534,9 @@ function OpenPositions() {
                     }`}
                   >
                     {p.net_mtm != null ? formatCurrency(p.net_mtm) : "—"}
+                  </td>
+                  <td className={`py-1 text-right ${beColor(p.breakeven_at, now)}`}>
+                    {formatRelativeFuture(p.breakeven_at, now)}
                   </td>
                 </tr>
               ))}

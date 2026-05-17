@@ -115,6 +115,9 @@ export type Position = {
   perp_unrealized: number | null;
   notional_at_entry: number | null;
   net_mtm: number | null;
+  // Cost/projection fields:
+  slippage_cost: number | null;
+  breakeven_at: string | null;     // ISO datetime or null
 };
 
 export type Signal = {

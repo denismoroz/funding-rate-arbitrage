@@ -1,10 +1,12 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
 from frab.api.schemas import FillOut, PositionFundingAccrualOut, PositionOut
-from frab.db.models import Fill, Market, Position, PositionFundingAccrual, PositionStatus, Price
+from frab.db.models import Fill, Market, Position, PositionFundingAccrual, PositionStatus, Price, Signal
 
 router = APIRouter()
 
@@ -62,7 +64,27 @@ async def list_positions(
             if mark is not None:
                 latest_marks[coin] = mark
     else:
+        coin_to_market_id = {}
         latest_marks = {}
+
+    # Batch-load latest signal_value per (strategy_id, coin) for OPEN positions
+    latest_signals: dict[tuple[int, str], float] = {}
+    open_rows = [(pos, coin) for pos, coin in rows if pos.status == PositionStatus.OPEN]
+    for pos, coin in open_rows:
+        market_id = coin_to_market_id.get(coin)
+        if market_id is not None and pos.strategy_id is not None:
+            sig_q = await session.execute(
+                select(Signal.signal_value)
+                .where(
+                    Signal.strategy_id == pos.strategy_id,
+                    Signal.market_id == market_id,
+                )
+                .order_by(Signal.ts.desc())
+                .limit(1)
+            )
+            sig = sig_q.scalar_one_or_none()
+            if sig is not None:
+                latest_signals[(pos.strategy_id, coin)] = sig
 
     out = []
     for position, coin in rows:
@@ -85,6 +107,33 @@ async def list_positions(
             perp_unrealized = None
             net_mtm = None
             current_mark_v = None
+
+        # Slippage cost: spread paid on open (+ close if position is closed)
+        slippage_cost: float | None = None
+        if position.entry_spot_price is not None and position.entry_perp_price is not None:
+            slippage_cost = (position.entry_spot_price - position.entry_perp_price) * position.spot_units
+            if (
+                position.exit_spot_price is not None
+                and position.exit_perp_price is not None
+            ):
+                slippage_cost += (position.exit_perp_price - position.exit_spot_price) * position.spot_units
+
+        # Break-even date projection (OPEN positions only)
+        breakeven_at: datetime | None = None
+        if position.status == PositionStatus.OPEN and slippage_cost is not None and mark is not None:
+            sig_annual = latest_signals.get((position.strategy_id, coin))
+            if sig_annual is not None and sig_annual > 0:
+                remaining = max(
+                    0.0,
+                    position.fees_paid + slippage_cost - position.funding_collected,
+                )
+                if remaining <= 0.0:
+                    breakeven_at = position.opened_at
+                else:
+                    hourly_income = abs(position.perp_units) * mark * sig_annual / 8760
+                    if hourly_income > 0:
+                        hours_to_be = remaining / hourly_income
+                        breakeven_at = datetime.now(UTC) + timedelta(hours=hours_to_be)
 
         pos_dict = {
             "id": position.id,
@@ -110,6 +159,8 @@ async def list_positions(
             "perp_unrealized": perp_unrealized,
             "notional_at_entry": notional_at_entry,
             "net_mtm": net_mtm,
+            "slippage_cost": slippage_cost,
+            "breakeven_at": breakeven_at,
         }
         out.append(PositionOut.model_validate(pos_dict))
     return out
