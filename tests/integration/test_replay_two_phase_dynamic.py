@@ -1,9 +1,9 @@
-"""Integration test: replay real CSV data through full Strategy C stack.
+"""Integration test: replay real CSV data through full TwoPhaseDynamic stack.
 
 Two tests:
-1. smoke  — 6-month replay of prod StrategyC, sanity-checks plausible activity.
-2. parity — compare prod StrategyC vs research simulate_two_phase_dynamic on the
-             same windowed dataset.
+1. smoke  — 6-month replay of prod TwoPhaseDynamic, sanity-checks plausible activity.
+2. parity — compare prod TwoPhaseDynamic vs research simulate_two_phase_dynamic on
+             the same windowed dataset.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import pytest
 
 from frab.engine.loop import Engine
 from frab.exchanges.paper import PaperExecutor
-from frab.strategies.strategy_c import StrategyC, StrategyCParams
+from frab.strategies.two_phase_dynamic import TwoPhaseDynamic, TwoPhaseDynamicParams
 
 # ---------------------------------------------------------------------------
 # Re-use helpers from the Strategy A integration test.
@@ -38,7 +38,7 @@ COINS = ("BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE")
 WINDOW_START = datetime(2024, 1, 1, tzinfo=UTC)
 WINDOW_END = datetime(2024, 7, 1, tzinfo=UTC)
 
-# StrategyC config chosen from the SUMMARY / two_phase_dynamic_results sweep
+# TwoPhaseDynamic config chosen from the SUMMARY / two_phase_dynamic_results sweep
 C_PARAMS = dict(
     coins=COINS,
     entry_threshold=0.10,
@@ -126,8 +126,8 @@ def _run_research_simulation(coins, window_start, window_end):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_replay_strategy_c_six_months_smoke():
-    """Prod StrategyC drives cleanly through 6 months of real data."""
+async def test_replay_two_phase_dynamic_six_months_smoke():
+    """Prod TwoPhaseDynamic drives cleanly through 6 months of real data."""
     # 1. Load data
     data_by_coin: dict[str, list] = {}
     for coin in COINS:
@@ -148,8 +148,8 @@ async def test_replay_strategy_c_six_months_smoke():
         perp_taker_bps=3.5,   # matches research PERP_TAKER = 0.00035
         extra_slip_bps=0.0,
     )
-    params = StrategyCParams(**C_PARAMS)
-    strategy = StrategyC(params=params, executor=executor)
+    params = TwoPhaseDynamicParams(**C_PARAMS)
+    strategy = TwoPhaseDynamic(params=params, executor=executor)
     initial_cash = strategy.cash
 
     engine = Engine(market_data=market, strategy=strategy, coins=COINS)
@@ -203,9 +203,9 @@ async def test_replay_strategy_c_six_months_smoke():
         f"expected {2 * (total_opens + total_closes)} fills, got {total_fills}"
     )
 
-    # StrategyC-specific: opened_min_holds must have been populated
+    # TwoPhaseDynamic-specific: opened_min_holds must have been populated
     assert first_opened_min_hold is not None, (
-        "no opened_min_holds populated — StrategyC not recording min_hold correctly"
+        "no opened_min_holds populated — TwoPhaseDynamic not recording min_hold correctly"
     )
     coin_oh, min_hold_val = first_opened_min_hold
     assert coin_oh in COINS, f"opened_min_holds coin {coin_oh!r} not in universe"
@@ -220,8 +220,8 @@ async def test_replay_strategy_c_six_months_smoke():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_replay_strategy_c_parity_with_research():
-    """Prod StrategyC must produce opens/pnl comparable to research simulate_two_phase_dynamic."""
+async def test_replay_two_phase_dynamic_parity_with_research():
+    """Prod TwoPhaseDynamic must produce opens/pnl comparable to research simulate_two_phase_dynamic."""
     # 1. Load same 6-month data
     data_by_coin: dict[str, list] = {}
     for coin in COINS:
@@ -239,8 +239,8 @@ async def test_replay_strategy_c_parity_with_research():
         perp_taker_bps=3.5,
         extra_slip_bps=0.0,
     )
-    params = StrategyCParams(**C_PARAMS)
-    strategy = StrategyC(params=params, executor=executor)
+    params = TwoPhaseDynamicParams(**C_PARAMS)
+    strategy = TwoPhaseDynamic(params=params, executor=executor)
     initial_cash = strategy.cash
 
     engine = Engine(market_data=market, strategy=strategy, coins=COINS)

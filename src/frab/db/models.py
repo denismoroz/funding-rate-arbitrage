@@ -131,7 +131,7 @@ class Position(Base):
     realized_pnl: Mapped[float] = mapped_column(default=0.0)
     funding_collected: Mapped[float] = mapped_column(default=0.0)
     fees_paid: Mapped[float] = mapped_column(default=0.0)
-    # StrategyC (two_phase_dynamic) fields:
+    # TwoPhaseDynamic strategy fields:
     position_min_hold_hours: Mapped[int] = mapped_column(default=0)
     consec_negative_hours: Mapped[int] = mapped_column(default=0)
 

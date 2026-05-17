@@ -8,7 +8,7 @@ from typing import Protocol
 from frab.exchanges.base import Executor
 from frab.strategies.base import Strategy
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
-from frab.strategies.strategy_c import StrategyC, StrategyCParams
+from frab.strategies.two_phase_dynamic import TwoPhaseDynamic, TwoPhaseDynamicParams
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,8 @@ class _StrategyASpec:
         return strategy, params_json
 
 
-class _StrategyCSpec:
-    name = "strategy_c"
+class _TwoPhaseDynamicSpec:
+    name = "two_phase_dynamic"
     version = "v1"
 
     def build(self, coins, params_override, executor):
@@ -75,9 +75,9 @@ class _StrategyCSpec:
                 if k in allowed:
                     kwargs[k] = v
                 else:
-                    logger.warning("strategy_c: ignoring unknown param %r", k)
-        params = StrategyCParams(**kwargs)
-        strategy = StrategyC(params=params, executor=executor)
+                    logger.warning("two_phase_dynamic: ignoring unknown param %r", k)
+        params = TwoPhaseDynamicParams(**kwargs)
+        strategy = TwoPhaseDynamic(params=params, executor=executor)
         params_json = {
             "coins": list(params.coins),
             "entry_threshold": params.entry_threshold,
@@ -97,7 +97,7 @@ class _StrategyCSpec:
 
 _REGISTRY: dict[str, StrategySpec] = {
     "strategy_a": _StrategyASpec(),
-    "strategy_c": _StrategyCSpec(),
+    "two_phase_dynamic": _TwoPhaseDynamicSpec(),
 }
 
 

@@ -1,4 +1,4 @@
-"""Strategy C: two-phase exit + dynamic min_hold funding-harvest."""
+"""Two-phase exit + dynamic min_hold funding-harvest strategy."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ from frab.strategies.strategy_a import AccumulatorsSnapshot
 
 
 @dataclass(frozen=True, slots=True)
-class StrategyCParams:
+class TwoPhaseDynamicParams:
     coins: tuple[str, ...]
     entry_threshold: float = 0.10
     signal_window_hours: int = 12
@@ -63,14 +63,14 @@ class _PositionRecord:
     entry_perp_price: float
     funding_collected: float = 0.0
     fees_paid: float = 0.0
-    # StrategyC two-phase state:
+    # TwoPhaseDynamic two-phase state:
     position_min_hold_hours: int = 0
     consec_negative_hours: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class OpenPositionSnapshot:
-    """DB-sourced snapshot used to rehydrate StrategyC after engine restart."""
+    """DB-sourced snapshot used to rehydrate TwoPhaseDynamic after engine restart."""
     coin: str
     opened_at: datetime
     spot_qty: float
@@ -79,15 +79,15 @@ class OpenPositionSnapshot:
     entry_perp_price: float
     funding_collected: float
     fees_paid: float
-    position_min_hold_hours: int      # StrategyC-specific
-    consec_negative_hours: int        # StrategyC-specific
+    position_min_hold_hours: int      # TwoPhaseDynamic-specific
+    consec_negative_hours: int        # TwoPhaseDynamic-specific
 
 
-class StrategyC(Strategy):
-    name = "strategy_c"
+class TwoPhaseDynamic(Strategy):
+    name = "two_phase_dynamic"
     version = "v1"
 
-    def __init__(self, params: StrategyCParams, executor: Executor) -> None:
+    def __init__(self, params: TwoPhaseDynamicParams, executor: Executor) -> None:
         self._params = params
         self._executor = executor
         self._market_state = MarketState(params.coins, params.signal_window_hours)
@@ -165,7 +165,7 @@ class StrategyC(Strategy):
     ) -> None:
         """Atomically swap hot params. Preserves cold fields (coins, signal_window_hours).
         Called between ticks; asyncio single-thread guarantees no race."""
-        self._params = StrategyCParams(
+        self._params = TwoPhaseDynamicParams(
             coins=self._params.coins,
             entry_threshold=entry_threshold,
             signal_window_hours=self._params.signal_window_hours,

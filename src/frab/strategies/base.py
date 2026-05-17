@@ -28,7 +28,7 @@ class TickReport:
     # Only includes positions that were already open at the start of this
     # hour-tick (not coins opened by Step 5 of the same tick).
     funding_accrued: tuple[tuple[str, float], ...] = ()
-    # NEW for StrategyC — persisted per-position state:
+    # For TwoPhaseDynamic — persisted per-position state:
     opened_min_holds: tuple[tuple[str, int], ...] = ()      # (coin, position_min_hold_hours) for each newly opened position
     consec_negative_updates: tuple[tuple[str, int], ...] = ()  # (coin, new_consec_negative_hours) for each in-position coin
 

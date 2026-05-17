@@ -5,12 +5,12 @@ import pytest
 
 from frab.strategies.registry import (
     _StrategyASpec,
-    _StrategyCSpec,
+    _TwoPhaseDynamicSpec,
     get_strategy_spec,
     parse_params_override,
 )
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
-from frab.strategies.strategy_c import StrategyC, StrategyCParams
+from frab.strategies.two_phase_dynamic import TwoPhaseDynamic, TwoPhaseDynamicParams
 
 
 # ---------------------------------------------------------------------------
@@ -24,10 +24,10 @@ def test_get_strategy_spec_strategy_a():
     assert spec.version == "v1"
 
 
-def test_get_strategy_spec_strategy_c():
-    spec = get_strategy_spec("strategy_c")
-    assert isinstance(spec, _StrategyCSpec)
-    assert spec.name == "strategy_c"
+def test_get_strategy_spec_two_phase_dynamic():
+    spec = get_strategy_spec("two_phase_dynamic")
+    assert isinstance(spec, _TwoPhaseDynamicSpec)
+    assert spec.name == "two_phase_dynamic"
     assert spec.version == "v1"
 
 
@@ -37,7 +37,7 @@ def test_get_strategy_spec_unknown_raises_key_error():
     msg = str(exc_info.value)
     assert "unknown_strategy" in msg
     assert "strategy_a" in msg
-    assert "strategy_c" in msg
+    assert "two_phase_dynamic" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -142,16 +142,16 @@ def test_strategy_a_spec_build_returns_correct_params_json_keys(mocker):
 
 
 # ---------------------------------------------------------------------------
-# _StrategyCSpec.build
+# _TwoPhaseDynamicSpec.build
 # ---------------------------------------------------------------------------
 
-def test_strategy_c_spec_build_defaults(mocker):
+def test_two_phase_dynamic_spec_build_defaults(mocker):
     executor = mocker.MagicMock()
-    spec = _StrategyCSpec()
+    spec = _TwoPhaseDynamicSpec()
     strategy, params_json = spec.build(coins=("BTC", "ETH"), params_override=None, executor=executor)
 
-    assert isinstance(strategy, StrategyC)
-    defaults = StrategyCParams(coins=("BTC", "ETH"))
+    assert isinstance(strategy, TwoPhaseDynamic)
+    defaults = TwoPhaseDynamicParams(coins=("BTC", "ETH"))
     assert params_json["entry_threshold"] == defaults.entry_threshold
     assert params_json["signal_window_hours"] == defaults.signal_window_hours
     assert params_json["base_min_hold_hours"] == defaults.base_min_hold_hours
@@ -166,39 +166,39 @@ def test_strategy_c_spec_build_defaults(mocker):
     assert params_json["coins"] == ["BTC", "ETH"]
 
 
-def test_strategy_c_spec_build_with_override(mocker):
+def test_two_phase_dynamic_spec_build_with_override(mocker):
     executor = mocker.MagicMock()
-    spec = _StrategyCSpec()
+    spec = _TwoPhaseDynamicSpec()
     strategy, params_json = spec.build(
         coins=("BTC",),
         params_override={"entry_threshold": 0.15, "safety_mult": 3.0},
         executor=executor,
     )
 
-    assert isinstance(strategy, StrategyC)
+    assert isinstance(strategy, TwoPhaseDynamic)
     assert strategy._params.entry_threshold == 0.15
     assert strategy._params.safety_mult == 3.0
     assert params_json["entry_threshold"] == 0.15
     assert params_json["safety_mult"] == 3.0
 
 
-def test_strategy_c_spec_build_unknown_key_ignored(mocker):
+def test_two_phase_dynamic_spec_build_unknown_key_ignored(mocker):
     executor = mocker.MagicMock()
-    spec = _StrategyCSpec()
+    spec = _TwoPhaseDynamicSpec()
     strategy, params_json = spec.build(
         coins=("BTC",),
         params_override={"unknown_key": 999, "entry_threshold": 0.12},
         executor=executor,
     )
 
-    assert isinstance(strategy, StrategyC)
+    assert isinstance(strategy, TwoPhaseDynamic)
     assert strategy._params.entry_threshold == 0.12
     assert "unknown_key" not in params_json
 
 
-def test_strategy_c_spec_build_returns_correct_params_json_keys(mocker):
+def test_two_phase_dynamic_spec_build_returns_correct_params_json_keys(mocker):
     executor = mocker.MagicMock()
-    spec = _StrategyCSpec()
+    spec = _TwoPhaseDynamicSpec()
     _, params_json = spec.build(coins=("BTC",), params_override=None, executor=executor)
 
     expected_keys = {

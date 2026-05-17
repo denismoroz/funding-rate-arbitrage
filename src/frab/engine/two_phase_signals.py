@@ -1,4 +1,4 @@
-"""Pure, stateless decision helpers for StrategyC (two-phase exit + dynamic min_hold)."""
+"""Pure, stateless decision helpers for TwoPhaseDynamic (two-phase exit + dynamic min_hold)."""
 from __future__ import annotations
 from enum import StrEnum
 

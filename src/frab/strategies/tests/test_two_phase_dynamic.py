@@ -1,4 +1,4 @@
-"""Tests for strategies/strategy_c.py — StrategyC two-phase exit + dynamic min_hold."""
+"""Tests for strategies/two_phase_dynamic.py — TwoPhaseDynamic two-phase exit + dynamic min_hold."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -8,10 +8,10 @@ import pytest
 from frab.exchanges.base import Executor, FillReport, FundingTick, Leg, OrderRequest, Quote, Side
 from frab.strategies.base import EquitySnapshot, TickReport
 from frab.strategies.strategy_a import AccumulatorsSnapshot
-from frab.strategies.strategy_c import (
+from frab.strategies.two_phase_dynamic import (
     OpenPositionSnapshot,
-    StrategyC,
-    StrategyCParams,
+    TwoPhaseDynamic,
+    TwoPhaseDynamicParams,
 )
 
 HOUR = timedelta(hours=1)
@@ -85,7 +85,7 @@ def executor(mocker):
     return mocker.AsyncMock(spec=Executor)
 
 
-def _default_params(**kwargs) -> StrategyCParams:
+def _default_params(**kwargs) -> TwoPhaseDynamicParams:
     defaults = dict(
         coins=("BTC",),
         entry_threshold=0.10,
@@ -101,7 +101,7 @@ def _default_params(**kwargs) -> StrategyCParams:
         fee_round_trip_annual=18.396,
     )
     defaults.update(kwargs)
-    return StrategyCParams(**defaults)
+    return TwoPhaseDynamicParams(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -110,32 +110,32 @@ def _default_params(**kwargs) -> StrategyCParams:
 
 def test_params_zero_concurrency_raises():
     with pytest.raises(ValueError, match="concurrency_cap must be positive"):
-        StrategyCParams(coins=("BTC",), concurrency_cap=0)
+        TwoPhaseDynamicParams(coins=("BTC",), concurrency_cap=0)
 
 
 def test_params_negative_position_size_raises():
     with pytest.raises(ValueError, match="position_size_usdc must be positive"):
-        StrategyCParams(coins=("BTC",), position_size_usdc=-1)
+        TwoPhaseDynamicParams(coins=("BTC",), position_size_usdc=-1)
 
 
 def test_params_zero_window_raises():
     with pytest.raises(ValueError, match="signal_window_hours must be positive"):
-        StrategyCParams(coins=("BTC",), signal_window_hours=0)
+        TwoPhaseDynamicParams(coins=("BTC",), signal_window_hours=0)
 
 
 def test_params_empty_coins_raises():
     with pytest.raises(ValueError, match="coins must be non-empty"):
-        StrategyCParams(coins=())
+        TwoPhaseDynamicParams(coins=())
 
 
 def test_params_zero_safety_mult_raises():
     with pytest.raises(ValueError, match="safety_mult must be positive"):
-        StrategyCParams(coins=("BTC",), safety_mult=0.0)
+        TwoPhaseDynamicParams(coins=("BTC",), safety_mult=0.0)
 
 
 def test_params_zero_cap_min_hold_raises():
     with pytest.raises(ValueError, match="cap_min_hold_hours must be positive"):
-        StrategyCParams(coins=("BTC",), cap_min_hold_hours=0)
+        TwoPhaseDynamicParams(coins=("BTC",), cap_min_hold_hours=0)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ def test_params_zero_cap_min_hold_raises():
 @pytest.mark.asyncio
 async def test_sufficient_signal_opens_position(executor):
     """signal above entry_threshold → OPEN, position_min_hold computed."""
-    strat = StrategyC(_default_params(coins=("BTC",), concurrency_cap=1), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), executor)
 
     executor.submit.side_effect = [
         _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
@@ -171,7 +171,7 @@ async def test_sufficient_signal_opens_position(executor):
 @pytest.mark.asyncio
 async def test_signal_below_threshold_does_not_open(executor):
     """signal below entry_threshold → no OPEN."""
-    strat = StrategyC(_default_params(coins=("BTC",), entry_threshold=0.10), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), entry_threshold=0.10), executor)
 
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     # rate=0.000001 → annual=0.00876 < 0.10 → NONE
@@ -185,7 +185,7 @@ async def test_signal_below_threshold_does_not_open(executor):
 async def test_concurrency_cap_picks_top_k(executor):
     """When more candidates than slots, top-K by signal_value are chosen."""
     coins = ("BTC", "ETH", "SOL", "AAVE")
-    strat = StrategyC(_default_params(coins=coins, concurrency_cap=2, entry_threshold=0.10), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=coins, concurrency_cap=2, entry_threshold=0.10), executor)
 
     quotes = {c: _quote(c, mark=100.0) for c in coins}
     await strat.on_minute_tick(T0, quotes)
@@ -216,7 +216,7 @@ async def test_concurrency_cap_picks_top_k(executor):
 @pytest.mark.asyncio
 async def test_no_open_when_quote_missing(executor):
     """Signal good but no quote for coin → position not opened."""
-    strat = StrategyC(_default_params(coins=("BTC",), concurrency_cap=1), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), executor)
 
     # Don't call on_minute_tick → no quote cached
     # rate=0.001 → annual=8.76 >> threshold
@@ -236,7 +236,7 @@ async def test_min_hold_blocks_close_before_expiry(executor):
     # Use low entry rate to get a predictable min_hold
     # entry signal = 0.876 ann, fee_annual = 18.396
     # min_hold = min(720, max(24, 5.0 * (18.396 / 0.876))) ≈ 105
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -271,7 +271,7 @@ async def test_min_hold_blocks_close_before_expiry(executor):
 @pytest.mark.asyncio
 async def test_exit_logic_active_after_min_hold(executor):
     """After position_min_hold_hours hours, exit logic can fire."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -320,7 +320,7 @@ async def test_exit_logic_active_after_min_hold(executor):
 @pytest.mark.asyncio
 async def test_phase1_consec_negative_exceeds_patience_closes(executor):
     """consec_negative_hours > patience → CLOSE_PHASE1_NEG."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -365,7 +365,7 @@ async def test_phase1_consec_negative_exceeds_patience_closes(executor):
 @pytest.mark.asyncio
 async def test_phase1_breakeven_cap_exceeded_closes(executor):
     """current rate so small that hours_to_breakeven > cap → CLOSE_PHASE1_CAP."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -406,7 +406,7 @@ async def test_phase1_breakeven_cap_exceeded_closes(executor):
 @pytest.mark.asyncio
 async def test_phase1_mildly_positive_within_patience_no_close(executor):
     """Phase 1: rate slightly positive, consec_neg within patience → NO close."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -444,7 +444,7 @@ async def test_phase1_mildly_positive_within_patience_no_close(executor):
 @pytest.mark.asyncio
 async def test_phase2_rate_below_threshold_closes(executor):
     """In phase 2 (funding > fees), rate < phase2_exit_threshold → CLOSE_PHASE2."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -486,7 +486,7 @@ async def test_phase2_rate_below_threshold_closes(executor):
 @pytest.mark.asyncio
 async def test_phase2_rate_above_threshold_no_close(executor):
     """In phase 2, rate above phase2_exit_threshold → NO close."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -526,7 +526,7 @@ async def test_phase2_rate_above_threshold_no_close(executor):
 @pytest.mark.asyncio
 async def test_opened_min_holds_populated_on_open(executor):
     """opened_min_holds contains entry for each newly opened position."""
-    strat = StrategyC(_default_params(coins=("BTC", "ETH"), concurrency_cap=2), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC", "ETH"), concurrency_cap=2), executor)
 
     async def _fill_gen(req: OrderRequest) -> FillReport:
         return _fill(req.coin, req.leg, req.side, qty=10.0, price=100.0, fee=0.0)
@@ -551,7 +551,7 @@ async def test_opened_min_holds_populated_on_open(executor):
 @pytest.mark.asyncio
 async def test_consec_negative_updates_for_open_positions(executor):
     """consec_negative_updates contains entry for each in-position coin."""
-    strat = StrategyC(_default_params(coins=("BTC",), concurrency_cap=1), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), executor)
 
     executor.submit.side_effect = [
         _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
@@ -575,7 +575,7 @@ async def test_consec_negative_updates_for_open_positions(executor):
 @pytest.mark.asyncio
 async def test_consec_negative_updates_excludes_closed_coins(executor):
     """Coins closed this tick must not appear in consec_negative_updates."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -617,7 +617,7 @@ async def test_consec_negative_updates_excludes_closed_coins(executor):
 @pytest.mark.asyncio
 async def test_rehydrate_restores_two_phase_state(executor):
     """After rehydrate, min_hold and consec_negative are preserved."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -659,7 +659,7 @@ async def test_rehydrate_restores_two_phase_state(executor):
 @pytest.mark.asyncio
 async def test_rehydrate_uses_restored_state_in_next_tick(executor):
     """After rehydrate with min_hold=500, position is locked on next tick."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -703,7 +703,7 @@ async def test_rehydrate_uses_restored_state_in_next_tick(executor):
 
 
 def test_rehydrate_without_accumulators_keeps_default_cash(executor):
-    strat = StrategyC(_default_params(coins=("BTC",), concurrency_cap=3, position_size_usdc=1000.0), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=3, position_size_usdc=1000.0), executor)
     initial_cash = strat.cash
 
     strat.rehydrate(positions=[], accumulators=None)
@@ -717,7 +717,7 @@ def test_rehydrate_without_accumulators_keeps_default_cash(executor):
 # ---------------------------------------------------------------------------
 
 def test_compute_equity_no_positions(executor):
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(coins=("BTC",), concurrency_cap=3, position_size_usdc=1000.0),
         executor,
     )
@@ -733,7 +733,7 @@ def test_compute_equity_no_positions(executor):
 @pytest.mark.asyncio
 async def test_compute_equity_with_open_position(executor):
     """cash + spot_value + perp_unrealized = total_equity (sanity check)."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(
             coins=("BTC",),
             concurrency_cap=1,
@@ -768,7 +768,7 @@ async def test_compute_equity_with_open_position(executor):
 # ---------------------------------------------------------------------------
 
 def test_warmup_from_history_fills_market_state(executor):
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(coins=("BTC", "ETH"), signal_window_hours=3),
         executor,
     )
@@ -780,7 +780,7 @@ def test_warmup_from_history_fills_market_state(executor):
 
 
 def test_warmup_from_history_skips_unknown_coin(executor):
-    strat = StrategyC(_default_params(coins=("BTC",)), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",)), executor)
     applied = strat.warmup_from_history({
         "BTC": [_funding("BTC", T0, 0.0001)],
         "DOGE": [_funding("DOGE", T0, 0.0001)],
@@ -795,7 +795,7 @@ def test_warmup_from_history_skips_unknown_coin(executor):
 @pytest.mark.asyncio
 async def test_funding_accrual_updates_position(executor):
     """Funding collected is correctly tracked in the position record."""
-    strat = StrategyC(
+    strat = TwoPhaseDynamic(
         _default_params(coins=("BTC",), concurrency_cap=1, position_size_usdc=1000.0),
         executor,
     )
