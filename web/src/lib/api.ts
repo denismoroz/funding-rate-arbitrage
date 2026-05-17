@@ -109,6 +109,12 @@ export type Position = {
   funding_collected: number;
   fees_paid: number;
   fills: Fill[];
+  // MTM fields (may be null if price unavailable):
+  current_mark: number | null;
+  spot_value_now: number | null;
+  perp_unrealized: number | null;
+  notional_at_entry: number | null;
+  net_mtm: number | null;
 };
 
 export type Signal = {

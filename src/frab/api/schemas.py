@@ -86,6 +86,12 @@ class PositionOut(_UtcAwareOut):
     funding_collected: float
     fees_paid: float
     fills: list[FillOut]
+    # MTM fields (None if latest price unavailable):
+    current_mark: float | None = None
+    spot_value_now: float | None = None
+    perp_unrealized: float | None = None
+    notional_at_entry: float | None = None
+    net_mtm: float | None = None
 
 
 class SignalOut(_UtcAwareOut):

@@ -436,17 +436,21 @@ function OpenPositions() {
               <tr className="border-b border-gray-100 text-left text-gray-500">
                 <th className="pb-1 pr-3">Coin</th>
                 <th className="pb-1 pr-3">Opened</th>
-                <th className="pb-1 pr-3 text-right">Entry Spot</th>
-                <th className="pb-1 pr-3 text-right">Entry Perp</th>
+                <th className="pb-1 pr-3 text-right">Notional</th>
+                <th className="pb-1 pr-3 text-right">Spot now</th>
+                <th className="pb-1 pr-3 text-right">Perp unreal</th>
                 <th className="pb-1 pr-3 text-right">Funding</th>
-                <th className="pb-1 text-right">Fees</th>
+                <th className="pb-1 pr-3 text-right">Fees</th>
+                <th className="pb-1 text-right">Net P/L</th>
               </tr>
             </thead>
             <tbody>
-              {data.map((p) => (
+              {data.map((p, idx) => (
                 <tr
                   key={p.id}
-                  className="cursor-pointer border-b border-gray-50 hover:bg-gray-50"
+                  className={`cursor-pointer border-b border-gray-50 hover:bg-gray-100 ${
+                    idx % 2 === 0 ? "bg-white" : "bg-gray-50"
+                  }`}
                   onClick={() => setSelected(p)}
                   title="Click to see funding history"
                 >
@@ -455,10 +459,29 @@ function OpenPositions() {
                     {formatRelative(p.opened_at, now)}
                   </td>
                   <td className="py-1 pr-3 text-right">
-                    {formatCurrency(p.entry_spot_price)}
+                    {p.notional_at_entry != null
+                      ? formatCurrency(p.notional_at_entry)
+                      : "—"}
                   </td>
                   <td className="py-1 pr-3 text-right">
-                    {formatCurrency(p.entry_perp_price)}
+                    {p.spot_value_now != null
+                      ? formatCurrency(p.spot_value_now)
+                      : "—"}
+                  </td>
+                  <td
+                    className={`py-1 pr-3 text-right ${
+                      p.perp_unrealized == null
+                        ? "text-gray-400"
+                        : p.perp_unrealized > 0
+                          ? "text-green-600"
+                          : p.perp_unrealized < 0
+                            ? "text-red-500"
+                            : "text-gray-400"
+                    }`}
+                  >
+                    {p.perp_unrealized != null
+                      ? formatCurrency(p.perp_unrealized)
+                      : "—"}
                   </td>
                   <td
                     className={`py-1 pr-3 text-right ${
@@ -469,8 +492,21 @@ function OpenPositions() {
                   >
                     {formatCurrency(p.funding_collected)}
                   </td>
-                  <td className="py-1 text-right text-red-500">
+                  <td className="py-1 pr-3 text-right text-red-500">
                     {formatCurrency(p.fees_paid)}
+                  </td>
+                  <td
+                    className={`py-1 text-right ${
+                      p.net_mtm == null
+                        ? "text-gray-400"
+                        : p.net_mtm > 0
+                          ? "text-green-600"
+                          : p.net_mtm < 0
+                            ? "text-red-500"
+                            : "text-gray-400"
+                    }`}
+                  >
+                    {p.net_mtm != null ? formatCurrency(p.net_mtm) : "—"}
                   </td>
                 </tr>
               ))}
@@ -525,8 +561,13 @@ function RecentSignals() {
               </tr>
             </thead>
             <tbody>
-              {(data ?? []).map((s) => (
-                <tr key={s.id} className="border-b border-gray-50">
+              {(data ?? []).map((s, idx) => (
+                <tr
+                  key={s.id}
+                  className={`border-b border-gray-50 hover:bg-gray-100 ${
+                    idx % 2 === 0 ? "bg-white" : "bg-gray-50"
+                  }`}
+                >
                   <td className="py-1 pr-3 text-gray-500">
                     {formatRelative(s.ts, now)}
                   </td>
@@ -594,8 +635,13 @@ function RecentFills() {
               </tr>
             </thead>
             <tbody>
-              {fills.map((f) => (
-                <tr key={f.id} className="border-b border-gray-50">
+              {fills.map((f, idx) => (
+                <tr
+                  key={f.id}
+                  className={`border-b border-gray-50 hover:bg-gray-100 ${
+                    idx % 2 === 0 ? "bg-white" : "bg-gray-50"
+                  }`}
+                >
                   <td className="py-1 pr-3 text-gray-500">
                     {formatRelative(f.ts, now)}
                   </td>
@@ -670,8 +716,13 @@ function RecentEvents() {
               </tr>
             </thead>
             <tbody>
-              {(data ?? []).map((e) => (
-                <tr key={e.id} className="border-b border-gray-50">
+              {(data ?? []).map((e, idx) => (
+                <tr
+                  key={e.id}
+                  className={`border-b border-gray-50 hover:bg-gray-100 ${
+                    idx % 2 === 0 ? "bg-white" : "bg-gray-50"
+                  }`}
+                >
                   <td className="py-1 pr-3 text-gray-500">
                     {formatRelative(e.ts, now)}
                   </td>

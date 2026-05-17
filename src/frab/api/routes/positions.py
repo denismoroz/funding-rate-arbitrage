@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
 from frab.api.schemas import FillOut, PositionFundingAccrualOut, PositionOut
-from frab.db.models import Fill, Market, Position, PositionFundingAccrual, PositionStatus
+from frab.db.models import Fill, Market, Position, PositionFundingAccrual, PositionStatus, Price
 
 router = APIRouter()
 
@@ -43,9 +43,49 @@ async def list_positions(
     for fill in all_fills:
         fills_by_position.setdefault(fill.position_id, []).append(fill)
 
+    # Batch-load latest mark prices for all coins in the result set
+    coins_in_use = {coin for _, coin in rows}
+    if coins_in_use:
+        market_q = await session.execute(
+            select(Market.id, Market.coin).where(Market.coin.in_(coins_in_use))
+        )
+        coin_to_market_id = {coin: mid for mid, coin in market_q.all()}
+        latest_marks: dict[str, float] = {}
+        for coin, market_id in coin_to_market_id.items():
+            price_q = await session.execute(
+                select(Price.mark)
+                .where(Price.market_id == market_id)
+                .order_by(Price.ts.desc())
+                .limit(1)
+            )
+            mark = price_q.scalar_one_or_none()
+            if mark is not None:
+                latest_marks[coin] = mark
+    else:
+        latest_marks = {}
+
     out = []
     for position, coin in rows:
         fill_list = [FillOut.model_validate(f) for f in fills_by_position.get(position.id, [])]
+
+        mark = latest_marks.get(coin)
+        notional_at_entry = position.spot_units * position.entry_spot_price
+        if mark is not None:
+            spot_value_now = position.spot_units * mark
+            perp_unrealized = abs(position.perp_units) * (position.entry_perp_price - mark)
+            net_mtm = (
+                spot_value_now - notional_at_entry
+                + perp_unrealized
+                + position.funding_collected
+                - position.fees_paid
+            )
+            current_mark_v = mark
+        else:
+            spot_value_now = None
+            perp_unrealized = None
+            net_mtm = None
+            current_mark_v = None
+
         pos_dict = {
             "id": position.id,
             "strategy_id": position.strategy_id,
@@ -65,6 +105,11 @@ async def list_positions(
             "funding_collected": position.funding_collected,
             "fees_paid": position.fees_paid,
             "fills": fill_list,
+            "current_mark": current_mark_v,
+            "spot_value_now": spot_value_now,
+            "perp_unrealized": perp_unrealized,
+            "notional_at_entry": notional_at_entry,
+            "net_mtm": net_mtm,
         }
         out.append(PositionOut.model_validate(pos_dict))
     return out
