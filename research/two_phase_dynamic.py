@@ -54,6 +54,7 @@ def simulate_two_phase_dynamic(
     phase1_negative_patience: int,
     phase1_breakeven_cap_hours: int,
     phase2_exit_threshold: float,
+    fee_multiplier: float = 1.0,
 ) -> tuple:
     """
     Симулирует A_cycle с двухфазной exit-логикой + динамическим per-position min_hold.
@@ -68,6 +69,12 @@ def simulate_two_phase_dynamic(
 
     Возвращает (pnl_per_hour, cap_per_hour, info).
     """
+    # Effective fee constants (scaled by fee_multiplier; at 1.0 identical to globals)
+    perp_taker_eff       = PERP_TAKER * fee_multiplier
+    spot_taker_eff       = SPOT_TAKER * fee_multiplier
+    breakeven_const_eff  = (perp_taker_eff + spot_taker_eff) * 2 * HOURS_PER_YEAR
+    total_fees_cycle_eff = POSITION_SIZE * (perp_taker_eff + spot_taker_eff) * 2
+
     # Загрузка данных
     datas = {}
     for c in coins:
@@ -186,10 +193,10 @@ def simulate_two_phase_dynamic(
                     phase2_exits += 1
                 # Закрыть short
                 s["cash"] += s["short_size"] * (s["entry_price"] - P)
-                s["cash"] -= s["short_size"] * P * PERP_TAKER
+                s["cash"] -= s["short_size"] * P * perp_taker_eff
                 # Продать spot
                 s["cash"] += s["units_spot"] * P
-                s["cash"] -= s["units_spot"] * P * SPOT_TAKER
+                s["cash"] -= s["units_spot"] * P * spot_taker_eff
                 # Сброс state
                 s["short_size"]           = 0.0
                 s["units_spot"]           = 0.0
@@ -220,7 +227,7 @@ def simulate_two_phase_dynamic(
                 # Динамический min_hold на основе entry rate
                 entry_rate = s["signal"][i]  # annualized signal (12h MA × 8760)
                 if entry_rate > 0:
-                    breakeven_h = BREAKEVEN_CONST / entry_rate
+                    breakeven_h = breakeven_const_eff / entry_rate
                     pos_min_hold = int(min(cap_min_hold, max(base_min_hold, safety_mult * breakeven_h)))
                 else:
                     pos_min_hold = cap_min_hold
@@ -230,15 +237,15 @@ def simulate_two_phase_dynamic(
                 # Купить spot
                 s["units_spot"]           = POSITION_SIZE / P
                 s["cash"]                -= POSITION_SIZE
-                s["cash"]                -= POSITION_SIZE * SPOT_TAKER
+                s["cash"]                -= POSITION_SIZE * spot_taker_eff
                 # Открыть short
                 s["short_size"]           = POSITION_SIZE / P
                 s["entry_price"]          = P
-                s["cash"]                -= POSITION_SIZE * PERP_TAKER
+                s["cash"]                -= POSITION_SIZE * perp_taker_eff
                 s["in_position"]          = True
                 s["hours_since"]          = 0
                 s["gross_funding_so_far"] = 0.0
-                s["total_fees_paid"]      = TOTAL_FEES_CYCLE
+                s["total_fees_paid"]      = total_fees_cycle_eff
                 s["consec_negative"]      = 0
                 s["trades"]              += 1
                 opens_per_hour[i]        += 1
@@ -268,9 +275,9 @@ def simulate_two_phase_dynamic(
             continue
         P = valid_close[-1]
         s["cash"] += s["short_size"] * (s["entry_price"] - P)
-        s["cash"] -= s["short_size"] * P * PERP_TAKER
+        s["cash"] -= s["short_size"] * P * perp_taker_eff
         s["cash"] += s["units_spot"] * P
-        s["cash"] -= s["units_spot"] * P * SPOT_TAKER
+        s["cash"] -= s["units_spot"] * P * spot_taker_eff
         s["short_size"] = 0.0
         s["units_spot"] = 0.0
         equity_now = s["cash"]
