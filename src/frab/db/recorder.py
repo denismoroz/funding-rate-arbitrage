@@ -251,6 +251,17 @@ class DbRecorder:
                     )
                 )
 
+            # --- Update position_min_hold_hours on newly opened positions ---
+            for coin, min_hold in report.opened_min_holds:
+                position_id = self._open_positions.get(coin)
+                if position_id is None:
+                    logger.warning("save_tick_report: opened_min_hold for %r but no open position — skipping", coin)
+                    continue
+                pos = await session.get(Position, position_id)
+                if pos is None:
+                    continue
+                pos.position_min_hold_hours = min_hold
+
             # --- Closes ---
             for coin in report.closed:
                 position_id = self._open_positions.pop(coin, None)
@@ -320,6 +331,17 @@ class DbRecorder:
                         is_paper=perp_fill.is_paper,
                     )
                 )
+
+            # --- Update consec_negative on open positions (per-tick state) ---
+            for coin, consec in report.consec_negative_updates:
+                position_id = self._open_positions.get(coin)
+                if position_id is None:
+                    # Position may have been closed this tick — skip silently
+                    continue
+                pos = await session.get(Position, position_id)
+                if pos is None:
+                    continue
+                pos.consec_negative_hours = consec
 
     async def save_equity(self, snapshot: EquitySnapshot) -> None:
         async with session_scope(self._session_factory) as session:
