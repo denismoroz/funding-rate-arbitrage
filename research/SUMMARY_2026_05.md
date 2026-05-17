@@ -233,7 +233,7 @@ Regime detector: автоматическое переключение межд�
 
 ---
 
-## Rebalance branch — scale-in/scale-out + rotation (v0.0 → v0.5)
+## Rebalance branch — scale-in/scale-out + rotation (v0.0 → v0.9)
 
 Параллельная ветка исследования: вместо бинарного "open full / close full" — **постепенный вход/выход** + **ротация** капитала между монетами по силе funding. Принципиально другая идея: убрать хардкод `min_hold` и `exit_threshold`, заменить их **экономикой движений** (хочешь выйти — плати fees; есть лучше монета — переезжай).
 
@@ -302,7 +302,50 @@ Regime detector: автоматическое переключение межд�
 2. Сделать rotation **более избирательным** — сейчас trigger на любом `+10% APR delta`. Может надо требовать persistence (delta держится N часов).
 3. Тестировать на других периодах (2024 hot, 2025 mixed) — может в горячем рынке rebalance дисциплина даёт что-то чего two_phase не может.
 
-### Файлы ветки
+### Продолжение rebalance ветки (v0.6 → v0.9)
+
+| # | Файл | Что | Pure annual full | Calmar full | Annual last_90d | Calmar 90d | Заметка |
+|---|---|---|---|---|---|---|---|
+| v0.6 | `rebalance_v06.py` | Раздельные thresholds: entry для **первого транша** убран (берём best ma12 без floor), continue ramp = **trailing anchor** (anchor двигается только вверх, slack по APR) | 2.07 → 2.63 | 2.96 → **4.53** | 1.73 → **5.75** | **3.74** → **126.27** | strict trailing убивает upside; **slack_5pct** — лучший risk-adjusted во всей ветке, впервые пробил Aave 5% на last_90d без overlay |
+| v0.7 | `rebalance_v07.py` | **Defensive rotation**: ротация только когда current ma12 < degradation_threshold | 2.85-5.00 | 1.31-2.78 | −8.31 → 1.16 | −2.75 → 1.44 | **Null result**: `n_degradation_exits = 0` во всех конфигах. Спека была: "candidate > current" → всегда находит marginally-better мертвеца → круговорот. |
+| v0.8 | `rebalance_v08.py` | Fix v0.7 бага: replacement должен быть HEALTHY (> threshold), а не "лучше дохлой". + first-tranche entry тоже с floor. | 2.85-5.00 | 1.31-2.78 | −8.31 → 1.16 | −2.75 → 1.44 | **Идентично v0.7** — в U11 за 2.5 года ни одного тика когда все 11 монет одновременно ниже 5% threshold. Fix корректен но в этих данных не активируется. |
+| v0.9 | `rebalance_v09.py` | Убрать лимит на позиции (n_main_cap 2 → 11) + tick 24h → 1h + sweep continue variants (trailing/fixed/decay/none) | 3.45 → 7.02 | 0.29 → 1.13 | **−14.58 → −6.68** | −4.06 → −4.04 | **Структурные изменения убили risk-adjusted.** Gross funding ×3, но fees ×6 (11 слотов × 1h tick = много сделок). Last_90d все конфиги глубоко в минусе. continue_mode='none' лучший — confirms anchor logic это fee-burning machine. |
+
+### Ключевая находка v0.6 — slack_5pct лучший в rebalance ветке
+
+| config (no Aave) | continue logic | annual_full | calmar_full | annual_90d | calmar_90d | DD_full |
+|---|---|---|---|---|---|---|
+| v0.5 no_floor | без anchor | 8.26% | 4.03 | −1.06% | −2.33 | 2.05% |
+| v0.5 floor_15 | с floor | 4.82% | 3.74 | 0.00% | 0 | 1.29% |
+| **v0.6 slack_5pct** | trailing+5% slack | 2.63% | **4.53** | **5.75%** | **126.27** | 0.58% |
+| v0.9 best (none) | без anchor, 1h, 11 slots | 7.02% | 1.13 | −6.68% | −4.04 | 6.20% |
+
+**v0.6 slack_5pct остаётся рекомендованным** конфигом этой ветки: единственный pure-strategy config который пробил Aave 5% на last_90d (через trailing anchor + selective rotation). Жертвует full-period upside (2.63% vs v0.5's 8.26%), но даёт устойчивость в cold market.
+
+### Архитектурные insights из v0.6-v0.9
+
+1. **Trailing anchor как fee-burning machine.** На 1h tick + 11 slots каждый микро-dip MA12 = freeze/unfreeze cycle = round-trip fees. v0.9 показал что fees scale с количеством сделок (×6), а gross funding только с deployed капиталом (×3). Net negative.
+
+2. **Defensive rotation бесполезен на нашей вселенной (U11).** Чтобы exit-to-USDC сработал, нужно чтобы ВСЕ 11 монет одновременно были ниже degradation threshold. За 2.5 года это случилось 1 раз и не активировало путь. U11 даёт достаточно диверсификации что "вся вселенная мертва" не возникает.
+
+3. **Размер позиций не зависит от количества слотов линейно.** Убрав n_main_cap=2 → 11, peak_capital вырос с $4.4k до $22k. Но annual return НЕ вырос пропорционально — fees съели всё.
+
+4. **continue_mode='none' (fill-and-hold) выигрывает в high-frequency context.** Это противоречит интуиции "нужна защита от ramp into degrading coin", но эмпирически — round-trip cost защиты > потенциального loss от плохого ramp.
+
+5. **Fee reduction — единственный реальный рычаг для масштабирования.** Чтобы стратегия с большим капиталом и быстрым tick'ом заработала, нужно либо снизить fees (maker orders / VIP tier / Drift / Binance perp), либо принципиально уменьшить churn (slice → 100% сразу).
+
+### Обновлённый вердикт по rebalance ветке
+
+**v0.6 slack_5pct — лучший risk-adjusted во всей rebalance ветке** (Calmar 4.53 full / 126.27 last_90d), **но проигрывает two_phase_exit** на full period (2.63% vs 13.03%). Подтверждение исходного вывода: rebalance — это **defensively-focused niche**, не general-purpose alternative для two_phase.
+
+**v0.9 показал boundary условия:** при попытке масштабировать (больше слотов, чаще tick) — fee drag начинает доминировать. Без снижения fees rebalance не масштабируется.
+
+**Что осталось не проверено в rebalance ветке:**
+1. **Larger slice (20-50%)** при default tick=24h. Меньше round-trips на full position.
+2. **Maker orders** в paper executor (slippage модель должна учитывать post-only/limit orders).
+3. **Strategy combination**: v0.6 slack_5pct (defensive) + two_phase (offensive) в одной portfolio, аллокация по regime.
+
+### Файлы ветки (v0.0 → v0.9)
 
 - [rebalance_v0.py](rebalance_v0.py), [rebalance_v0_results.csv](rebalance_v0_results.csv)
 - [rebalance_v01.py](rebalance_v01.py), [rebalance_v01_results.csv](rebalance_v01_results.csv)
@@ -310,7 +353,11 @@ Regime detector: автоматическое переключение межд�
 - [rebalance_v03.py](rebalance_v03.py), [rebalance_v03_results.csv](rebalance_v03_results.csv)
 - [rebalance_v04.py](rebalance_v04.py), [rebalance_v04_results.csv](rebalance_v04_results.csv)
 - [rebalance_v05.py](rebalance_v05.py), [rebalance_v05_results.csv](rebalance_v05_results.csv)
+- [rebalance_v06.py](rebalance_v06.py), [rebalance_v06_results.csv](rebalance_v06_results.csv)
+- [rebalance_v07.py](rebalance_v07.py), [rebalance_v07_results.csv](rebalance_v07_results.csv)
+- [rebalance_v08.py](rebalance_v08.py), [rebalance_v08_results.csv](rebalance_v08_results.csv)
+- [rebalance_v09.py](rebalance_v09.py), [rebalance_v09_results.csv](rebalance_v09_results.csv)
 
 ---
 
-*Документ составлен 2026-05-16. Числа из CSV — точные, без округления сверх исходных 2 знаков после запятой.*
+*Документ составлен 2026-05-16, обновлён 2026-05-17. Числа из CSV — точные, без округления сверх исходных 2 знаков после запятой.*
