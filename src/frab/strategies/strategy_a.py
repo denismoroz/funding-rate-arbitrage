@@ -52,7 +52,11 @@ class _PositionRecord:
 
 @dataclass(frozen=True, slots=True)
 class OpenPositionSnapshot:
-    """DB-sourced snapshot used to rehydrate StrategyA after engine restart."""
+    """DB-sourced snapshot used to rehydrate any strategy after engine restart.
+
+    Common shape across strategies: extra fields default to 0 and are
+    ignored by strategies that don't use them (StrategyA ignores two-phase fields).
+    """
     coin: str
     opened_at: datetime
     spot_qty: float
@@ -61,6 +65,9 @@ class OpenPositionSnapshot:
     entry_perp_price: float
     funding_collected: float
     fees_paid: float
+    # Optional per-strategy state (defaults zero; used by two_phase_dynamic):
+    position_min_hold_hours: int = 0
+    consec_negative_hours: int = 0
 
 
 @dataclass(frozen=True, slots=True)

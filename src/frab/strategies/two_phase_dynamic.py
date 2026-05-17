@@ -21,7 +21,7 @@ from frab.exchanges.base import (
     Side,
 )
 from frab.strategies.base import EquitySnapshot, SignalEvent, Strategy, TickReport
-from frab.strategies.strategy_a import AccumulatorsSnapshot
+from frab.strategies.strategy_a import AccumulatorsSnapshot, OpenPositionSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,21 +66,6 @@ class _PositionRecord:
     # TwoPhaseDynamic two-phase state:
     position_min_hold_hours: int = 0
     consec_negative_hours: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class OpenPositionSnapshot:
-    """DB-sourced snapshot used to rehydrate TwoPhaseDynamic after engine restart."""
-    coin: str
-    opened_at: datetime
-    spot_qty: float
-    perp_qty: float          # positive magnitude — sign is implicit (short)
-    entry_spot_price: float
-    entry_perp_price: float
-    funding_collected: float
-    fees_paid: float
-    position_min_hold_hours: int      # TwoPhaseDynamic-specific
-    consec_negative_hours: int        # TwoPhaseDynamic-specific
 
 
 class TwoPhaseDynamic(Strategy):

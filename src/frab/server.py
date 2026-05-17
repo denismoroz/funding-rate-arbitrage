@@ -158,6 +158,8 @@ async def _rehydrate_strategy_from_db(
             entry_perp_price=pos.entry_perp_price,
             funding_collected=pos.funding_collected,
             fees_paid=pos.fees_paid,
+            position_min_hold_hours=pos.position_min_hold_hours,
+            consec_negative_hours=pos.consec_negative_hours,
         )
         for pos, coin in pos_rows
     ]
