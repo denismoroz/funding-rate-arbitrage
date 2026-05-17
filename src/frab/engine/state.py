@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Iterable
+from datetime import timedelta
 
 from frab.exchanges.base import FundingTick
-from frab.engine.signals import annualize_rate, rolling_mean
+from frab.engine.signals import annualize_rate
 
 
 class CoinState:
-    """Per-coin rolling buffer of funding rates plus last-tick metadata."""
+    """Per-coin time-based rolling buffer of funding ticks plus last-tick metadata."""
 
     def __init__(self, coin: str, window_hours: int) -> None:
         self.coin = coin
         if window_hours <= 0:
             raise ValueError("window_hours must be positive")
         self._window = window_hours
-        self._rates: deque[float] = deque(maxlen=window_hours)
+        self._ticks: list[FundingTick] = []
         self._last_tick: FundingTick | None = None
 
     def add_funding(self, tick: FundingTick) -> None:
@@ -30,8 +30,10 @@ class CoinState:
                 raise ValueError(
                     f"out-of-order funding tick: last_ts={self._last_tick.ts!r}, new_ts={tick.ts!r}"
                 )
-        self._rates.append(tick.rate)
+        self._ticks.append(tick)
         self._last_tick = tick
+        cutoff = tick.ts - timedelta(hours=self._window)
+        self._ticks = [t for t in self._ticks if t.ts > cutoff]
 
     @property
     def window(self) -> int:
@@ -39,7 +41,7 @@ class CoinState:
 
     @property
     def samples(self) -> int:
-        return len(self._rates)
+        return len(self._ticks)
 
     @property
     def last_tick(self) -> FundingTick | None:
@@ -47,12 +49,14 @@ class CoinState:
 
     @property
     def is_ready(self) -> bool:
-        return len(self._rates) >= self._window
+        return len(self._ticks) >= self._window
 
     def smoothed_signal(self) -> float | None:
-        mean_rate = rolling_mean(list(self._rates), self._window)
-        if mean_rate is None:
+        if not self._ticks:
             return None
+        if len(self._ticks) < self._window:
+            return None
+        mean_rate = sum(t.rate for t in self._ticks) / len(self._ticks)
         return annualize_rate(mean_rate)
 
     def current_annual_rate(self) -> float | None:
