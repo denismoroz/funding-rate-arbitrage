@@ -32,7 +32,7 @@ async def test_ensure_strategy_creates_when_missing():
     try:
         spec = get_strategy_spec("strategy_a")
         params = {"coins": list(DEFAULT_COINS), "concurrency_cap": 3}
-        sid = await _ensure_strategy(factory, params, name=spec.name, version=spec.version)
+        sid = await _ensure_strategy(factory, params, name=spec.name, version=spec.version, instance_token="test-token")
         assert sid > 0
 
         async with session_scope(factory) as s:
@@ -52,8 +52,8 @@ async def test_ensure_strategy_reuses_existing_row():
     engine, factory = await _factory()
     try:
         spec = get_strategy_spec("strategy_a")
-        sid1 = await _ensure_strategy(factory, {"v": 1}, name=spec.name, version=spec.version)
-        sid2 = await _ensure_strategy(factory, {"v": 2}, name=spec.name, version=spec.version)  # different params, same name/version
+        sid1 = await _ensure_strategy(factory, {"v": 1}, name=spec.name, version=spec.version, instance_token="test-token")
+        sid2 = await _ensure_strategy(factory, {"v": 2}, name=spec.name, version=spec.version, instance_token="test-token")  # different params, same name/version
         assert sid1 == sid2
 
         async with session_scope(factory) as s:
@@ -83,7 +83,7 @@ async def test_ensure_strategy_marks_status_running_and_cleans_up_leftovers():
             await s.flush()
             leftover_id = leftover.id
 
-        sid = await _ensure_strategy(factory, {"v": 1}, name=spec.name, version=spec.version)
+        sid = await _ensure_strategy(factory, {"v": 1}, name=spec.name, version=spec.version, instance_token="test-token")
 
         async with session_scope(factory) as s:
             # The newly-ensured strategy must be running.
@@ -97,6 +97,85 @@ async def test_ensure_strategy_marks_status_running_and_cleans_up_leftovers():
             assert old is not None
             assert old.status == "stopped"
             assert old.stopped_at is not None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_writes_instance_token():
+    engine, factory = await _factory()
+    try:
+        spec = get_strategy_spec("strategy_a")
+        sid = await _ensure_strategy(factory, {}, name=spec.name, version=spec.version, instance_token="tok-A")
+        async with session_scope(factory) as s:
+            row = await s.get(Strategy, sid)
+            assert row.instance_token == "tok-A"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ensure_strategy_overwrites_instance_token_on_second_call():
+    engine, factory = await _factory()
+    try:
+        spec = get_strategy_spec("strategy_a")
+        sid = await _ensure_strategy(factory, {}, name=spec.name, version=spec.version, instance_token="tok-A")
+        sid2 = await _ensure_strategy(factory, {}, name=spec.name, version=spec.version, instance_token="tok-B")
+        assert sid == sid2
+        async with session_scope(factory) as s:
+            row = await s.get(Strategy, sid)
+            assert row.instance_token == "tok-B"
+            assert row.status == "running"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mark_stopped_if_owner_when_token_matches():
+    from frab.server import _mark_stopped_if_owner
+    engine, factory = await _factory()
+    try:
+        spec = get_strategy_spec("strategy_a")
+        sid = await _ensure_strategy(factory, {}, name=spec.name, version=spec.version, instance_token="tok-A")
+        updated = await _mark_stopped_if_owner(factory, sid, "tok-A")
+        assert updated is True
+        async with session_scope(factory) as s:
+            row = await s.get(Strategy, sid)
+            assert row.status == "stopped"
+            assert row.stopped_at is not None
+            assert row.instance_token is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mark_stopped_if_owner_skips_when_token_differs():
+    """Simulates the race: process A starts (tok-A), process B replaces (tok-B),
+    then A's late finally fires — must NOT clobber B's running state."""
+    from frab.server import _mark_stopped_if_owner
+    engine, factory = await _factory()
+    try:
+        spec = get_strategy_spec("strategy_a")
+        sid = await _ensure_strategy(factory, {}, name=spec.name, version=spec.version, instance_token="tok-A")
+        await _ensure_strategy(factory, {}, name=spec.name, version=spec.version, instance_token="tok-B")
+        updated = await _mark_stopped_if_owner(factory, sid, "tok-A")
+        assert updated is False
+        async with session_scope(factory) as s:
+            row = await s.get(Strategy, sid)
+            assert row.status == "running"
+            assert row.instance_token == "tok-B"
+            assert row.stopped_at is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mark_stopped_if_owner_returns_false_for_missing_strategy():
+    from frab.server import _mark_stopped_if_owner
+    engine, factory = await _factory()
+    try:
+        updated = await _mark_stopped_if_owner(factory, 9999, "tok-X")
+        assert updated is False
     finally:
         await engine.dispose()
 

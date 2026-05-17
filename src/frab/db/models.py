@@ -93,6 +93,7 @@ class Strategy(Base):
     status: Mapped[str] = mapped_column(default="idle")
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    instance_token: Mapped[Optional[str]] = mapped_column(nullable=True)
 
 
 class Signal(Base):

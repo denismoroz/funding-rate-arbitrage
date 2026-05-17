@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import AsyncIterator
@@ -43,7 +44,7 @@ DEFAULT_COINS: tuple[str, ...] = ("BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "
 EXCHANGE_NAME = "hyperliquid"
 
 
-async def _ensure_strategy(session_factory, params_json: dict, *, name: str, version: str) -> int:
+async def _ensure_strategy(session_factory, params_json: dict, *, name: str, version: str, instance_token: str) -> int:
     async with session_scope(session_factory) as s:
         # Defensive cleanup: mark any leftover 'running' strategies as 'stopped'
         # (handles crash recovery when previous process exited uncleanly).
@@ -54,6 +55,7 @@ async def _ensure_strategy(session_factory, params_json: dict, *, name: str, ver
         for st in leftover.scalars().all():
             st.status = "stopped"
             st.stopped_at = now_utc
+            st.instance_token = None
 
         # Find or create the strategy row.
         result = await s.execute(
@@ -76,7 +78,27 @@ async def _ensure_strategy(session_factory, params_json: dict, *, name: str, ver
         # Mark this strategy as running.
         existing.status = "running"
         existing.started_at = now_utc
+        existing.stopped_at = None
+        existing.instance_token = instance_token
         return existing.id
+
+
+async def _mark_stopped_if_owner(session_factory, strategy_id: int, instance_token: str) -> bool:
+    """Mark strategy stopped only if its instance_token matches ours.
+
+    Returns True if we updated the row (we were the live owner), False if
+    a newer process has already taken ownership (different token).
+    """
+    async with session_scope(session_factory) as s:
+        row = await s.get(Strategy, strategy_id)
+        if row is None:
+            return False
+        if row.instance_token != instance_token:
+            return False
+        row.status = "stopped"
+        row.stopped_at = datetime.now(UTC)
+        row.instance_token = None
+        return True
 
 
 async def _load_funding_from_db(
@@ -223,8 +245,9 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             executor=executor,
         )
 
+        instance_token = uuid.uuid4().hex
         strategy_id = await _ensure_strategy(
-            session_factory, params_json, name=spec.name, version=spec.version
+            session_factory, params_json, name=spec.name, version=spec.version, instance_token=instance_token
         )
         recorder = DbRecorder(
             session_factory,
@@ -274,11 +297,12 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             yield
         finally:
             try:
-                async with session_scope(session_factory) as s:
-                    row = await s.get(Strategy, app.state.strategy_id)
-                    if row is not None:
-                        row.status = "stopped"
-                        row.stopped_at = datetime.now(UTC)
+                updated = await _mark_stopped_if_owner(session_factory, app.state.strategy_id, instance_token)
+                if not updated:
+                    logger.info(
+                        "skipped marking strategy stopped: another process now owns id=%d",
+                        app.state.strategy_id,
+                    )
             except Exception:
                 logger.exception("failed to mark strategy as stopped on shutdown")
 
