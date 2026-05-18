@@ -19,8 +19,11 @@ class PositionMode(StrEnum):
 
 
 class PositionStatus(StrEnum):
+    OPENING = "opening"
     OPEN = "open"
+    CLOSING = "closing"
     CLOSED = "closed"
+    FAILED = "failed"
 
 
 class Base(DeclarativeBase):
@@ -139,6 +142,7 @@ class Position(Base):
 
 class Fill(Base):
     __tablename__ = "fills"
+    __table_args__ = (UniqueConstraint("client_ref", name="uq_fills_client_ref"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     position_id: Mapped[int] = mapped_column(ForeignKey("positions.id", ondelete="CASCADE"))
@@ -150,6 +154,7 @@ class Fill(Base):
     fee: Mapped[float]
     slippage_bps: Mapped[float]
     is_paper: Mapped[bool] = mapped_column(default=True)
+    client_ref: Mapped[Optional[str]] = mapped_column(nullable=True)
 
 
 class PositionFundingAccrual(Base):

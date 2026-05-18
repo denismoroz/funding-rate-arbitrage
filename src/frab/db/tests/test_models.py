@@ -14,6 +14,7 @@ from frab.db.models import (
     FundingRate,
     Market,
     Position,
+    PositionStatus,
     Price,
     Signal,
     Strategy,
@@ -485,3 +486,114 @@ async def test_cascade_delete_exchange_removes_markets(session, make_exchange):
         select(Market).where(Market.exchange_id == exc.id)
     )
     assert result.scalars().all() == []
+
+
+# ---------------------------------------------------------------------------
+# PositionStatus extended enum tests
+# ---------------------------------------------------------------------------
+
+def test_position_status_has_new_members():
+    assert PositionStatus.OPENING == "opening"
+    assert PositionStatus.CLOSING == "closing"
+    assert PositionStatus.FAILED == "failed"
+    assert PositionStatus.OPEN == "open"
+    assert PositionStatus.CLOSED == "closed"
+    all_values = {s.value for s in PositionStatus}
+    assert all_values == {"opening", "open", "closing", "closed", "failed"}
+
+
+# ---------------------------------------------------------------------------
+# Fill.client_ref tests
+# ---------------------------------------------------------------------------
+
+async def test_fill_client_ref_nullable(session_factory, make_exchange, make_strategy, make_position):
+    """Two fills with client_ref=None must both persist (NULLs are not unique-checked)."""
+    async with session_scope(session_factory) as s:
+        strat = make_strategy(name="cr_null", version="v1")
+        s.add(strat)
+        await s.flush()
+        exc = make_exchange(name="CRNull")
+        s.add(exc)
+        await s.flush()
+        mkt = Market(exchange_id=exc.id, coin="BTC")
+        s.add(mkt)
+        await s.flush()
+        pos = make_position(strat.id, mkt.id)
+        s.add(pos)
+        await s.flush()
+        s.add(Fill(
+            position_id=pos.id, ts=_DT(20), leg="spot", side="buy",
+            qty=0.1, price=30000.0, fee=0.21, slippage_bps=2.0, client_ref=None,
+        ))
+        s.add(Fill(
+            position_id=pos.id, ts=_DT(21), leg="perp", side="sell",
+            qty=0.1, price=30010.0, fee=0.075, slippage_bps=1.5, client_ref=None,
+        ))
+    # Both inserts succeeded — verify two rows exist
+    async with session_scope(session_factory) as s:
+        strat2 = await s.execute(select(Strategy).where(Strategy.name == "cr_null"))
+        strat_row = strat2.scalar_one()
+        result = await s.execute(select(Fill).where(Fill.position_id == strat_row.id - strat_row.id + pos.id))
+        # Just verify no exception was raised; rows were committed successfully
+    # If we reach here without IntegrityError both NULLs coexisted
+
+
+async def test_fill_client_ref_unique_non_null(session_factory, make_exchange, make_strategy, make_position):
+    """Two fills with the same non-null client_ref must raise IntegrityError."""
+    pos_id: int
+    async with session_scope(session_factory) as s:
+        strat = make_strategy(name="cr_uniq", version="v1")
+        s.add(strat)
+        await s.flush()
+        exc = make_exchange(name="CRUniq")
+        s.add(exc)
+        await s.flush()
+        mkt = Market(exchange_id=exc.id, coin="ETH")
+        s.add(mkt)
+        await s.flush()
+        pos = make_position(strat.id, mkt.id)
+        s.add(pos)
+        await s.flush()
+        pos_id = pos.id
+        s.add(Fill(
+            position_id=pos_id, ts=_DT(22), leg="spot", side="buy",
+            qty=0.1, price=30000.0, fee=0.21, slippage_bps=2.0, client_ref="ref-abc",
+        ))
+
+    with pytest.raises(IntegrityError):
+        async with session_scope(session_factory) as s:
+            s.add(Fill(
+                position_id=pos_id, ts=_DT(23), leg="perp", side="sell",
+                qty=0.1, price=30010.0, fee=0.075, slippage_bps=1.5, client_ref="ref-abc",
+            ))
+
+
+async def test_fill_client_ref_roundtrip(session, make_exchange, make_strategy, make_position):
+    """Insert a fill with a non-null client_ref and verify it is read back exactly."""
+    strat = make_strategy(name="cr_rt", version="v1")
+    session.add(strat)
+    await session.flush()
+
+    exc = make_exchange(name="CRRT")
+    session.add(exc)
+    await session.flush()
+
+    mkt = Market(exchange_id=exc.id, coin="SOL")
+    session.add(mkt)
+    await session.flush()
+
+    pos = make_position(strat.id, mkt.id)
+    session.add(pos)
+    await session.flush()
+
+    fill = Fill(
+        position_id=pos.id, ts=_DT(12), leg="spot", side="buy",
+        qty=0.5, price=150.0, fee=0.10, slippage_bps=3.0,
+        client_ref="idempotency-key-xyz",
+    )
+    session.add(fill)
+    await session.flush()
+
+    result = await session.execute(select(Fill).where(Fill.id == fill.id))
+    row = result.scalar_one()
+    assert row.client_ref == "idempotency-key-xyz"
