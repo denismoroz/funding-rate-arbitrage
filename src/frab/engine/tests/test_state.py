@@ -191,3 +191,130 @@ def test_market_empty() -> None:
     assert len(ms) == 0
     assert ms.coins() == []
     assert ms.signals() == {}
+
+
+def test_market_funding_interval_propagates() -> None:
+    """funding_interval_hours kwarg propagates from MarketState down to each CoinState."""
+    ms = MarketState(["BTC", "ETH"], 12, funding_interval_hours=0.5)
+    assert ms.get("BTC")._funding_interval_h == 0.5
+    assert ms.get("ETH")._funding_interval_h == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Forward-fill tests
+# ---------------------------------------------------------------------------
+
+
+def test_forward_fill_one_missing_hour() -> None:
+    """Gap of 2 hours → 1 synthetic at offset_h=1; last_tick stays real at offset_h=2."""
+    state = CoinState("BTC", 12)
+    t0 = _tick(coin="BTC", offset_h=0, rate=0.0001)
+    t2 = _tick(coin="BTC", offset_h=2, rate=0.0002)
+    state.add_funding(t0)
+    state.add_funding(t2)
+    # 3 ticks: real@0, synthetic@1, real@2
+    assert state.samples == 3
+    assert state.last_tick.ts == _BASE + timedelta(hours=2)
+    # synthetic at offset 1 carries forward rate from t0
+    synthetic = state._ticks[1]
+    assert synthetic.ts == _BASE + timedelta(hours=1)
+    assert synthetic.rate == pytest.approx(0.0001)
+    # window=12, samples=3 → not ready yet but smoothed_signal() still returns None
+    assert state.is_ready is False
+
+
+def test_forward_fill_three_missing_hours() -> None:
+    """Gap of 4 hours → 3 synthetics at offsets 1,2,3 carrying first tick's rate."""
+    state = CoinState("BTC", 12)
+    t0 = _tick(coin="BTC", offset_h=0, rate=0.0001)
+    t4 = _tick(coin="BTC", offset_h=4, rate=0.0002)
+    state.add_funding(t0)
+    state.add_funding(t4)
+    # 5 ticks: real@0, synthetic@1, synthetic@2, synthetic@3, real@4
+    assert state.samples == 5
+    # Synthetics carry rate from t0
+    for i in range(1, 4):
+        assert state._ticks[i].rate == pytest.approx(0.0001)
+        assert state._ticks[i].ts == _BASE + timedelta(hours=i)
+    # Real tick at offset 4
+    assert state._ticks[4].rate == pytest.approx(0.0002)
+    assert state._ticks[4].ts == _BASE + timedelta(hours=4)
+
+
+def test_forward_fill_capped_at_window() -> None:
+    """A 100-hour gap is capped at window=3 synthetics; after prune only a few ticks survive."""
+    state = CoinState("BTC", window_hours=3)
+    state.add_funding(_tick(coin="BTC", offset_h=0, rate=0.0001))
+    state.add_funding(_tick(coin="BTC", offset_h=100, rate=0.0002))
+    # missing=99, capped to 3 → synthetics at offsets 1,2,3
+    # prune: cutoff = 100 - 3 = 97, keep ts > 97h
+    # synthetic@1,2,3 all <= 97 → pruned
+    # real@100 survives
+    assert state.samples <= 3  # at most a handful, not 99
+    assert state.last_tick.ts == _BASE + timedelta(hours=100)
+
+
+def test_forward_fill_no_gap() -> None:
+    """Sequential hourly ticks produce no synthetics — count matches exactly what was added."""
+    state = CoinState("BTC", 12)
+    for i in range(6):
+        state.add_funding(_tick(coin="BTC", offset_h=float(i), rate=0.0001))
+    assert state.samples == 6
+
+
+def test_forward_fill_with_fractional_funding_interval() -> None:
+    """With interval=0.5h, a 1.5h gap creates 2 synthetics at offsets 0.5 and 1.0."""
+    state = CoinState("BTC", window_hours=4, funding_interval_hours=0.5)
+    state.add_funding(_tick(coin="BTC", offset_h=0, rate=0.0003))
+    state.add_funding(_tick(coin="BTC", offset_h=1.5, rate=0.0004))
+    # ticks: real@0, synthetic@0.5, synthetic@1.0, real@1.5
+    assert state.samples == 4
+    assert state._ticks[1].ts == _BASE + timedelta(hours=0.5)
+    assert state._ticks[2].ts == _BASE + timedelta(hours=1.0)
+    assert state._ticks[1].rate == pytest.approx(0.0003)
+    assert state._ticks[2].rate == pytest.approx(0.0003)
+
+
+def test_forward_fill_preserves_premium_and_annualized() -> None:
+    """Synthetic ticks carry forward premium and annualized_pct from the prior real tick."""
+    state = CoinState("BTC", 12)
+    t0 = FundingTick(coin="BTC", ts=_BASE, rate=0.0001, premium=0.01, annualized_pct=8.76)
+    t2 = FundingTick(coin="BTC", ts=_BASE + timedelta(hours=2), rate=0.0002, premium=0.02, annualized_pct=17.52)
+    state.add_funding(t0)
+    state.add_funding(t2)
+    synthetic = state._ticks[1]  # synthetic at offset 1
+    assert synthetic.premium == pytest.approx(0.01)
+    assert synthetic.annualized_pct == pytest.approx(8.76)
+    assert synthetic.rate == pytest.approx(0.0001)
+
+
+def test_invalid_funding_interval_hours() -> None:
+    """funding_interval_hours=0 or negative raises ValueError."""
+    with pytest.raises(ValueError, match="funding_interval_hours must be positive"):
+        CoinState("BTC", 12, funding_interval_hours=0)
+    with pytest.raises(ValueError, match="funding_interval_hours must be positive"):
+        CoinState("BTC", 12, funding_interval_hours=-1.0)
+
+
+def test_forward_fill_then_signal_passes_readiness() -> None:
+    """Reproduces the production scenario: 11 consecutive ticks then a 2h gap at offset 12.
+
+    With forward-fill the synthetic at offset 11 fills the gap so samples==12
+    and smoothed_signal() returns a valid float.
+    """
+    state = CoinState("BTC", window_hours=12, funding_interval_hours=1.0)
+    for i in range(11):
+        state.add_funding(_tick(coin="BTC", offset_h=float(i), rate=0.0001))
+    assert state.samples == 11
+    assert state.is_ready is False
+
+    # Tick at offset 12 (skipping offset 11)
+    state.add_funding(_tick(coin="BTC", offset_h=12.0, rate=0.0001))
+    # After forward-fill: synthetic@11 inserted; prune cutoff = 12-12 = 0
+    # offset_h=0 is exactly at cutoff (ts > cutoff requires strictly greater) → pruned
+    # offsets 1..10 (10 real) + offset 11 (synthetic) + offset 12 (real) = 12 ticks
+    assert state.samples == 12
+    assert state.is_ready is True
+    sig = state.smoothed_signal()
+    assert sig is not None
+    assert isinstance(sig, float)

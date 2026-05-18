@@ -85,7 +85,7 @@ class StrategyA(Strategy):
     def __init__(self, params: StrategyAParams, executor: Executor) -> None:
         self._params = params
         self._executor = executor
-        self._market_state = MarketState(params.coins, params.signal_window_hours)
+        self._market_state = MarketState(params.coins, params.signal_window_hours, funding_interval_hours=1.0)
         self._positions: dict[str, _PositionRecord] = {}
         self._last_quotes: dict[str, Quote] = {}
         self._realized_pnl_cum: float = 0.0

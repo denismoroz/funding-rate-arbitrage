@@ -12,11 +12,14 @@ from frab.engine.signals import annualize_rate
 class CoinState:
     """Per-coin time-based rolling buffer of funding ticks plus last-tick metadata."""
 
-    def __init__(self, coin: str, window_hours: int) -> None:
+    def __init__(self, coin: str, window_hours: int, funding_interval_hours: float = 1.0) -> None:
         self.coin = coin
         if window_hours <= 0:
             raise ValueError("window_hours must be positive")
+        if funding_interval_hours <= 0:
+            raise ValueError("funding_interval_hours must be positive")
         self._window = window_hours
+        self._funding_interval_h = funding_interval_hours
         self._ticks: list[FundingTick] = []
         self._last_tick: FundingTick | None = None
 
@@ -30,6 +33,23 @@ class CoinState:
                 raise ValueError(
                     f"out-of-order funding tick: last_ts={self._last_tick.ts!r}, new_ts={tick.ts!r}"
                 )
+            # Forward-fill any missing intermediate ticks
+            elapsed_h = (tick.ts - self._last_tick.ts).total_seconds() / 3600.0
+            missing = int(round(elapsed_h / self._funding_interval_h)) - 1
+            if missing > 0:
+                missing = min(missing, self._window)
+                for i in range(1, missing + 1):
+                    synthetic_ts = self._last_tick.ts + timedelta(hours=self._funding_interval_h * i)
+                    if synthetic_ts >= tick.ts:
+                        break
+                    synthetic = FundingTick(
+                        coin=self.coin,
+                        ts=synthetic_ts,
+                        rate=self._last_tick.rate,
+                        premium=self._last_tick.premium,
+                        annualized_pct=self._last_tick.annualized_pct,
+                    )
+                    self._ticks.append(synthetic)
         self._ticks.append(tick)
         self._last_tick = tick
         cutoff = tick.ts - timedelta(hours=self._window)
@@ -71,8 +91,8 @@ class CoinState:
 class MarketState:
     """Multi-coin aggregator. Thin wrapper over a dict of CoinState."""
 
-    def __init__(self, coins: Iterable[str], window_hours: int) -> None:
-        self._coins: dict[str, CoinState] = {c: CoinState(c, window_hours) for c in coins}
+    def __init__(self, coins: Iterable[str], window_hours: int, funding_interval_hours: float = 1.0) -> None:
+        self._coins: dict[str, CoinState] = {c: CoinState(c, window_hours, funding_interval_hours) for c in coins}
 
     def coins(self) -> list[str]:
         return list(self._coins.keys())
