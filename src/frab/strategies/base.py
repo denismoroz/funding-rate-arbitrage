@@ -18,6 +18,15 @@ class SignalEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class FailedOpen:
+    coin: str
+    ts: datetime
+    perp_fill: FillReport | None   # None if perp leg never filled
+    spot_fill: FillReport | None   # None if spot leg never filled
+    error: str                     # short summary, typically repr() of the last underlying exception
+
+
+@dataclass(frozen=True, slots=True)
 class TickReport:
     ts: datetime
     signals: tuple[SignalEvent, ...]
@@ -31,6 +40,10 @@ class TickReport:
     # For TwoPhaseDynamic — persisted per-position state:
     opened_min_holds: tuple[tuple[str, int], ...] = ()      # (coin, position_min_hold_hours) for each newly opened position
     consec_negative_updates: tuple[tuple[str, int], ...] = ()  # (coin, new_consec_negative_hours) for each in-position coin
+    # Failed paired-open attempts (perp leg failed before any fill, or spot leg
+    # failed after perp filled).  Written as FAILED positions in the DB; NOT
+    # added to the in-memory open-positions cache.
+    failed_opens: tuple[FailedOpen, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

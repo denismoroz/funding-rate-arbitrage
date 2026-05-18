@@ -235,6 +235,7 @@ class DbRecorder:
                         fee=spot_fill.fee,
                         slippage_bps=spot_fill.slippage_bps,
                         is_paper=spot_fill.is_paper,
+                        client_ref=spot_fill.client_ref,
                     )
                 )
                 session.add(
@@ -248,6 +249,7 @@ class DbRecorder:
                         fee=perp_fill.fee,
                         slippage_bps=perp_fill.slippage_bps,
                         is_paper=perp_fill.is_paper,
+                        client_ref=perp_fill.client_ref,
                     )
                 )
 
@@ -316,6 +318,7 @@ class DbRecorder:
                         fee=spot_fill.fee,
                         slippage_bps=spot_fill.slippage_bps,
                         is_paper=spot_fill.is_paper,
+                        client_ref=spot_fill.client_ref,
                     )
                 )
                 session.add(
@@ -329,8 +332,63 @@ class DbRecorder:
                         fee=perp_fill.fee,
                         slippage_bps=perp_fill.slippage_bps,
                         is_paper=perp_fill.is_paper,
+                        client_ref=perp_fill.client_ref,
                     )
                 )
+
+            # --- Failed opens ---
+            for fo in report.failed_opens:
+                market_id = self._coin_to_market_id.get(fo.coin)
+                if market_id is None:
+                    logger.warning(
+                        "save_tick_report: unknown coin %r in failed_opens — skipping", fo.coin
+                    )
+                    continue
+
+                perp_fill = fo.perp_fill
+                spot_fill = fo.spot_fill
+
+                spot_units = spot_fill.qty if spot_fill is not None else 0.0
+                perp_units = -perp_fill.qty if perp_fill is not None else 0.0
+                entry_spot_price = spot_fill.price if spot_fill is not None else 0.0
+                entry_perp_price = perp_fill.price if perp_fill is not None else 0.0
+                fees_paid = (perp_fill.fee if perp_fill else 0.0) + (spot_fill.fee if spot_fill else 0.0)
+
+                pos = Position(
+                    strategy_id=self._strategy_id,
+                    market_id=market_id,
+                    mode=self._mode,
+                    status=PositionStatus.FAILED,
+                    opened_at=fo.ts,
+                    closed_at=fo.ts,
+                    spot_units=spot_units,
+                    perp_units=perp_units,
+                    entry_spot_price=entry_spot_price,
+                    entry_perp_price=entry_perp_price,
+                    fees_paid=fees_paid,
+                    realized_pnl=0.0,
+                    funding_collected=0.0,
+                )
+                session.add(pos)
+                await session.flush()
+
+                # CRUCIAL: do NOT add fo.coin to self._open_positions.
+
+                for fill in (perp_fill, spot_fill):
+                    if fill is None:
+                        continue
+                    session.add(Fill(
+                        position_id=pos.id,
+                        ts=fill.ts,
+                        leg=fill.leg,
+                        side=fill.side,
+                        qty=fill.qty,
+                        price=fill.price,
+                        fee=fill.fee,
+                        slippage_bps=fill.slippage_bps,
+                        is_paper=fill.is_paper,
+                        client_ref=fill.client_ref,
+                    ))
 
             # --- Update consec_negative on open positions (per-tick state) ---
             for coin, consec in report.consec_negative_updates:

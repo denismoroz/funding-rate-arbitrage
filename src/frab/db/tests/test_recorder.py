@@ -25,7 +25,7 @@ from frab.db.models import (
 from frab.db.recorder import DbRecorder
 from frab.db.session import session_scope
 from frab.exchanges.base import FillReport, FundingTick, Leg, Quote, Side
-from frab.strategies.base import EquitySnapshot, SignalEvent, TickReport
+from frab.strategies.base import EquitySnapshot, FailedOpen, SignalEvent, TickReport
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -917,3 +917,297 @@ async def test_save_tick_report_multiple_accruals_create_multiple_rows(session_f
         assert row.position_id == pos.id
         assert row.delta == pytest.approx(delta)
     assert rows[0].ts < rows[1].ts < rows[2].ts
+
+
+# ---------------------------------------------------------------------------
+# client_ref persistence on opens and closes
+# ---------------------------------------------------------------------------
+
+
+async def test_save_tick_report_opens_persist_client_ref(session_factory):
+    """Fill rows for a successful open must carry client_ref from FillReports."""
+    exc_id, _ = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    spot_buy = FillReport(
+        coin="BTC", leg=Leg.SPOT, side=Side.BUY, ts=_TS,
+        qty=0.1, price=30_000.0, fee=0.21, slippage_bps=2.0,
+        is_paper=True, client_ref="spot-open-ref-001",
+    )
+    perp_sell = FillReport(
+        coin="BTC", leg=Leg.PERP, side=Side.SELL, ts=_TS,
+        qty=0.1, price=30_010.0, fee=0.075, slippage_bps=1.5,
+        is_paper=True, client_ref="perp-open-ref-001",
+    )
+
+    report = TickReport(
+        ts=_TS, signals=(), fills=(spot_buy, perp_sell),
+        opened=("BTC",), closed=(),
+    )
+    await rec.save_tick_report(report)
+
+    async with session_scope(session_factory) as s:
+        pos_result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = pos_result.scalar_one()
+        fills_result = await s.execute(select(Fill).where(Fill.position_id == pos.id))
+        fills = fills_result.scalars().all()
+
+    assert len(fills) == 2
+    refs = {f.leg: f.client_ref for f in fills}
+    assert refs[Leg.SPOT] == "spot-open-ref-001"
+    assert refs[Leg.PERP] == "perp-open-ref-001"
+
+
+async def test_save_tick_report_closes_persist_client_ref(session_factory):
+    """Fill rows for a successful close must carry client_ref from FillReports."""
+    exc_id, _ = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    # Open first (no client_ref needed for open fills here)
+    open_report = TickReport(
+        ts=_TS, signals=(),
+        fills=(_make_spot_buy("BTC"), _make_perp_sell("BTC")),
+        opened=("BTC",), closed=(),
+    )
+    await rec.save_tick_report(open_report)
+
+    spot_sell = FillReport(
+        coin="BTC", leg=Leg.SPOT, side=Side.SELL, ts=_TS2,
+        qty=0.1, price=31_000.0, fee=0.21, slippage_bps=2.0,
+        is_paper=True, client_ref="spot-close-ref-002",
+    )
+    perp_buy = FillReport(
+        coin="BTC", leg=Leg.PERP, side=Side.BUY, ts=_TS2,
+        qty=0.1, price=31_010.0, fee=0.075, slippage_bps=1.5,
+        is_paper=True, client_ref="perp-close-ref-002",
+    )
+
+    close_report = TickReport(
+        ts=_TS2, signals=(), fills=(spot_sell, perp_buy),
+        opened=(), closed=("BTC",),
+    )
+    await rec.save_tick_report(close_report)
+
+    async with session_scope(session_factory) as s:
+        pos_result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = pos_result.scalar_one()
+        fills_result = await s.execute(
+            select(Fill).where(
+                Fill.position_id == pos.id,
+                Fill.side.in_([Side.SELL, Side.BUY]),
+            ).order_by(Fill.ts)
+        )
+        fills = fills_result.scalars().all()
+
+    # 4 fills total; filter to the close fills (ts == _TS2)
+    close_fills = [f for f in fills if f.ts.replace(tzinfo=None) == _TS2.replace(tzinfo=None)]
+    assert len(close_fills) == 2
+    refs = {f.leg: f.client_ref for f in close_fills}
+    assert refs[Leg.SPOT] == "spot-close-ref-002"
+    assert refs[Leg.PERP] == "perp-close-ref-002"
+
+
+# ---------------------------------------------------------------------------
+# failed_opens persistence
+# ---------------------------------------------------------------------------
+
+
+async def test_save_tick_report_failed_open_perp_only_writes_failed_position(session_factory):
+    """FailedOpen with perp fill only writes a FAILED Position + one Fill, no cache entry."""
+    exc_id, _ = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    perp_fill = FillReport(
+        coin="BTC", leg=Leg.PERP, side=Side.SELL, ts=_TS,
+        qty=0.05, price=30_010.0, fee=0.075, slippage_bps=1.5,
+        is_paper=False, client_ref="perp-fail-ref-001",
+    )
+
+    report = TickReport(
+        ts=_TS, signals=(), fills=(), opened=(), closed=(),
+        failed_opens=(
+            FailedOpen(coin="BTC", ts=_TS, perp_fill=perp_fill, spot_fill=None, error="spot timeout"),
+        ),
+    )
+    await rec.save_tick_report(report)
+
+    async with session_scope(session_factory) as s:
+        pos_result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = pos_result.scalar_one()
+        fills_result = await s.execute(select(Fill).where(Fill.position_id == pos.id))
+        fills = fills_result.scalars().all()
+
+    assert pos.status == PositionStatus.FAILED
+    assert pos.opened_at.replace(tzinfo=None) == _TS.replace(tzinfo=None)
+    assert pos.closed_at.replace(tzinfo=None) == _TS.replace(tzinfo=None)
+    assert pos.spot_units == 0.0
+    assert pos.perp_units == pytest.approx(-0.05)
+    assert pos.entry_spot_price == 0.0
+    assert pos.entry_perp_price == pytest.approx(30_010.0)
+    assert pos.fees_paid == pytest.approx(0.075)
+
+    assert len(fills) == 1
+    assert fills[0].leg == Leg.PERP
+    assert fills[0].client_ref == "perp-fail-ref-001"
+
+    assert "BTC" not in rec._open_positions
+
+
+async def test_save_tick_report_failed_open_no_fills_writes_audit_position(session_factory):
+    """FailedOpen with both fills=None writes a FAILED Position with zero units and no Fills."""
+    exc_id, _ = await _seed_exchange_and_markets(session_factory, coins=["ETH"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    report = TickReport(
+        ts=_TS, signals=(), fills=(), opened=(), closed=(),
+        failed_opens=(
+            FailedOpen(coin="ETH", ts=_TS, perp_fill=None, spot_fill=None, error="conn refused"),
+        ),
+    )
+    await rec.save_tick_report(report)
+
+    async with session_scope(session_factory) as s:
+        pos_result = await s.execute(select(Position).where(Position.strategy_id == strat_id))
+        pos = pos_result.scalar_one()
+        fills_result = await s.execute(select(Fill).where(Fill.position_id == pos.id))
+        fills = fills_result.scalars().all()
+
+    assert pos.status == PositionStatus.FAILED
+    assert pos.spot_units == 0.0
+    assert pos.perp_units == 0.0
+    assert pos.entry_spot_price == 0.0
+    assert pos.entry_perp_price == 0.0
+    assert pos.fees_paid == 0.0
+    assert fills == []
+
+    assert "ETH" not in rec._open_positions
+
+
+async def test_save_tick_report_failed_open_unknown_coin_skipped(session_factory, caplog):
+    """FailedOpen with unknown coin logs a warning and skips — no Position created."""
+    exc_id, _ = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    report = TickReport(
+        ts=_TS, signals=(), fills=(), opened=(), closed=(),
+        failed_opens=(
+            FailedOpen(coin="ZZZ", ts=_TS, perp_fill=None, spot_fill=None, error="unknown"),
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="frab.db.recorder"):
+        await rec.save_tick_report(report)
+
+    assert any("ZZZ" in r.message for r in caplog.records)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(select(Position))
+        assert result.scalars().all() == []
+
+
+async def test_save_tick_report_mixed_opened_and_failed_open(session_factory):
+    """One successful open (SOL) + one failed open (AVAX) in the same tick."""
+    exc_id, _ = await _seed_exchange_and_markets(
+        session_factory, exchange_name="HL2", coins=["SOL", "AVAX"]
+    )
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    sol_spot_buy = FillReport(
+        coin="SOL", leg=Leg.SPOT, side=Side.BUY, ts=_TS,
+        qty=10.0, price=150.0, fee=0.10, slippage_bps=2.0,
+        is_paper=True, client_ref="sol-spot-ref",
+    )
+    sol_perp_sell = FillReport(
+        coin="SOL", leg=Leg.PERP, side=Side.SELL, ts=_TS,
+        qty=10.0, price=150.5, fee=0.05, slippage_bps=1.0,
+        is_paper=True, client_ref="sol-perp-ref",
+    )
+    avax_perp_fill = FillReport(
+        coin="AVAX", leg=Leg.PERP, side=Side.SELL, ts=_TS,
+        qty=5.0, price=35.0, fee=0.02, slippage_bps=1.0,
+        is_paper=True, client_ref="avax-perp-fail-ref",
+    )
+
+    report = TickReport(
+        ts=_TS, signals=(),
+        fills=(sol_spot_buy, sol_perp_sell),
+        opened=("SOL",), closed=(),
+        failed_opens=(
+            FailedOpen(coin="AVAX", ts=_TS, perp_fill=avax_perp_fill, spot_fill=None, error="avax spot timeout"),
+        ),
+    )
+    await rec.save_tick_report(report)
+
+    async with session_scope(session_factory) as s:
+        positions_result = await s.execute(
+            select(Position).where(Position.strategy_id == strat_id).order_by(Position.id)
+        )
+        positions = positions_result.scalars().all()
+
+    assert len(positions) == 2
+
+    sol_pos = next(p for p in positions if p.status == PositionStatus.OPEN)
+    avax_pos = next(p for p in positions if p.status == PositionStatus.FAILED)
+
+    # SOL position is OPEN and in cache
+    assert "SOL" in rec._open_positions
+    assert rec._open_positions["SOL"] == sol_pos.id
+
+    # AVAX position is FAILED and NOT in cache
+    assert "AVAX" not in rec._open_positions
+
+    # Verify SOL fills have client_ref
+    async with session_scope(session_factory) as s:
+        sol_fills_result = await s.execute(select(Fill).where(Fill.position_id == sol_pos.id))
+        sol_fills = sol_fills_result.scalars().all()
+        avax_fills_result = await s.execute(select(Fill).where(Fill.position_id == avax_pos.id))
+        avax_fills = avax_fills_result.scalars().all()
+
+    assert len(sol_fills) == 2
+    sol_refs = {f.leg: f.client_ref for f in sol_fills}
+    assert sol_refs[Leg.SPOT] == "sol-spot-ref"
+    assert sol_refs[Leg.PERP] == "sol-perp-ref"
+
+    assert len(avax_fills) == 1
+    assert avax_fills[0].leg == Leg.PERP
+    assert avax_fills[0].client_ref == "avax-perp-fail-ref"
+
+
+async def test_save_tick_report_failed_open_default_empty_tuple_no_op(session_factory):
+    """TickReport with failed_opens=() (default) must not create any extra Positions."""
+    exc_id, _ = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    # Explicit empty tuple — same as the default
+    report = TickReport(
+        ts=_TS, signals=(), fills=(), opened=(), closed=(),
+        failed_opens=(),
+    )
+    await rec.save_tick_report(report)
+
+    async with session_scope(session_factory) as s:
+        result = await s.execute(select(Position))
+        assert result.scalars().all() == []
+
+    assert rec._open_positions == {}
