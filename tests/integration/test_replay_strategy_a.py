@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from frab.engine.loop import Engine
+from frab.events.bus import EventBus
+from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.base import FundingTick, MarketDataSource, Quote
 from frab.exchanges.paper import PaperExecutor
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
@@ -113,12 +115,14 @@ async def test_replay_strategy_a_one_month_smoke():
 
     # 2. Build production stack.
     market = ReplayMarketData(data_by_coin)
-    executor = PaperExecutor(
+    bus = EventBus()
+    paper_executor = PaperExecutor(
         market_data=market,
         spot_taker_bps=7.0,
         perp_taker_bps=3.5,
         extra_slip_bps=0.0,  # no extra slippage — for cleaner replay convergence with backtest
     )
+    executor = AtomicExecutor(paper_executor, bus, max_attempts=1, sleep_between_attempts=())
     params = StrategyAParams(
         coins=COINS,
         entry_threshold=0.30,

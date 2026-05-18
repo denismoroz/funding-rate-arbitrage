@@ -5,8 +5,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from frab.exchanges.base import Executor, FillReport, FundingTick, Leg, OrderRequest, Quote, Side
-from frab.strategies.base import EquitySnapshot, TickReport
+from frab.exchanges.atomic import AtomicExecutor, PairedCloseResult, PairedOpenResult
+from frab.exchanges.base import FillReport, FundingTick, Leg, OrderRequest, Quote, Side
+from frab.strategies.base import EquitySnapshot, FailedOpen, TickReport
 from frab.strategies.strategy_a import AccumulatorsSnapshot
 from frab.strategies.two_phase_dynamic import (
     OpenPositionSnapshot,
@@ -77,12 +78,51 @@ def _fill(
 
 
 # ---------------------------------------------------------------------------
+# Executor mock helpers
+# ---------------------------------------------------------------------------
+
+def make_executor(mocker, *, open_results=None, close_results=None):
+    ex = mocker.MagicMock(spec=AtomicExecutor)
+    ex.open_paired = mocker.AsyncMock(side_effect=open_results or [])
+    ex.close_paired = mocker.AsyncMock(side_effect=close_results or [])
+    return ex
+
+
+def make_paired_open_ok(perp_fill, spot_fill):
+    return PairedOpenResult(
+        status="ok", perp_fill=perp_fill, spot_fill=spot_fill,
+        perp_attempts=1, spot_attempts=1, errors=(),
+    )
+
+
+def make_paired_close_ok(perp_fill, spot_fill):
+    return PairedCloseResult(
+        status="ok", perp_fill=perp_fill, spot_fill=spot_fill,
+        perp_attempts=1, spot_attempts=1, errors=(),
+    )
+
+
+def make_paired_open_failed(perp_fill=None, spot_fill=None, errors=("some error",)):
+    return PairedOpenResult(
+        status="failed", perp_fill=perp_fill, spot_fill=spot_fill,
+        perp_attempts=1, spot_attempts=0, errors=errors,
+    )
+
+
+def make_paired_close_failed(perp_fill=None, spot_fill=None, errors=("some error",)):
+    return PairedCloseResult(
+        status="failed", perp_fill=perp_fill, spot_fill=spot_fill,
+        perp_attempts=1, spot_attempts=0, errors=errors,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
 def executor(mocker):
-    return mocker.AsyncMock(spec=Executor)
+    return make_executor(mocker)
 
 
 def _default_params(**kwargs) -> TwoPhaseDynamicParams:
@@ -143,14 +183,15 @@ def test_params_zero_cap_min_hold_raises():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_sufficient_signal_opens_position(executor):
+async def test_sufficient_signal_opens_position(mocker):
     """signal above entry_threshold → OPEN, position_min_hold computed."""
-    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), make_executor(mocker))
 
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
 
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     # rate=0.0001 → annual=0.876 > 0.10 → should open
@@ -169,23 +210,23 @@ async def test_sufficient_signal_opens_position(executor):
 
 
 @pytest.mark.asyncio
-async def test_signal_below_threshold_does_not_open(executor):
+async def test_signal_below_threshold_does_not_open(mocker):
     """signal below entry_threshold → no OPEN."""
-    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), entry_threshold=0.10), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), entry_threshold=0.10), make_executor(mocker))
 
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     # rate=0.000001 → annual=0.00876 < 0.10 → NONE
     report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.000001)})
 
     assert report.opened == ()
-    executor.submit.assert_not_called()
+    strat._executor.open_paired.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_concurrency_cap_picks_top_k(executor):
+async def test_concurrency_cap_picks_top_k(mocker):
     """When more candidates than slots, top-K by signal_value are chosen."""
     coins = ("BTC", "ETH", "SOL", "AAVE")
-    strat = TwoPhaseDynamic(_default_params(coins=coins, concurrency_cap=2, entry_threshold=0.10), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=coins, concurrency_cap=2, entry_threshold=0.10), make_executor(mocker))
 
     quotes = {c: _quote(c, mark=100.0) for c in coins}
     await strat.on_minute_tick(T0, quotes)
@@ -200,10 +241,13 @@ async def test_concurrency_cap_picks_top_k(executor):
         "AAVE": _funding("AAVE", T0, 0.2 / 8760),
     }
 
-    async def _fill_gen(req: OrderRequest) -> FillReport:
-        return _fill(req.coin, req.leg, req.side, qty=10.0, price=100.0, fee=0.0)
+    async def _open_gen(perp_req, spot_req):
+        coin = perp_req.coin
+        pf = _fill(coin, Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+        sf = _fill(coin, Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+        return make_paired_open_ok(pf, sf)
 
-    executor.submit.side_effect = _fill_gen
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=_open_gen)
 
     report = await strat.on_hour_tick(T0, funding)
 
@@ -214,16 +258,16 @@ async def test_concurrency_cap_picks_top_k(executor):
 
 
 @pytest.mark.asyncio
-async def test_no_open_when_quote_missing(executor):
+async def test_no_open_when_quote_missing(mocker):
     """Signal good but no quote for coin → position not opened."""
-    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), make_executor(mocker))
 
     # Don't call on_minute_tick → no quote cached
     # rate=0.001 → annual=8.76 >> threshold
     report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.001)})
 
     assert report.opened == ()
-    executor.submit.assert_not_called()
+    strat._executor.open_paired.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +275,7 @@ async def test_no_open_when_quote_missing(executor):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_min_hold_blocks_close_before_expiry(executor):
+async def test_min_hold_blocks_close_before_expiry(mocker):
     """Position is locked for position_min_hold_hours hours even with catastrophic rate."""
     # Use low entry rate to get a predictable min_hold
     # entry signal = 0.876 ann, fee_annual = 18.396
@@ -243,14 +287,15 @@ async def test_min_hold_blocks_close_before_expiry(executor):
             phase1_negative_patience=72,
             phase2_exit_threshold=-0.10,
         ),
-        executor,
+        make_executor(mocker),
     )
 
     # Open at T0
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     open_report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
 
@@ -259,17 +304,19 @@ async def test_min_hold_blocks_close_before_expiry(executor):
     assert min_hold > 1  # min_hold > 1 hour — lock is active
 
     # One hour later: catastrophic negative rate — but min_hold not met
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
+    strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
     t1 = T0 + HOUR
-    executor.submit.side_effect = []  # must not be called
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -1.0 / 8760)})
 
     assert report.closed == ()
     assert "BTC" in strat.open_positions()
+    strat._executor.close_paired.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_exit_logic_active_after_min_hold(executor):
+async def test_exit_logic_active_after_min_hold(mocker):
     """After position_min_hold_hours hours, exit logic can fire."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -281,14 +328,15 @@ async def test_exit_logic_active_after_min_hold(executor):
             phase1_negative_patience=0,  # immediate exit on negative
             phase2_exit_threshold=-0.10,
         ),
-        executor,
+        make_executor(mocker),
     )
 
     # Open at T0
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
     assert "BTC" in strat.open_positions()
@@ -296,17 +344,19 @@ async def test_exit_logic_active_after_min_hold(executor):
 
     # Hour 1: still locked (1 < 2)
     t1 = T0 + HOUR
-    executor.submit.side_effect = []
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
+    strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     r1 = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -0.5 / 8760)})
     assert r1.closed == ()
 
     # Hour 2: min_hold met (2 >= 2), consec_negative=2 > patience=0 → CLOSE_PHASE1_NEG
     t2 = T0 + 2 * HOUR
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_close = _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    spot_close = _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.close_paired = mocker.AsyncMock(
+        return_value=make_paired_close_ok(perp_close, spot_close)
+    )
     await strat.on_minute_tick(t2, {"BTC": _quote("BTC", mark=100.0)})
     r2 = await strat.on_hour_tick(t2, {"BTC": _funding("BTC", t2, -0.5 / 8760)})
     assert r2.closed == ("BTC",)
@@ -318,7 +368,7 @@ async def test_exit_logic_active_after_min_hold(executor):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_phase1_consec_negative_exceeds_patience_closes(executor):
+async def test_phase1_consec_negative_exceeds_patience_closes(mocker):
     """consec_negative_hours > patience → CLOSE_PHASE1_NEG."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -329,14 +379,15 @@ async def test_phase1_consec_negative_exceeds_patience_closes(executor):
             safety_mult=1.0,
             phase1_negative_patience=2,  # patience = 2 hours of negative
         ),
-        executor,
+        make_executor(mocker),
     )
 
     # Open
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
     assert "BTC" in strat.open_positions()
@@ -345,14 +396,15 @@ async def test_phase1_consec_negative_exceeds_patience_closes(executor):
     # Hour 1..3: all negative — accumulate consec_negative
     for i in range(1, 4):
         ti = T0 + i * HOUR
-        executor.submit.side_effect = (
-            [
-                _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-                _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-            ]
-            if i == 3
-            else []
-        )
+        if i == 3:
+            perp_close = _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+            spot_close = _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+            strat._executor.close_paired = mocker.AsyncMock(
+                return_value=make_paired_close_ok(perp_close, spot_close)
+            )
+        else:
+            strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
+            strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
         await strat.on_minute_tick(ti, {"BTC": _quote("BTC", mark=100.0)})
         report = await strat.on_hour_tick(ti, {"BTC": _funding("BTC", ti, -0.5 / 8760)})
         if i < 3:
@@ -363,7 +415,7 @@ async def test_phase1_consec_negative_exceeds_patience_closes(executor):
 
 
 @pytest.mark.asyncio
-async def test_phase1_breakeven_cap_exceeded_closes(executor):
+async def test_phase1_breakeven_cap_exceeded_closes(mocker):
     """current rate so small that hours_to_breakeven > cap → CLOSE_PHASE1_CAP."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -375,14 +427,15 @@ async def test_phase1_breakeven_cap_exceeded_closes(executor):
             phase1_negative_patience=1000,  # effectively no patience exit
             phase1_breakeven_cap_hours=10,  # only 10 hours to break even
         ),
-        executor,
+        make_executor(mocker),
     )
 
     # Open with fees
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=5.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=5.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=5.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=5.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
     assert "BTC" in strat.open_positions()
@@ -393,10 +446,11 @@ async def test_phase1_breakeven_cap_exceeded_closes(executor):
     # tiny rate: 0.000001 annual → hourly income = 1000 * 0.000001 / 8760 ≈ 0.0
     # Even at tiny positive: 10 fees / (almost 0) → huge hours_to_breakeven > 10 → CLOSE_PHASE1_CAP
     t1 = T0 + HOUR
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_close = _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    spot_close = _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.close_paired = mocker.AsyncMock(
+        return_value=make_paired_close_ok(perp_close, spot_close)
+    )
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.000001 / 8760)})
 
@@ -404,7 +458,7 @@ async def test_phase1_breakeven_cap_exceeded_closes(executor):
 
 
 @pytest.mark.asyncio
-async def test_phase1_mildly_positive_within_patience_no_close(executor):
+async def test_phase1_mildly_positive_within_patience_no_close(mocker):
     """Phase 1: rate slightly positive, consec_neg within patience → NO close."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -416,20 +470,22 @@ async def test_phase1_mildly_positive_within_patience_no_close(executor):
             phase1_negative_patience=72,
             phase1_breakeven_cap_hours=10000,  # very large → never triggers cap
         ),
-        executor,
+        make_executor(mocker),
     )
 
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=1.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=1.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=1.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=1.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
     assert "BTC" in strat.open_positions()
 
     # Hour 1: slightly positive rate, not yet in profit (fees=2, collected≈0)
     t1 = T0 + HOUR
-    executor.submit.side_effect = []  # no close expected
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
+    strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.2 / 8760)})
 
@@ -442,7 +498,7 @@ async def test_phase1_mildly_positive_within_patience_no_close(executor):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_phase2_rate_below_threshold_closes(executor):
+async def test_phase2_rate_below_threshold_closes(mocker):
     """In phase 2 (funding > fees), rate < phase2_exit_threshold → CLOSE_PHASE2."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -453,14 +509,15 @@ async def test_phase2_rate_below_threshold_closes(executor):
             safety_mult=1.0,
             phase2_exit_threshold=-0.10,  # annual
         ),
-        executor,
+        make_executor(mocker),
     )
 
     # Open with tiny fees
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.01),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.01),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.01)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.01)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
     assert "BTC" in strat.open_positions()
@@ -471,10 +528,11 @@ async def test_phase2_rate_below_threshold_closes(executor):
 
     # Hour 1: rate strongly negative below phase2_exit_threshold
     t1 = T0 + HOUR
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_close = _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    spot_close = _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.close_paired = mocker.AsyncMock(
+        return_value=make_paired_close_ok(perp_close, spot_close)
+    )
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     # rate = -0.5 annual → -0.5 < -0.10 → CLOSE_PHASE2
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -0.5 / 8760)})
@@ -484,7 +542,7 @@ async def test_phase2_rate_below_threshold_closes(executor):
 
 
 @pytest.mark.asyncio
-async def test_phase2_rate_above_threshold_no_close(executor):
+async def test_phase2_rate_above_threshold_no_close(mocker):
     """In phase 2, rate above phase2_exit_threshold → NO close."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -495,13 +553,14 @@ async def test_phase2_rate_above_threshold_no_close(executor):
             safety_mult=1.0,
             phase2_exit_threshold=-0.10,
         ),
-        executor,
+        make_executor(mocker),
     )
 
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.01),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.01),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.01)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.01)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
     assert "BTC" in strat.open_positions()
@@ -511,7 +570,8 @@ async def test_phase2_rate_above_threshold_no_close(executor):
 
     # Hour 1: rate = 0.05 annual > -0.10 → no close
     t1 = T0 + HOUR
-    executor.submit.side_effect = []
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
+    strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.05 / 8760)})
 
@@ -524,14 +584,17 @@ async def test_phase2_rate_above_threshold_no_close(executor):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_opened_min_holds_populated_on_open(executor):
+async def test_opened_min_holds_populated_on_open(mocker):
     """opened_min_holds contains entry for each newly opened position."""
-    strat = TwoPhaseDynamic(_default_params(coins=("BTC", "ETH"), concurrency_cap=2), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC", "ETH"), concurrency_cap=2), make_executor(mocker))
 
-    async def _fill_gen(req: OrderRequest) -> FillReport:
-        return _fill(req.coin, req.leg, req.side, qty=10.0, price=100.0, fee=0.0)
+    async def _open_gen(perp_req, spot_req):
+        coin = perp_req.coin
+        pf = _fill(coin, Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+        sf = _fill(coin, Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+        return make_paired_open_ok(pf, sf)
 
-    executor.submit.side_effect = _fill_gen
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=_open_gen)
 
     quotes = {"BTC": _quote("BTC", mark=100.0), "ETH": _quote("ETH", mark=100.0)}
     await strat.on_minute_tick(T0, quotes)
@@ -549,21 +612,23 @@ async def test_opened_min_holds_populated_on_open(executor):
 
 
 @pytest.mark.asyncio
-async def test_consec_negative_updates_for_open_positions(executor):
+async def test_consec_negative_updates_for_open_positions(mocker):
     """consec_negative_updates contains entry for each in-position coin."""
-    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), executor)
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), make_executor(mocker))
 
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
     assert "BTC" in strat.open_positions()
 
     # Next tick: BTC in position → should appear in consec_negative_updates
     t1 = T0 + HOUR
-    executor.submit.side_effect = []
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
+    strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.5 / 8760)})
 
@@ -573,7 +638,7 @@ async def test_consec_negative_updates_for_open_positions(executor):
 
 
 @pytest.mark.asyncio
-async def test_consec_negative_updates_excludes_closed_coins(executor):
+async def test_consec_negative_updates_excludes_closed_coins(mocker):
     """Coins closed this tick must not appear in consec_negative_updates."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -584,23 +649,25 @@ async def test_consec_negative_updates_excludes_closed_coins(executor):
             safety_mult=1.0,
             phase1_negative_patience=0,  # close immediately when negative
         ),
-        executor,
+        make_executor(mocker),
     )
 
     # Open
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
 
     # Hour 1: negative → close (patience=0, consec_neg=1 > 0)
     t1 = T0 + HOUR
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_close = _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    spot_close = _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.close_paired = mocker.AsyncMock(
+        return_value=make_paired_close_ok(perp_close, spot_close)
+    )
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -0.5 / 8760)})
 
@@ -615,7 +682,7 @@ async def test_consec_negative_updates_excludes_closed_coins(executor):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_rehydrate_restores_two_phase_state(executor):
+async def test_rehydrate_restores_two_phase_state(mocker):
     """After rehydrate, min_hold and consec_negative are preserved."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -624,7 +691,7 @@ async def test_rehydrate_restores_two_phase_state(executor):
             base_min_hold_hours=1,
             cap_min_hold_hours=500,
         ),
-        executor,
+        make_executor(mocker),
     )
 
     strat.rehydrate(
@@ -657,7 +724,7 @@ async def test_rehydrate_restores_two_phase_state(executor):
 
 
 @pytest.mark.asyncio
-async def test_rehydrate_uses_restored_state_in_next_tick(executor):
+async def test_rehydrate_uses_restored_state_in_next_tick(mocker):
     """After rehydrate with min_hold=500, position is locked on next tick."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -665,7 +732,7 @@ async def test_rehydrate_uses_restored_state_in_next_tick(executor):
             concurrency_cap=1,
             phase1_negative_patience=0,  # would close immediately without lock
         ),
-        executor,
+        make_executor(mocker),
     )
 
     strat.rehydrate(
@@ -693,17 +760,19 @@ async def test_rehydrate_uses_restored_state_in_next_tick(executor):
 
     # Tick at T0 + 1hr: only 1 hour in position, min_hold=500 → locked, no close
     t1 = T0 + HOUR
-    executor.submit.side_effect = []  # no orders expected
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
+    strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     # Strongly negative rate that would trigger phase1_neg exit if not locked
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -1.0 / 8760)})
 
     assert report.closed == ()
     assert "BTC" in strat.open_positions()
+    strat._executor.close_paired.assert_not_called()
 
 
-def test_rehydrate_without_accumulators_keeps_default_cash(executor):
-    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=3, position_size_usdc=1000.0), executor)
+def test_rehydrate_without_accumulators_keeps_default_cash(mocker):
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=3, position_size_usdc=1000.0), make_executor(mocker))
     initial_cash = strat.cash
 
     strat.rehydrate(positions=[], accumulators=None)
@@ -716,10 +785,10 @@ def test_rehydrate_without_accumulators_keeps_default_cash(executor):
 # Test group 7: Equity computation
 # ---------------------------------------------------------------------------
 
-def test_compute_equity_no_positions(executor):
+def test_compute_equity_no_positions(mocker):
     strat = TwoPhaseDynamic(
         _default_params(coins=("BTC",), concurrency_cap=3, position_size_usdc=1000.0),
-        executor,
+        make_executor(mocker),
     )
 
     snap = strat.compute_equity(T0)
@@ -731,7 +800,7 @@ def test_compute_equity_no_positions(executor):
 
 
 @pytest.mark.asyncio
-async def test_compute_equity_with_open_position(executor):
+async def test_compute_equity_with_open_position(mocker):
     """cash + spot_value + perp_unrealized = total_equity (sanity check)."""
     strat = TwoPhaseDynamic(
         _default_params(
@@ -739,13 +808,14 @@ async def test_compute_equity_with_open_position(executor):
             concurrency_cap=1,
             position_size_usdc=1000.0,
         ),
-        executor,
+        make_executor(mocker),
     )
 
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
 
@@ -767,10 +837,10 @@ async def test_compute_equity_with_open_position(executor):
 # Additional: warmup_from_history (mirrors StrategyA behaviour)
 # ---------------------------------------------------------------------------
 
-def test_warmup_from_history_fills_market_state(executor):
+def test_warmup_from_history_fills_market_state(mocker):
     strat = TwoPhaseDynamic(
         _default_params(coins=("BTC", "ETH"), signal_window_hours=3),
-        executor,
+        make_executor(mocker),
     )
     btc_ticks = [_funding("BTC", T0 - 3 * HOUR + i * HOUR, 0.0001) for i in range(3)]
     applied = strat.warmup_from_history({"BTC": btc_ticks})
@@ -779,8 +849,8 @@ def test_warmup_from_history_fills_market_state(executor):
     assert strat._market_state.get("BTC").is_ready
 
 
-def test_warmup_from_history_skips_unknown_coin(executor):
-    strat = TwoPhaseDynamic(_default_params(coins=("BTC",)), executor)
+def test_warmup_from_history_skips_unknown_coin(mocker):
+    strat = TwoPhaseDynamic(_default_params(coins=("BTC",)), make_executor(mocker))
     applied = strat.warmup_from_history({
         "BTC": [_funding("BTC", T0, 0.0001)],
         "DOGE": [_funding("DOGE", T0, 0.0001)],
@@ -793,17 +863,18 @@ def test_warmup_from_history_skips_unknown_coin(executor):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_funding_accrual_updates_position(executor):
+async def test_funding_accrual_updates_position(mocker):
     """Funding collected is correctly tracked in the position record."""
     strat = TwoPhaseDynamic(
         _default_params(coins=("BTC",), concurrency_cap=1, position_size_usdc=1000.0),
-        executor,
+        make_executor(mocker),
     )
 
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_fill, spot_fill)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
 
@@ -811,7 +882,8 @@ async def test_funding_accrual_updates_position(executor):
 
     # Next tick: positive funding accrues
     t1 = T0 + HOUR
-    executor.submit.side_effect = []
+    strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
+    strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
 
@@ -819,3 +891,110 @@ async def test_funding_accrual_updates_position(executor):
     assert strat.funding_cum == pytest.approx(0.1, abs=1e-9)
     assert strat.cash == pytest.approx(cash_after_open + 0.1, abs=1e-9)
     assert report.funding_accrued == (("BTC", pytest.approx(0.1, abs=1e-9)),)
+
+
+# ---------------------------------------------------------------------------
+# New tests: failure semantics
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_open_paired_failure_records_failed_open_no_position_change(mocker):
+    """open_paired returns status=failed → FailedOpen in report, no position, state unchanged."""
+    strat = TwoPhaseDynamic(
+        _default_params(
+            coins=("BTC",),
+            concurrency_cap=1,
+            position_size_usdc=1000.0,
+        ),
+        make_executor(mocker),
+    )
+    cash_before = strat.cash
+
+    # Perp partially filled, spot failed
+    perp_partial = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
+    failed_result = make_paired_open_failed(
+        perp_fill=perp_partial,
+        spot_fill=None,
+        errors=("ConnectionError: timed out",),
+    )
+    strat._executor.open_paired = mocker.AsyncMock(return_value=failed_result)
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    # failed_opens should have one entry
+    assert len(report.failed_opens) == 1
+    fo = report.failed_opens[0]
+    assert fo.coin == "BTC"
+    assert fo.ts == T0
+    assert fo.perp_fill == perp_partial
+    assert fo.spot_fill is None
+    assert "ConnectionError" in fo.error
+
+    # BTC must NOT be in opened
+    assert "BTC" not in report.opened
+
+    # opened_min_holds must NOT have an entry for BTC
+    assert not any(coin == "BTC" for coin, _ in report.opened_min_holds)
+
+    # In-memory state must be unchanged
+    assert "BTC" not in strat._positions
+    assert strat.cash == pytest.approx(cash_before)
+    assert strat.fees_cum == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_close_paired_failure_keeps_position_open(mocker):
+    """close_paired returns status=failed → position remains, accumulators unchanged."""
+    strat = TwoPhaseDynamic(
+        _default_params(
+            coins=("BTC",),
+            concurrency_cap=1,
+            base_min_hold_hours=1,
+            cap_min_hold_hours=1,
+            safety_mult=1.0,
+            phase1_negative_patience=0,  # would normally close immediately
+            position_size_usdc=1000.0,
+        ),
+        make_executor(mocker),
+    )
+
+    # Open successfully
+    perp_open = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
+    spot_open = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_open, spot_open)
+    )
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
+
+    assert "BTC" in strat._positions
+    cash_before_close = strat.cash
+    fees_before_close = strat.fees_cum
+    realized_before_close = strat.realized_pnl_cum
+    pos_before = strat._positions["BTC"]
+
+    # Next tick: negative rate → CLOSE decision, but close_paired fails
+    t1 = T0 + HOUR
+    await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
+    strat._executor.close_paired = mocker.AsyncMock(
+        return_value=make_paired_close_failed(errors=("TimeoutError",))
+    )
+
+    report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -0.5 / 8760)})
+
+    # BTC must NOT be in closed
+    assert "BTC" not in report.closed
+
+    # Position must still exist
+    assert "BTC" in strat._positions
+
+    # Fees and realized PnL must not have changed
+    assert strat.fees_cum == pytest.approx(fees_before_close)
+    assert strat.realized_pnl_cum == pytest.approx(realized_before_close)
+
+    # Position state must be intact
+    assert strat._positions["BTC"].spot_qty == pos_before.spot_qty
+    assert strat._positions["BTC"].perp_qty == pos_before.perp_qty
+    assert strat._positions["BTC"].entry_spot_price == pos_before.entry_spot_price
+    assert strat._positions["BTC"].entry_perp_price == pos_before.entry_perp_price

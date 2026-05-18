@@ -5,7 +5,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from frab.exchanges.base import Executor, FillReport, FundingTick, Leg, OrderRequest, Quote, Side
+from frab.exchanges.atomic import AtomicExecutor, PairedCloseResult, PairedOpenResult
+from frab.exchanges.base import FillReport, FundingTick, Leg, OrderRequest, Quote, Side
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
 
 HOUR = timedelta(hours=1)
@@ -41,9 +42,30 @@ def _fill(coin, leg, side, qty=10.0, price=100.0, fee=0.0) -> FillReport:
     )
 
 
+def make_executor(mocker, *, open_results=None, close_results=None):
+    ex = mocker.MagicMock(spec=AtomicExecutor)
+    ex.open_paired = mocker.AsyncMock(side_effect=open_results or [])
+    ex.close_paired = mocker.AsyncMock(side_effect=close_results or [])
+    return ex
+
+
+def make_paired_open_ok(perp_fill, spot_fill):
+    return PairedOpenResult(
+        status="ok", perp_fill=perp_fill, spot_fill=spot_fill,
+        perp_attempts=1, spot_attempts=1, errors=(),
+    )
+
+
+def make_paired_close_ok(perp_fill, spot_fill):
+    return PairedCloseResult(
+        status="ok", perp_fill=perp_fill, spot_fill=spot_fill,
+        perp_attempts=1, spot_attempts=1, errors=(),
+    )
+
+
 @pytest.fixture
 def executor(mocker):
-    return mocker.AsyncMock(spec=Executor)
+    return make_executor(mocker)
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +115,7 @@ def test_update_hot_params_replaces_thresholds(executor):
 
 
 @pytest.mark.asyncio
-async def test_update_hot_params_triggers_close_on_open_position(executor):
+async def test_update_hot_params_triggers_close_on_open_position(mocker):
     """After hot-swap raises exit_threshold, next tick closes the open position."""
     # Use a single coin, window=1, entry=0.20 to ensure OPEN fires with rate ~0.876
     strat = StrategyA(
@@ -106,14 +128,15 @@ async def test_update_hot_params_triggers_close_on_open_position(executor):
             concurrency_cap=3,
             position_size_usdc=1000.0,
         ),
-        executor,
+        make_executor(mocker),
     )
 
     # Step 1: open a position with positive funding (annual ~0.876 > 0.20)
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_open = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    spot_open = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.open_paired = mocker.AsyncMock(
+        return_value=make_paired_open_ok(perp_open, spot_open)
+    )
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     report_open = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
     assert "BTC" in report_open.opened
@@ -142,10 +165,11 @@ async def test_update_hot_params_triggers_close_on_open_position(executor):
 
     # Step 3: next tick with same rate — should trigger CLOSE
     t1 = T0 + HOUR
-    executor.submit.side_effect = [
-        _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0),
-        _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0),
-    ]
+    perp_close = _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=100.0, fee=0.0)
+    spot_close = _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=100.0, fee=0.0)
+    strat._executor.close_paired = mocker.AsyncMock(
+        return_value=make_paired_close_ok(perp_close, spot_close)
+    )
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report_close = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
 

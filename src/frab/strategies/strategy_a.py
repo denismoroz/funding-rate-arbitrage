@@ -6,8 +6,8 @@ from datetime import datetime
 
 from frab.engine.signals import Decision, decide
 from frab.engine.state import MarketState
+from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.base import (
-    Executor,
     FillReport,
     FundingTick,
     Leg,
@@ -15,7 +15,7 @@ from frab.exchanges.base import (
     Quote,
     Side,
 )
-from frab.strategies.base import EquitySnapshot, SignalEvent, Strategy, TickReport
+from frab.strategies.base import EquitySnapshot, FailedOpen, SignalEvent, Strategy, TickReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +82,7 @@ class StrategyA(Strategy):
     name = "strategy_a"
     version = "v1"
 
-    def __init__(self, params: StrategyAParams, executor: Executor) -> None:
+    def __init__(self, params: StrategyAParams, executor: AtomicExecutor) -> None:
         self._params = params
         self._executor = executor
         self._market_state = MarketState(params.coins, params.signal_window_hours, funding_interval_hours=1.0)
@@ -231,12 +231,15 @@ class StrategyA(Strategy):
         closed: list[str] = []
         for coin, dec in coin_decisions.items():
             if dec == Decision.CLOSE:
-                close_fills = await self._close_position(coin, now)
-                fills_log.extend(close_fills)
-                closed.append(coin)
+                close_fills, ok = await self._close_position(coin, now)
+                if ok:
+                    fills_log.extend(close_fills)
+                    closed.append(coin)
+                # else: silent — AtomicExecutor's Event is the only record this tick
 
         # Step 5: execute OPEN decisions with concurrency cap
         opened: list[str] = []
+        failed_opens: list[FailedOpen] = []
         slots_free = self._params.concurrency_cap - len(self._positions)
         if slots_free > 0:
             candidates: list[tuple[str, float]] = []
@@ -248,9 +251,12 @@ class StrategyA(Strategy):
                     candidates.append((coin, smoothed))
             candidates.sort(key=lambda x: -x[1])  # strongest first
             for coin, _ in candidates[:slots_free]:
-                open_fills = await self._open_position(coin, now)
-                fills_log.extend(open_fills)
-                opened.append(coin)
+                open_fills, failed = await self._open_position(coin, now)
+                if failed is None:
+                    fills_log.extend(open_fills)
+                    opened.append(coin)
+                else:
+                    failed_opens.append(failed)
 
         # Step 6: assemble report
         return TickReport(
@@ -260,23 +266,37 @@ class StrategyA(Strategy):
             opened=tuple(opened),
             closed=tuple(closed),
             funding_accrued=tuple(funding_accrued),
+            failed_opens=tuple(failed_opens),
         )
 
-    async def _open_position(self, coin: str, now: datetime) -> list[FillReport]:
+    async def _open_position(
+        self, coin: str, now: datetime,
+    ) -> tuple[list[FillReport], FailedOpen | None]:
         quote = self._last_quotes[coin]
         qty = self._params.position_size_usdc / quote.mark
-
-        spot_req = OrderRequest(
-            coin=coin, leg=Leg.SPOT, side=Side.BUY, qty=qty,
-            client_ref=f"open-spot-{coin}-{now.isoformat()}",
-        )
-        fill_spot = await self._executor.submit(spot_req)
 
         perp_req = OrderRequest(
             coin=coin, leg=Leg.PERP, side=Side.SELL, qty=qty,
             client_ref=f"open-perp-{coin}-{now.isoformat()}",
         )
-        fill_perp = await self._executor.submit(perp_req)
+        spot_req = OrderRequest(
+            coin=coin, leg=Leg.SPOT, side=Side.BUY, qty=qty,
+            client_ref=f"open-spot-{coin}-{now.isoformat()}",
+        )
+        result = await self._executor.open_paired(perp_req, spot_req)
+
+        if result.status == "failed":
+            return [], FailedOpen(
+                coin=coin,
+                ts=now,
+                perp_fill=result.perp_fill,
+                spot_fill=result.spot_fill,
+                error="; ".join(result.errors) if result.errors else "unknown",
+            )
+
+        fill_perp = result.perp_fill
+        fill_spot = result.spot_fill
+        assert fill_perp is not None and fill_spot is not None  # status=ok invariant
 
         # Cash flow: spot buy debits notional + fee; perp short debits fee only
         spot_cost = fill_spot.qty * fill_spot.price + fill_spot.fee
@@ -292,33 +312,44 @@ class StrategyA(Strategy):
             entry_perp_price=fill_perp.price,
             fees_paid=fill_spot.fee + fill_perp.fee,
         )
-        return [fill_spot, fill_perp]
+        # Preserve existing fill order in the returned list (spot first, then perp)
+        # so callers/recorder iteration order is stable.
+        return [fill_spot, fill_perp], None
 
-    async def _close_position(self, coin: str, now: datetime) -> list[FillReport]:
-        pos = self._positions.pop(coin)
-
-        spot_req = OrderRequest(
-            coin=coin, leg=Leg.SPOT, side=Side.SELL, qty=pos.spot_qty,
-            client_ref=f"close-spot-{coin}-{now.isoformat()}",
-        )
-        fill_spot = await self._executor.submit(spot_req)
+    async def _close_position(
+        self, coin: str, now: datetime,
+    ) -> tuple[list[FillReport], bool]:
+        """Returns (fills, success). On failure, in-memory state is unchanged
+        and the caller should NOT add `coin` to `closed`. AtomicExecutor has
+        already published an alert Event."""
+        pos = self._positions[coin]
 
         perp_req = OrderRequest(
             coin=coin, leg=Leg.PERP, side=Side.BUY, qty=pos.perp_qty,
             client_ref=f"close-perp-{coin}-{now.isoformat()}",
         )
-        fill_perp = await self._executor.submit(perp_req)
+        spot_req = OrderRequest(
+            coin=coin, leg=Leg.SPOT, side=Side.SELL, qty=pos.spot_qty,
+            client_ref=f"close-spot-{coin}-{now.isoformat()}",
+        )
+        result = await self._executor.close_paired(perp_req, spot_req)
 
-        # Spot sell credits notional minus fee
+        if result.status == "failed":
+            return [], False
+
+        fill_perp = result.perp_fill
+        fill_spot = result.spot_fill
+        assert fill_perp is not None and fill_spot is not None
+
+        del self._positions[coin]
+
         self._cash += fill_spot.qty * fill_spot.price - fill_spot.fee
-
-        # Perp short close: realized = perp_qty * (entry - exit). Then debit close fee.
         realized_perp = pos.perp_qty * (pos.entry_perp_price - fill_perp.price)
         self._cash += realized_perp - fill_perp.fee
 
         self._realized_pnl_cum += realized_perp
         self._fees_cum += fill_spot.fee + fill_perp.fee
-        return [fill_spot, fill_perp]
+        return [fill_spot, fill_perp], True
 
     def compute_equity(self, now: datetime) -> EquitySnapshot:
         spot_value = 0.0

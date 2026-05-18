@@ -26,6 +26,7 @@ from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.engine.loop import Engine
 from frab.events.bus import EventBus, EventDbSink
+from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.base import FundingTick
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.paper import PaperExecutor
@@ -236,13 +237,19 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             perp_taker_bps=perp_bps,
             extra_slip_bps=settings.paper_extra_slip_bps,
         )
+        atomic = AtomicExecutor(
+            executor,
+            bus,
+            max_attempts=3,
+            sleep_between_attempts=(2.0, 5.0),
+        )
 
         spec = get_strategy_spec(settings.strategy_name)
         params_override = parse_params_override(settings.strategy_params_json)
         strategy, params_json = spec.build(
             coins=coins,
             params_override=params_override,
-            executor=executor,
+            executor=atomic,
         )
 
         instance_token = uuid.uuid4().hex

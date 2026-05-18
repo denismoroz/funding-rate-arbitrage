@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from frab.exchanges.base import Executor
+from frab.exchanges.atomic import AtomicExecutor
 from frab.strategies.base import Strategy
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
 from frab.strategies.two_phase_dynamic import TwoPhaseDynamic, TwoPhaseDynamicParams
@@ -35,7 +35,7 @@ class StrategySpec(Protocol):
         self,
         coins: tuple[str, ...],
         params_override: dict | None,
-        executor: Executor,
+        executor: AtomicExecutor,
     ) -> tuple[Strategy, dict]:
         """Returns (strategy_instance, params_json_dict_for_db)."""
 
