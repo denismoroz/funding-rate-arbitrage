@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # Risk caps applied when hl_network != "paper"
     hl_max_open_positions: int = Field(default=5)
     hl_position_size_usd: float = Field(default=10.0)
+    hl_live_slippage: float = Field(default=0.01)
 
     @field_validator("hl_account_address")
     @classmethod

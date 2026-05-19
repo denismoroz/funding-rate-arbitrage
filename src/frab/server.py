@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from hyperliquid.utils import constants
 from sqlalchemy import select
 
 from frab.api.app import create_app
@@ -28,10 +29,11 @@ from frab.engine.loop import Engine
 from frab.engine.reconcile import scan as reconcile_scan
 from frab.events.bus import EventBus, EventDbSink
 from frab.exchanges.atomic import AtomicExecutor
-from frab.exchanges.base import FundingTick
+from frab.exchanges.base import Executor, FundingTick
 from frab.exchanges.hyperliquid import HLMarketData
+from frab.exchanges.hyperliquid_live import LiveHLExecutor
 from frab.exchanges.paper import PaperExecutor
-from frab.settings import get_settings
+from frab.settings import Settings, get_settings
 from frab.strategies.base import Strategy as StrategyBase
 from frab.strategies.registry import get_strategy_spec, parse_params_override
 from frab.strategies.strategy_a import (
@@ -44,6 +46,67 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_COINS: tuple[str, ...] = ("BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE")
 EXCHANGE_NAME = "hyperliquid"
+
+# Wrapped-token map for HL mainnet spot. Used when hl_network == "mainnet".
+# DOGE intentionally absent (no spot pair on HL mainnet).
+MAINNET_SPOT_TOKEN_MAP: dict[str, str] = {
+    "BTC":  "UBTC",
+    "ETH":  "UETH",
+    "SOL":  "USOL",
+    "AVAX": "AVAX0",
+    "LINK": "LINK0",
+    "AAVE": "AAVE0",
+}
+
+
+def _select_coins(settings: Settings, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Universe from settings.hl_universe override, else `default`."""
+    override = settings.universe_tuple()
+    return override if override else default
+
+
+def _select_spot_token_map(network: str) -> dict[str, str]:
+    """Spot base-token map; only mainnet uses wrapped names."""
+    return MAINNET_SPOT_TOKEN_MAP if network == "mainnet" else {}
+
+
+def _position_mode(settings: Settings) -> PositionMode:
+    return PositionMode.PAPER if settings.hl_network == "paper" else PositionMode.LIVE
+
+
+def _hl_info_url(settings: Settings) -> str:
+    """Return the /info endpoint URL for HLMarketData based on network."""
+    if settings.hl_network == "testnet":
+        return f"{constants.TESTNET_API_URL}/info"
+    if settings.hl_network == "mainnet":
+        return f"{constants.MAINNET_API_URL}/info"
+    # paper — honour the configured hl_api_url so paper-mode users can point elsewhere
+    return settings.hl_api_url
+
+
+def _build_executor(
+    settings: Settings,
+    *,
+    market_data,
+    spot_taker_bps: float,
+    perp_taker_bps: float,
+) -> Executor:
+    """Return PaperExecutor for 'paper', LiveHLExecutor for testnet/mainnet."""
+    if settings.hl_network == "paper":
+        return PaperExecutor(
+            market_data=market_data,
+            spot_taker_bps=spot_taker_bps,
+            perp_taker_bps=perp_taker_bps,
+            extra_slip_bps=settings.paper_extra_slip_bps,
+        )
+    # testnet / mainnet — credentials presence is enforced by Settings validator
+    return LiveHLExecutor(
+        private_key=settings.hl_private_key.get_secret_value(),
+        account_address=settings.hl_account_address,
+        network=settings.hl_network,
+        spot_token_map=_select_spot_token_map(settings.hl_network),
+        slippage=settings.hl_live_slippage,
+    )
 
 
 async def _ensure_strategy(session_factory, params_json: dict, *, name: str, version: str, instance_token: str) -> int:
@@ -226,17 +289,20 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # settings-driven universe takes precedence over the explicit `coins` arg
+        resolved_coins = _select_coins(settings, coins)
+
         exchange_id, spot_bps, perp_bps = await _resolve_exchange(session_factory)
 
         market_data = HLMarketData(
-            api_url=settings.hl_api_url,
+            api_url=_hl_info_url(settings),
             timeout_s=settings.hl_request_timeout_s,
         )
-        executor = PaperExecutor(
+        executor = _build_executor(
+            settings,
             market_data=market_data,
             spot_taker_bps=spot_bps,
             perp_taker_bps=perp_bps,
-            extra_slip_bps=settings.paper_extra_slip_bps,
         )
         atomic = AtomicExecutor(
             executor,
@@ -247,8 +313,10 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
 
         spec = get_strategy_spec(settings.strategy_name)
         params_override = parse_params_override(settings.strategy_params_json)
+        if settings.hl_network != "paper":
+            params_override["position_size_usd"] = settings.hl_position_size_usd
         strategy, params_json = spec.build(
-            coins=coins,
+            coins=resolved_coins,
             params_override=params_override,
             executor=atomic,
         )
@@ -261,21 +329,21 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             session_factory,
             strategy_id=strategy_id,
             exchange_id=exchange_id,
-            mode=PositionMode.PAPER,
+            mode=_position_mode(settings),
         )
         await recorder.prime()
 
         # Derive signal_window_hours from strategy params for DB warmup
         signal_window_hours = params_json.get("signal_window_hours", 12)
         await _load_funding_from_db(
-            session_factory, strategy, coins, signal_window_hours
+            session_factory, strategy, resolved_coins, signal_window_hours
         )
         await _rehydrate_strategy_from_db(session_factory, strategy, strategy_id)
         await reconcile_scan(session_factory, strategy_id, bus)   # ← new
         engine = Engine(
             market_data=market_data,
             strategy=strategy,
-            coins=coins,
+            coins=resolved_coins,
             recorder=recorder,
             event_bus=bus,
         )
@@ -294,8 +362,8 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         engine_task = asyncio.create_task(engine.run(), name="engine")
         engine_task.add_done_callback(_on_task_done)
         logger.info(
-            "frab serve: started (strategy=%s/%s, strategy_id=%d, coins=%s)",
-            spec.name, spec.version, strategy_id, coins,
+            "frab serve: started (strategy=%s/%s, strategy_id=%d, network=%s, mode=%s, coins=%s)",
+            spec.name, spec.version, strategy_id, settings.hl_network, _position_mode(settings).value, resolved_coins,
         )
 
         app.state.strategy = strategy
