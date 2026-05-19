@@ -385,6 +385,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         app.state.strategy = strategy
         app.state.strategy_id = strategy_id
         app.state.engine = engine
+        app.state.executor = executor
 
         try:
             yield

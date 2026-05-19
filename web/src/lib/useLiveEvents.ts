@@ -53,6 +53,7 @@ export function useLiveEvents(strategyId?: number): { status: WsStatus; lastEven
           ["positions-recent", sid],
           ["events"],
           ["equity", sid],
+          ["wallet", sid],
         ]);
         return;
       }
@@ -63,6 +64,7 @@ export function useLiveEvents(strategyId?: number): { status: WsStatus; lastEven
         // so RecentEvents and the Header pill pick up the new row.
         const keys: unknown[][] = [
           ["equity", sid],
+          ["wallet", sid],
           ["signals", sid],
           ["events"],
           ["events-header"],

@@ -175,3 +175,18 @@ class AlertOut(_UtcAwareOut):
     message: str
     position_id: int | None = None
     payload: dict | None = None
+
+
+class SpotBalanceItem(BaseModel):
+    coin: str
+    qty: float
+    mark: float
+    usd_value: float
+
+
+class WalletBalance(BaseModel):
+    perp_account_value: float
+    perp_unrealized_pnl: float
+    spot_balances: list[SpotBalanceItem]
+    usdc_spot: float
+    total_usd: float

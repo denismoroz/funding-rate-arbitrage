@@ -526,3 +526,90 @@ async def test_round_qty_raises_on_unknown_coin(mocker):
         await ex.round_qty("DOGE", 1.0)
     with pytest.raises(ValueError, match="unknown coin"):
         await ex.round_qty_to_nearest("DOGE", 1.0)
+
+
+# 32. fetch_wallet_state normalizes UBTC→BTC and computes total_usd
+async def test_fetch_wallet_state_normalizes_spot_coins(mocker):
+    """UBTC in spot balances is mapped to BTC via the inverse spot_token_map."""
+    ex, info, _ = _make_executor(mocker, spot_token_map={"BTC": "UBTC", "ETH": "UETH"})
+
+    perp_state = {
+        "marginSummary": {"accountValue": "1000.0"},
+        "assetPositions": [
+            {"position": {"coin": "BTC", "unrealizedPnl": "-50.0"}},
+        ],
+    }
+    spot_state = {
+        "balances": [
+            {"coin": "UBTC", "total": "0.001"},   # → BTC at $95000 = $95
+            {"coin": "UETH", "total": "0.5"},      # → ETH at $2000 = $1000
+            {"coin": "USDC", "total": "200.0"},    # → usdc_spot
+        ]
+    }
+
+    async def fake_gather(*coros):
+        return (perp_state, spot_state)
+
+    mocker.patch("asyncio.gather", side_effect=fake_gather)
+
+    mark_prices = {"BTC": 95_000.0, "ETH": 2_000.0}
+    result = await ex.fetch_wallet_state(mark_prices=mark_prices)
+
+    # perp_account_value from marginSummary
+    assert result["perp_account_value"] == pytest.approx(1_000.0)
+
+    # perp_unrealized_pnl from assetPositions
+    assert result["perp_unrealized_pnl"] == pytest.approx(-50.0)
+
+    # spot_balances: UBTC → BTC, UETH → ETH; USDC excluded
+    coins_in_balances = {b["coin"] for b in result["spot_balances"]}
+    assert coins_in_balances == {"BTC", "ETH"}
+
+    btc_bal = next(b for b in result["spot_balances"] if b["coin"] == "BTC")
+    assert btc_bal["qty"] == pytest.approx(0.001)
+    assert btc_bal["mark"] == pytest.approx(95_000.0)
+    assert btc_bal["usd_value"] == pytest.approx(95.0)
+
+    eth_bal = next(b for b in result["spot_balances"] if b["coin"] == "ETH")
+    assert eth_bal["qty"] == pytest.approx(0.5)
+    assert eth_bal["usd_value"] == pytest.approx(1_000.0)
+
+    # usdc_spot
+    assert result["usdc_spot"] == pytest.approx(200.0)
+
+    # total_usd = perp_account_value + spot_tokens + usdc_spot
+    # = 1000 + (95 + 1000) + 200 = 2295
+    assert result["total_usd"] == pytest.approx(2_295.0)
+
+
+# 33. fetch_wallet_state falls back to raw coin name for unknown tokens
+async def test_fetch_wallet_state_unknown_coin_uses_raw_name(mocker):
+    """A coin not in the inverse map is passed through as-is."""
+    ex, info, _ = _make_executor(mocker, spot_token_map={"BTC": "UBTC"})
+
+    perp_state = {"marginSummary": {"accountValue": "0.0"}, "assetPositions": []}
+    spot_state = {
+        "balances": [
+            {"coin": "PURR", "total": "100.0"},   # not in inverse map → stays as PURR
+        ]
+    }
+
+    async def fake_gather(*coros):
+        return (perp_state, spot_state)
+
+    mocker.patch("asyncio.gather", side_effect=fake_gather)
+
+    result = await ex.fetch_wallet_state(mark_prices={"PURR": 0.5})
+
+    assert len(result["spot_balances"]) == 1
+    assert result["spot_balances"][0]["coin"] == "PURR"
+    assert result["spot_balances"][0]["usd_value"] == pytest.approx(50.0)
+
+
+# 34. fetch_wallet_state without account_address raises
+async def test_fetch_wallet_state_without_address_raises(mocker):
+    info = mocker.MagicMock()
+    exchange = mocker.MagicMock()
+    ex = LiveHLExecutor(info=info, exchange=exchange, account_address=None)
+    with pytest.raises(RuntimeError, match="account_address required"):
+        await ex.fetch_wallet_state()
