@@ -158,6 +158,16 @@ export type PositionFundingAccrual = {
   delta: number;
 };
 
+export type Alert = {
+  type: "failed_position" | "event";
+  severity: "WARNING" | "ERROR";
+  ts: string;
+  coin: string | null;
+  message: string;
+  position_id: number | null;
+  payload: Record<string, unknown> | null;
+};
+
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
 export function fetchStrategies(): Promise<Strategy[]> {
@@ -213,6 +223,15 @@ export function fetchEvents(opts?: { limit?: number }): Promise<Event[]> {
   const params = new URLSearchParams();
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   return apiFetch<Event[]>(`/events?${params}`);
+}
+
+export function fetchAlerts(opts: {
+  strategyId: number;
+  since?: string;
+}): Promise<Alert[]> {
+  const params = new URLSearchParams({ strategy_id: String(opts.strategyId) });
+  if (opts.since != null) params.set("since", opts.since);
+  return apiFetch<Alert[]>(`/alerts?${params}`);
 }
 
 export function fetchPositionFundingHistory(
