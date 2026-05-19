@@ -25,6 +25,7 @@ from frab.db.models import (
 from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.engine.loop import Engine
+from frab.engine.reconcile import scan as reconcile_scan
 from frab.events.bus import EventBus, EventDbSink
 from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.base import FundingTick
@@ -270,6 +271,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             session_factory, strategy, coins, signal_window_hours
         )
         await _rehydrate_strategy_from_db(session_factory, strategy, strategy_id)
+        await reconcile_scan(session_factory, strategy_id, bus)   # ← new
         engine = Engine(
             market_data=market_data,
             strategy=strategy,
