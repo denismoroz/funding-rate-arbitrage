@@ -383,3 +383,98 @@ async def test_submit_partial_fill_with_custom_tolerance(mocker):
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.91, px=10.0, fee=0.0)))
     fill = await ex.submit(_perp_req(qty=1.0))
     assert fill.qty == 0.91
+
+
+def _route_to_thread(routes):
+    """Build an asyncio.to_thread side_effect that dispatches by `fn` identity
+    AND invokes `fn` so MagicMock call tracking works for assert_called_once_with.
+    `routes` maps the mock attribute → response dict.
+    """
+    async def fake(fn, *args, **kwargs):
+        fn(*args, **kwargs)  # record call on the underlying mock
+        for ref, resp in routes:
+            if fn is ref:
+                return resp
+        raise AssertionError(f"unexpected to_thread fn: {fn}")
+    return fake
+
+
+# 25. close_position covers short and passes executor slippage (not SDK default 5%)
+async def test_close_position_short_uses_executor_slippage(mocker):
+    ex, info, exchange = _make_executor(mocker, slippage=0.01)
+    user_state = {
+        "assetPositions": [{"position": {"coin": "BTC", "szi": "-0.00001", "entryPx": "76300"}}]
+    }
+    spot_state = {"balances": []}
+    close_resp = _filled_resp(qty=0.00001, px=77005.0, fee=0.0)
+
+    mocker.patch("asyncio.to_thread", side_effect=_route_to_thread([
+        (info.user_state, user_state),
+        (info.spot_user_state, spot_state),
+        (exchange.market_close, close_resp),
+    ]))
+
+    fill = await ex.close_position("BTC")
+
+    assert fill is not None
+    assert fill.coin == "BTC"
+    assert fill.leg == Leg.PERP
+    assert fill.side == Side.BUY  # covering a short
+    assert fill.qty == pytest.approx(0.00001)
+    assert fill.price == pytest.approx(77005.0)
+    assert fill.slippage_bps == pytest.approx(100.0)  # 1% — NOT SDK default 5%
+    assert fill.is_paper is False
+    exchange.market_close.assert_called_once_with("BTC", None, None, 0.01)
+
+
+# 26. close_position on a long uses SELL side
+async def test_close_position_long_uses_sell_side(mocker):
+    ex, info, exchange = _make_executor(mocker, slippage=0.01)
+    user_state = {
+        "assetPositions": [{"position": {"coin": "ETH", "szi": "0.5", "entryPx": "3000"}}]
+    }
+    spot_state = {"balances": []}
+    close_resp = _filled_resp(qty=0.5, px=2995.0, fee=0.0)
+
+    mocker.patch("asyncio.to_thread", side_effect=_route_to_thread([
+        (info.user_state, user_state),
+        (info.spot_user_state, spot_state),
+        (exchange.market_close, close_resp),
+    ]))
+
+    fill = await ex.close_position("ETH")
+    assert fill is not None
+    assert fill.side == Side.SELL
+
+
+# 27. close_position returns None when there is no position (no market_close call)
+async def test_close_position_returns_none_when_flat(mocker):
+    ex, info, exchange = _make_executor(mocker)
+    mocker.patch("asyncio.to_thread", side_effect=_route_to_thread([
+        (info.user_state, {"assetPositions": []}),
+        (info.spot_user_state, {"balances": []}),
+    ]))
+
+    fill = await ex.close_position("BTC")
+    assert fill is None
+    exchange.market_close.assert_not_called()
+
+
+# 28. close_position raises on error status
+async def test_close_position_raises_on_error(mocker):
+    ex, info, exchange = _make_executor(mocker)
+    user_state = {
+        "assetPositions": [{"position": {"coin": "BTC", "szi": "-0.00001", "entryPx": "76300"}}]
+    }
+    err_resp = {
+        "status": "ok",
+        "response": {"type": "order", "data": {"statuses": [{"error": "no position"}]}},
+    }
+    mocker.patch("asyncio.to_thread", side_effect=_route_to_thread([
+        (info.user_state, user_state),
+        (info.spot_user_state, {"balances": []}),
+        (exchange.market_close, err_resp),
+    ]))
+
+    with pytest.raises(RuntimeError, match="market_close error"):
+        await ex.close_position("BTC")

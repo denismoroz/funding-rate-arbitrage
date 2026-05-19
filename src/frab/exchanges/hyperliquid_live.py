@@ -220,6 +220,54 @@ class LiveHLExecutor:
         quant = Decimal(10) ** -sz_dec
         return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_DOWN))
 
+    async def close_position(self, coin: str) -> FillReport | None:
+        """Reduce-only close for a perp position, using executor's configured slippage.
+
+        Wraps SDK `Exchange.market_close` to override its default 5% slippage with
+        `self._slippage` (typically 1%). Returns None if there was no position to close.
+        Useful for residual cleanups and reconcile flows — bypasses HL's $10 min order
+        size because the order is reduce-only.
+        """
+        pos = await self.get_position(coin)
+        if pos is None or abs(pos.perp_units) < 1e-12:
+            return None
+        closing_side = Side.BUY if pos.perp_units < 0 else Side.SELL
+
+        resp = await asyncio.to_thread(
+            self._exchange.market_close, coin, None, None, self._slippage
+        )
+
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            raise RuntimeError(f"HL market_close rejected: {resp!r}")
+        try:
+            status0 = resp["response"]["data"]["statuses"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"HL market_close response shape unexpected: {resp!r}") from exc
+
+        if "filled" not in status0:
+            if "error" in status0:
+                raise RuntimeError(f"HL market_close error: {status0['error']!r}")
+            return None
+
+        filled = status0["filled"]
+        qty = float(filled["totalSz"])
+        if qty <= 0:
+            return None
+        price = float(filled["avgPx"])
+        fee = float(filled.get("fee", 0.0))
+        return FillReport(
+            coin=coin,
+            leg=Leg.PERP,
+            side=closing_side,
+            ts=self._clock_fn(),
+            qty=qty,
+            price=price,
+            fee=fee,
+            slippage_bps=self._slippage * 1e4,
+            is_paper=False,
+            client_ref=None,
+        )
+
     async def fetch_account_state(self) -> dict[str, Any]:
         """Return raw perp + spot account state dicts for external reconcile callers."""
         if self._address is None:
