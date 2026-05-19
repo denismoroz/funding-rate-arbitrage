@@ -312,9 +312,9 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         )
 
         spec = get_strategy_spec(settings.strategy_name)
-        params_override = parse_params_override(settings.strategy_params_json)
+        params_override = parse_params_override(settings.strategy_params_json) or {}
         if settings.hl_network != "paper":
-            params_override["position_size_usd"] = settings.hl_position_size_usd
+            params_override["position_size_usdc"] = settings.hl_position_size_usd
         strategy, params_json = spec.build(
             coins=resolved_coins,
             params_override=params_override,
