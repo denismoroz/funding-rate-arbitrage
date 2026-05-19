@@ -11,6 +11,7 @@ from frab.api.routes import (
     positions as positions_routes,
     signals as signals_routes,
     strategies as strategies_routes,
+    wallet as wallet_routes,
 )
 from frab.events.bus import EventBus
 
@@ -19,12 +20,15 @@ def create_app(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     event_bus: EventBus | None = None,
+    executor: object | None = None,
 ) -> FastAPI:
     app = FastAPI(title="frab")
     app.state.session_factory = session_factory
     app.state.event_bus = event_bus
+    app.state.executor = executor
     app.include_router(strategies_routes.router, prefix="/api/strategies", tags=["strategies"])
     app.include_router(equity_routes.router, prefix="/api/equity", tags=["equity"])
+    app.include_router(wallet_routes.router, prefix="/api/equity", tags=["equity"])
     app.include_router(positions_routes.router, prefix="/api/positions", tags=["positions"])
     app.include_router(signals_routes.router, prefix="/api/signals", tags=["signals"])
     app.include_router(funding_routes.router, prefix="/api/funding", tags=["funding"])

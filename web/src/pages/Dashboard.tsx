@@ -19,6 +19,7 @@ import {
   fetchFundingHistory,
   fetchPositionFundingHistory,
   fetchAlerts,
+  fetchWallet,
   type Alert,
   type EquitySnapshot,
   type Fill,
@@ -172,6 +173,13 @@ function EquityCard() {
     enabled: !!strategyId,
   });
 
+  const { data: walletData } = useQuery({
+    queryKey: ["wallet", strategyId],
+    queryFn: () => fetchWallet(strategyId!),
+    enabled: !!strategyId,
+    refetchInterval: 30_000,
+  });
+
   const slice = data
     ? (() => {
         const cutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -182,26 +190,37 @@ function EquityCard() {
 
   const latest = slice.length > 0 ? slice[slice.length - 1] : undefined;
 
+  // Use wallet total when available; fall back to local accounting equity
+  const totalDisplay =
+    walletData != null ? walletData.total_usd : latest?.total_equity;
+
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold text-gray-700">
           Equity (last 24h)
         </h2>
-        {latest && (
+        {(totalDisplay != null || latest) && (
           <div className="flex items-baseline gap-3 text-xs text-gray-500">
             <span>
               Total{" "}
               <span className="text-base font-semibold text-gray-900">
-                {formatCurrency(latest.total_equity)}
+                {totalDisplay != null ? formatCurrency(totalDisplay) : "—"}
               </span>
+              {walletData != null && (
+                <span className="ml-1 text-xs text-gray-400">(wallet)</span>
+              )}
             </span>
-            <span className="text-green-600">
-              funding {formatCurrency(latest.funding_cum)}
-            </span>
-            <span className="text-red-500">
-              fees {formatCurrency(latest.fees_cum)}
-            </span>
+            {latest && (
+              <>
+                <span className="text-green-600">
+                  funding {formatCurrency(latest.funding_cum)}
+                </span>
+                <span className="text-red-500">
+                  fees {formatCurrency(latest.fees_cum)}
+                </span>
+              </>
+            )}
           </div>
         )}
       </div>

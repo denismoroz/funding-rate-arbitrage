@@ -296,3 +296,95 @@ class LiveHLExecutor:
             asyncio.to_thread(self._info.spot_user_state, self._address),
         )
         return {"perp": perp_state, "spot": spot_state}
+
+    # Inverse of spot_token_map: HL spot coin name → canonical coin name.
+    # e.g. {"UBTC": "BTC", "UETH": "ETH", ...}
+    def _inverse_spot_token_map(self) -> dict[str, str]:
+        return {v: k for k, v in self._spot_token_map.items()}
+
+    def _normalize_spot_coin(self, hl_coin: str) -> str:
+        """Translate a HL spot coin name to the canonical coin name.
+
+        If the HL name is in the inverse map (e.g. UBTC → BTC) use that.
+        Otherwise return the raw HL name unchanged.
+        """
+        return self._inverse_spot_token_map().get(hl_coin, hl_coin)
+
+    async def fetch_wallet_state(
+        self,
+        mark_prices: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
+        """Return a normalized wallet snapshot suitable for the /api/equity/wallet endpoint.
+
+        Fetches clearinghouseState (perp) and spotClearinghouseState from HL,
+        normalises spot coin names via the inverse of spot_token_map, and prices
+        each spot holding at the provided mark price (or 0 if unavailable).
+
+        Args:
+            mark_prices: Optional dict mapping canonical coin name → mark price in USD.
+                         Used to value spot holdings.  Pass None when no price source
+                         is available (spot_balances will show usd_value=0).
+
+        Returns:
+            {
+                "perp_account_value": float,
+                "perp_unrealized_pnl": float,
+                "spot_balances": [{"coin": str, "qty": float, "mark": float, "usd_value": float}, ...],
+                "usdc_spot": float,
+                "total_usd": float,
+            }
+        """
+        if self._address is None:
+            raise RuntimeError("account_address required for fetch_wallet_state")
+
+        raw = await self.fetch_account_state()
+        perp_state = raw["perp"]
+        spot_state = raw["spot"]
+
+        # --- perp account value ---
+        margin_summary = perp_state.get("marginSummary", {})
+        perp_account_value = float(margin_summary.get("accountValue", 0.0))
+
+        # --- perp unrealized PnL ---
+        perp_unrealized_pnl = sum(
+            float(entry.get("position", {}).get("unrealizedPnl", 0.0))
+            for entry in perp_state.get("assetPositions", [])
+        )
+
+        # --- spot balances ---
+        prices = mark_prices or {}
+        spot_balances: list[dict[str, Any]] = []
+        usdc_spot = 0.0
+
+        for balance in spot_state.get("balances", []):
+            hl_coin: str = balance.get("coin", "")
+            total = float(balance.get("total", 0.0))
+            if total <= 0:
+                continue
+
+            canonical = self._normalize_spot_coin(hl_coin)
+
+            if canonical in ("USDC", "USD"):
+                usdc_spot += total
+                continue
+
+            mark = prices.get(canonical, 0.0)
+            usd_value = total * mark
+            spot_balances.append({
+                "coin": canonical,
+                "qty": total,
+                "mark": mark,
+                "usd_value": usd_value,
+            })
+
+        # --- total ---
+        spot_tokens_usd = sum(b["usd_value"] for b in spot_balances)
+        total_usd = perp_account_value + spot_tokens_usd + usdc_spot
+
+        return {
+            "perp_account_value": perp_account_value,
+            "perp_unrealized_pnl": perp_unrealized_pnl,
+            "spot_balances": spot_balances,
+            "usdc_spot": usdc_spot,
+            "total_usd": total_usd,
+        }

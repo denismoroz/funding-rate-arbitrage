@@ -168,6 +168,21 @@ export type Alert = {
   payload: Record<string, unknown> | null;
 };
 
+export type SpotBalanceItem = {
+  coin: string;
+  qty: number;
+  mark: number;
+  usd_value: number;
+};
+
+export type WalletBalance = {
+  perp_account_value: number;
+  perp_unrealized_pnl: number;
+  spot_balances: SpotBalanceItem[];
+  usdc_spot: number;
+  total_usd: number;
+};
+
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
 export function fetchStrategies(): Promise<Strategy[]> {
@@ -244,6 +259,11 @@ export function fetchPositionFundingHistory(
   return apiFetch<PositionFundingAccrual[]>(
     `/positions/${positionId}/funding-history${qs ? `?${qs}` : ""}`,
   );
+}
+
+export function fetchWallet(strategyId: number): Promise<WalletBalance> {
+  const params = new URLSearchParams({ strategy_id: String(strategyId) });
+  return apiFetch<WalletBalance>(`/equity/wallet?${params}`);
 }
 
 export function fetchStrategyParams(id: number): Promise<StrategyParamsResponse> {
