@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from frab.api.routes import (
+    alerts as alerts_routes,
     equity as equity_routes,
     events as events_routes,
     funding as funding_routes,
@@ -28,6 +29,7 @@ def create_app(
     app.include_router(signals_routes.router, prefix="/api/signals", tags=["signals"])
     app.include_router(funding_routes.router, prefix="/api/funding", tags=["funding"])
     app.include_router(events_routes.router, prefix="/api/events", tags=["events"])
+    app.include_router(alerts_routes.router, prefix="/api/alerts", tags=["alerts"])
 
     if event_bus is not None:
         from frab.api.ws import router as ws_router

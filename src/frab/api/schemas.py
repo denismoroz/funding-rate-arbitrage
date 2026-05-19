@@ -165,3 +165,13 @@ class StrategyParamsIn(BaseModel):
         if self.exit_threshold >= self.entry_threshold:
             raise ValueError("exit_threshold must be strictly less than entry_threshold")
         return self
+
+
+class AlertOut(_UtcAwareOut):
+    type: str                          # "failed_position" | "event"
+    severity: str                      # "WARNING" | "ERROR"
+    ts: datetime
+    coin: str | None
+    message: str
+    position_id: int | None = None
+    payload: dict | None = None
