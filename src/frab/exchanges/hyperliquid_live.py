@@ -41,6 +41,23 @@ def _base_url(network: Literal["testnet", "mainnet"]) -> str:
     raise ValueError(f"unsupported network: {network!r}")
 
 
+class PartialFillError(RuntimeError):
+    """Raised when HL filled less than the requested qty beyond tolerance.
+
+    Carries the actual fill so callers can decide to record a partial leg
+    rather than discarding it entirely.
+    """
+
+    def __init__(self, requested_qty: float, filled_qty: float, fill: FillReport) -> None:
+        super().__init__(
+            f"partial fill: requested {requested_qty}, filled {filled_qty} "
+            f"({filled_qty / requested_qty * 100:.1f}%)"
+        )
+        self.requested_qty = requested_qty
+        self.filled_qty = filled_qty
+        self.fill = fill
+
+
 class LiveHLExecutor:
     name = "hyperliquid"
 
@@ -55,6 +72,7 @@ class LiveHLExecutor:
         spot_token_map: dict[str, str] | None = None,
         spot_quote_token: str = "USDC",
         slippage: float = 0.01,
+        partial_fill_tolerance: float = 0.01,
         clock_fn: Callable[[], datetime] | None = None,
     ) -> None:
         if info is None:
@@ -78,6 +96,7 @@ class LiveHLExecutor:
         self._spot_token_map: dict[str, str] = spot_token_map if spot_token_map is not None else {}
         self._spot_quote_token = spot_quote_token
         self._slippage = slippage
+        self._partial_fill_tolerance = partial_fill_tolerance
         self._clock_fn = clock_fn if clock_fn is not None else lambda: datetime.now(UTC)
 
     def _make_name(self, req: OrderRequest) -> str:
@@ -117,7 +136,7 @@ class LiveHLExecutor:
         else:
             raise RuntimeError(f"HL order unrecognized status: {status0!r}")
 
-        return FillReport(
+        fill = FillReport(
             coin=req.coin,
             leg=req.leg,
             side=req.side,
@@ -129,6 +148,15 @@ class LiveHLExecutor:
             is_paper=False,
             client_ref=req.client_ref,
         )
+
+        # HL IOC market orders can partial-fill when orderbook thins out
+        # (common on testnet; rare on liquid mainnet). Leg-pair invariant
+        # requires equal qty on both legs — surface partials so AtomicExecutor
+        # treats them as failures and triggers reconcile.
+        if qty < req.qty * (1 - self._partial_fill_tolerance):
+            raise PartialFillError(requested_qty=req.qty, filled_qty=qty, fill=fill)
+
+        return fill
 
     async def get_position(self, coin: str) -> PositionState | None:
         if self._address is None:

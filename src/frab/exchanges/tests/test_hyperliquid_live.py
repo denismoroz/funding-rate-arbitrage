@@ -7,7 +7,7 @@ import pytest
 from hyperliquid.utils import constants
 
 from frab.exchanges.base import FillReport, Leg, OrderRequest, PositionState, Side
-from frab.exchanges.hyperliquid_live import LiveHLExecutor
+from frab.exchanges.hyperliquid_live import LiveHLExecutor, PartialFillError
 
 _FIXED_DT = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 _CLOCK = lambda: _FIXED_DT  # noqa: E731
@@ -346,3 +346,40 @@ async def test_fetch_account_state_returns_combined(mocker):
 
     result = await ex.fetch_account_state()
     assert result == {"perp": perp_data, "spot": spot_data}
+
+
+# 22. partial fill below tolerance raises PartialFillError carrying the fill
+async def test_submit_partial_fill_raises_partial_fill_error(mocker):
+    ex, _, exchange = _make_executor(mocker)
+    # Requested 0.5, filled 0.05 (10%) — way below 1% tolerance
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.05, px=24.0, fee=0.0)))
+    with pytest.raises(PartialFillError) as exc_info:
+        await ex.submit(_perp_req(qty=0.5))
+    err = exc_info.value
+    assert err.requested_qty == 0.5
+    assert err.filled_qty == 0.05
+    assert err.fill.qty == 0.05
+    assert err.fill.price == 24.0
+
+
+# 23. fill within tolerance (e.g. lot-size rounding) does NOT raise
+async def test_submit_near_full_fill_within_tolerance_ok(mocker):
+    ex, _, exchange = _make_executor(mocker)
+    # Requested 1.0, filled 0.995 (99.5%) — within default 1% tolerance
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.995, px=10.0, fee=0.0)))
+    fill = await ex.submit(_perp_req(qty=1.0))
+    assert fill.qty == 0.995
+
+
+# 24. partial fill tolerance is configurable
+async def test_submit_partial_fill_with_custom_tolerance(mocker):
+    info = mocker.MagicMock()
+    exchange = mocker.MagicMock()
+    # Wider tolerance: 10% — allows 0.91 fill on 1.0 request
+    ex = LiveHLExecutor(
+        info=info, exchange=exchange, account_address="0x" + "b" * 40,
+        partial_fill_tolerance=0.10, clock_fn=_CLOCK,
+    )
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.91, px=10.0, fee=0.0)))
+    fill = await ex.submit(_perp_req(qty=1.0))
+    assert fill.qty == 0.91
