@@ -478,3 +478,51 @@ async def test_close_position_raises_on_error(mocker):
 
     with pytest.raises(RuntimeError, match="market_close error"):
         await ex.close_position("BTC")
+
+
+# 29. round_qty floors at szDecimals (used for self-sizing — must not exceed budget)
+async def test_round_qty_floors_at_sz_decimals(mocker):
+    ex, info, _ = _make_executor(mocker)
+    info.meta.return_value = {"universe": [
+        {"name": "BTC", "szDecimals": 5},
+        {"name": "ETH", "szDecimals": 4},
+    ]}
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=lambda fn, *a, **kw: fn(*a, **kw)))
+
+    # 0.000149895 → 0.00014 (NOT 0.00015 — floor truncates the trailing 9895)
+    assert await ex.round_qty("BTC", 0.000149895) == pytest.approx(0.00014, abs=1e-9)
+    # Already on-step: passes through unchanged
+    assert await ex.round_qty("BTC", 0.00014) == pytest.approx(0.00014, abs=1e-9)
+    # ETH at 4 decimals
+    assert await ex.round_qty("ETH", 0.00333333) == pytest.approx(0.0033, abs=1e-9)
+
+
+# 30. round_qty_to_nearest uses HALF_UP — solves the hedge-residual problem
+async def test_round_qty_to_nearest_uses_half_up(mocker):
+    ex, info, _ = _make_executor(mocker)
+    info.meta.return_value = {"universe": [
+        {"name": "BTC", "szDecimals": 5},
+        {"name": "ETH", "szDecimals": 4},
+    ]}
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=lambda fn, *a, **kw: fn(*a, **kw)))
+
+    # 0.000149895 → 0.00015 (rounds up because 6th digit is 9)
+    assert await ex.round_qty_to_nearest("BTC", 0.000149895) == pytest.approx(0.00015, abs=1e-9)
+    # Exact half — Python Decimal HALF_UP rounds away from zero
+    assert await ex.round_qty_to_nearest("BTC", 0.000145) == pytest.approx(0.00015, abs=1e-9)
+    # Below half rounds down
+    assert await ex.round_qty_to_nearest("BTC", 0.000144) == pytest.approx(0.00014, abs=1e-9)
+    # ETH
+    assert await ex.round_qty_to_nearest("ETH", 0.00335) == pytest.approx(0.0034, abs=1e-9)
+
+
+# 31. round_qty raises ValueError on unknown coin
+async def test_round_qty_raises_on_unknown_coin(mocker):
+    ex, info, _ = _make_executor(mocker)
+    info.meta.return_value = {"universe": [{"name": "BTC", "szDecimals": 5}]}
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=lambda fn, *a, **kw: fn(*a, **kw)))
+
+    with pytest.raises(ValueError, match="unknown coin"):
+        await ex.round_qty("DOGE", 1.0)
+    with pytest.raises(ValueError, match="unknown coin"):
+        await ex.round_qty_to_nearest("DOGE", 1.0)

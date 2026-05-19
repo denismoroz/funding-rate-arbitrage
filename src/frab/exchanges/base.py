@@ -97,3 +97,4 @@ class Executor(Protocol):
     async def get_position(self, coin: str) -> PositionState | None: ...  # pragma: no cover
     async def reconcile(self) -> None: ...  # pragma: no cover
     async def round_qty(self, coin: str, qty: float) -> float: ...  # pragma: no cover
+    async def round_qty_to_nearest(self, coin: str, qty: float) -> float: ...  # pragma: no cover

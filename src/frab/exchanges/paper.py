@@ -137,3 +137,6 @@ class PaperExecutor:
 
     async def round_qty(self, coin: str, qty: float) -> float:
         return qty
+
+    async def round_qty_to_nearest(self, coin: str, qty: float) -> float:
+        return qty

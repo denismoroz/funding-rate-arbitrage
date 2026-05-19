@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Any, Callable, Literal
 
 from eth_account import Account
@@ -205,20 +205,39 @@ class LiveHLExecutor:
         logger.debug("reconcile is no-op in LiveHLExecutor")
         return None
 
-    async def round_qty(self, coin: str, qty: float) -> float:
-        """Floor qty to the asset's szDecimals (HL rejects orders with finer precision).
-
-        Uses Decimal arithmetic — naive float floor like int(0.00014 * 1e5) returns
-        13 instead of 14 due to binary representation of 0.00014.
-        """
+    async def _sz_decimals(self, coin: str) -> int:
         if self._sz_decimals_cache is None:
             meta = await asyncio.to_thread(self._info.meta)
             self._sz_decimals_cache = {u["name"]: int(u["szDecimals"]) for u in meta["universe"]}
         sz_dec = self._sz_decimals_cache.get(coin)
         if sz_dec is None:
             raise ValueError(f"unknown coin {coin!r} (not in perp meta)")
+        return sz_dec
+
+    async def round_qty(self, coin: str, qty: float) -> float:
+        """Floor qty to the asset's szDecimals (HL rejects orders with finer precision).
+
+        ROUND_DOWN — conservative, used for initial sizing (spot BUY $/price, spot SELL
+        of own balance) where we must not exceed budget or balance.
+
+        Uses Decimal arithmetic — naive float floor like int(0.00014 * 1e5) returns
+        13 instead of 14 due to binary representation of 0.00014.
+        """
+        sz_dec = await self._sz_decimals(coin)
         quant = Decimal(10) ** -sz_dec
         return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_DOWN))
+
+    async def round_qty_to_nearest(self, coin: str, qty: float) -> float:
+        """Round qty to the asset's szDecimals using ROUND_HALF_UP.
+
+        Used for hedge-leg sizing to minimize the unhedged residual: for a
+        spot fill of 0.000149895 BTC the floor gives 0.00014 (leaving $0.76
+        long dust at $77k) while half-up gives 0.00015 (~$0.008 short dust,
+        ~100x smaller).
+        """
+        sz_dec = await self._sz_decimals(coin)
+        quant = Decimal(10) ** -sz_dec
+        return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_HALF_UP))
 
     async def close_position(self, coin: str) -> FillReport | None:
         """Reduce-only close for a perp position, using executor's configured slippage.

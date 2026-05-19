@@ -388,10 +388,12 @@ class AtomicExecutor:
                 errors=tuple(all_errors),
             )
 
-        # Round spot delta down to perp asset's szDecimals — HL refuses to sign
-        # orders with finer qty precision. Both legs are then recorded at the
-        # same coarse qty; any spot residual stays as dust on the wallet.
-        rounded_qty = await self._underlying.round_qty(perp_req.coin, abs(spot_delta))
+        # Round spot delta to perp asset's szDecimals — HL refuses to sign
+        # orders with finer qty precision. HALF_UP (not FLOOR) minimizes the
+        # unhedged residual: for a 0.000149895 BTC spot fill the floor gives
+        # 0.00014 (leaving ~$0.76 long dust at $77k) while half-up gives
+        # 0.00015 (~$0.008 short dust, ~100x smaller).
+        rounded_qty = await self._underlying.round_qty_to_nearest(perp_req.coin, abs(spot_delta))
         if rounded_qty < 1e-12:
             await self._bus.publish(self._make_event(
                 level="ERROR", kind="paired_open_failed",

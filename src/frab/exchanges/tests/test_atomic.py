@@ -111,8 +111,10 @@ def _make_underlying(
     else:
         # Default: always return zero spot balance
         underlying.get_position = AsyncMock(return_value=_make_pos(spot_units=0.0))
-    # round_qty: identity by default (tests using full-precision floats stay green)
+    # round_qty / round_qty_to_nearest: identity by default
+    # (tests using full-precision floats stay green)
     underlying.round_qty = AsyncMock(side_effect=lambda coin, qty: qty)
+    underlying.round_qty_to_nearest = AsyncMock(side_effect=lambda coin, qty: qty)
     return underlying
 
 
@@ -849,3 +851,39 @@ def test_init_accepts_longer_sleep_array_than_needed(bus: EventBus) -> None:
         sleep_between_attempts=(2.0, 5.0),
     )
     assert ex._max_attempts == 2
+
+
+# 31. open_paired sizes the perp hedge with round_qty_to_nearest (HALF_UP)
+async def test_open_paired_perp_hedge_uses_round_to_nearest(bus: EventBus) -> None:
+    """The perp leg sizing must call round_qty_to_nearest (HALF_UP), not round_qty
+    (FLOOR). This is the critical fix that minimizes unhedged residual: for
+    a 0.000149895 BTC spot delta, floor → 0.00014 (long $0.76 dust at $77k),
+    nearest → 0.00015 (short $0.008 dust)."""
+    requested_qty = 0.00015
+    actual_delta = 0.000149895  # spot balance after HL fee-in-asset
+
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY, qty=requested_qty)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL, qty=actual_delta)
+
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=0.0),
+            _make_pos(spot_units=actual_delta),
+        ],
+    )
+    # Override the default identity mock to simulate HL precision: szDecimals=5.
+    # FLOOR would give 0.00014; HALF_UP gives 0.00015. The perp leg must use HALF_UP.
+    underlying.round_qty_to_nearest = AsyncMock(side_effect=lambda coin, qty: 0.00015 if abs(qty - 0.000149895) < 1e-9 else qty)
+    underlying.round_qty = AsyncMock(side_effect=lambda coin, qty: 0.00014 if abs(qty - 0.000149895) < 1e-9 else qty)
+
+    ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
+    await ex.open_paired(
+        _perp_open_req(qty=requested_qty),
+        _spot_open_req(qty=requested_qty),
+    )
+
+    underlying.round_qty_to_nearest.assert_any_call("BTC", pytest.approx(actual_delta))
+    # The perp submit qty reflects HALF_UP (0.00015), not FLOOR (0.00014)
+    perp_call_req = underlying.submit.call_args_list[1].args[0]
+    assert perp_call_req.qty == pytest.approx(0.00015)
