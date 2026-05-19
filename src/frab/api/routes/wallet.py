@@ -100,9 +100,21 @@ async def get_wallet(
     if executor is None or not callable(getattr(executor, "fetch_wallet_state", None)):
         return await _synthesize_paper_wallet(strategy_id, request, session)
 
-    # Live mode
+    # Live mode — pre-fetch latest mark per coin from DB so HL spot
+    # holdings get priced (executor.fetch_wallet_state returns mark=0 otherwise).
+    mark_prices: dict[str, float] = {}
+    latest_q = await session.execute(
+        select(Market.coin, Price.mark, Price.ts)
+        .join(Price, Price.market_id == Market.id)
+        .order_by(Price.ts.desc())
+        .limit(500)
+    )
+    for coin, mark, _ts in latest_q.all():
+        if coin not in mark_prices:
+            mark_prices[coin] = float(mark)
+
     try:
-        raw = await executor.fetch_wallet_state()
+        raw = await executor.fetch_wallet_state(mark_prices=mark_prices)
     except Exception as exc:
         raise HTTPException(
             status_code=503,
