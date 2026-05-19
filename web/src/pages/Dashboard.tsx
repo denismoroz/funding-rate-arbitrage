@@ -162,7 +162,11 @@ function EquityCard() {
   const strategyId = useActiveStrategyId();
   const { data, isLoading, error } = useQuery({
     queryKey: ["equity", strategyId],
-    queryFn: () => fetchEquity(strategyId!, { limit: 2000 }),
+    queryFn: () =>
+      fetchEquity(strategyId!, {
+        limit: 2000,
+        since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      }),
     enabled: !!strategyId,
   });
 
