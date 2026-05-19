@@ -18,7 +18,7 @@ from frab.db.session import session_scope
 from frab.exchanges.base import Leg, MarketDataSource, OrderRequest, Side
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.hyperliquid_live import LiveHLExecutor
-from frab.server import _hl_info_url
+from frab.server import _hl_info_url, _select_spot_token_map
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -252,6 +252,7 @@ def _build_smoke_clients(settings):
         private_key=settings.hl_private_key.get_secret_value(),
         account_address=settings.hl_account_address,
         network=settings.hl_network,
+        spot_token_map=_select_spot_token_map(settings.hl_network),
         slippage=settings.hl_live_slippage,
     )
     return market_data, executor
@@ -267,6 +268,7 @@ def _build_smoke_clients_with_slippage(settings, slippage: float):
         private_key=settings.hl_private_key.get_secret_value(),
         account_address=settings.hl_account_address,
         network=settings.hl_network,
+        spot_token_map=_select_spot_token_map(settings.hl_network),
         slippage=slippage,
     )
     return market_data, executor
