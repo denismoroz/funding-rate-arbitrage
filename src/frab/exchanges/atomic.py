@@ -319,6 +319,8 @@ class AtomicExecutor:
 
         # --- Leg 1: spot buy ---
         snap_before = await self._underlying.get_position(coin)
+        rounded_spot_qty = await self._underlying.round_qty(coin, spot_req.qty)
+        spot_req = replace(spot_req, qty=rounded_spot_qty)
         spot_outcome = await self._submit_counting(spot_req)
         spot_attempts = spot_outcome.attempts
         all_errors: list[str] = [repr(e) for e in spot_outcome.errors]
@@ -481,6 +483,8 @@ class AtomicExecutor:
 
         # --- Leg 1: spot sell ---
         snap_before = await self._underlying.get_position(coin)
+        rounded_spot_qty = await self._underlying.round_qty(coin, spot_req.qty)
+        spot_req = replace(spot_req, qty=rounded_spot_qty)
         spot_outcome = await self._submit_counting(spot_req)
         spot_attempts = spot_outcome.attempts
         all_errors: list[str] = [repr(e) for e in spot_outcome.errors]

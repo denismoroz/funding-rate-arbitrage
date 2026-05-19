@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Literal
 
 from eth_account import Account
@@ -205,15 +206,19 @@ class LiveHLExecutor:
         return None
 
     async def round_qty(self, coin: str, qty: float) -> float:
-        """Floor qty to the asset's szDecimals (HL rejects orders with finer precision)."""
+        """Floor qty to the asset's szDecimals (HL rejects orders with finer precision).
+
+        Uses Decimal arithmetic — naive float floor like int(0.00014 * 1e5) returns
+        13 instead of 14 due to binary representation of 0.00014.
+        """
         if self._sz_decimals_cache is None:
             meta = await asyncio.to_thread(self._info.meta)
             self._sz_decimals_cache = {u["name"]: int(u["szDecimals"]) for u in meta["universe"]}
         sz_dec = self._sz_decimals_cache.get(coin)
         if sz_dec is None:
             raise ValueError(f"unknown coin {coin!r} (not in perp meta)")
-        step = 10 ** -sz_dec
-        return int(qty / step) * step
+        quant = Decimal(10) ** -sz_dec
+        return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_DOWN))
 
     async def fetch_account_state(self) -> dict[str, Any]:
         """Return raw perp + spot account state dicts for external reconcile callers."""
