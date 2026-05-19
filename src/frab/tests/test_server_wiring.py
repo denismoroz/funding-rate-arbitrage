@@ -6,10 +6,12 @@ import os
 import pytest
 
 from frab.db.models import PositionMode
+from frab.engine.fee_reconciler import FeeReconciler
 from frab.exchanges.paper import PaperExecutor
 from frab.server import (
     MAINNET_SPOT_TOKEN_MAP,
     _build_executor,
+    _build_fee_reconciler,
     _build_params_override,
     _hl_info_url,
     _position_mode,
@@ -240,3 +242,73 @@ def test_build_params_override_paper_ignores_hl_caps():
     override = _build_params_override(s)
     assert "position_size_usdc" not in override
     assert "concurrency_cap" not in override
+
+
+# ---------------------------------------------------------------------------
+# _build_fee_reconciler — live wires FeeReconciler, paper wires None
+# ---------------------------------------------------------------------------
+
+
+def test_build_fee_reconciler_paper_returns_none(mocker):
+    """Paper mode: _build_fee_reconciler returns None."""
+    s = Settings(hl_network="paper", _env_file=None)
+    result = _build_fee_reconciler(
+        s,
+        session_factory=mocker.MagicMock(),
+        market_data=mocker.MagicMock(),
+        bus=mocker.MagicMock(),
+    )
+    assert result is None
+
+
+def test_build_fee_reconciler_testnet_returns_reconciler(mocker):
+    """Testnet (live) mode: _build_fee_reconciler returns a FeeReconciler."""
+    s = Settings(
+        hl_network="testnet",
+        hl_private_key="0x" + "a" * 64,
+        hl_account_address="0x" + "b" * 40,
+        _env_file=None,
+    )
+    result = _build_fee_reconciler(
+        s,
+        session_factory=mocker.MagicMock(),
+        market_data=mocker.MagicMock(),
+        bus=mocker.MagicMock(),
+    )
+    assert isinstance(result, FeeReconciler)
+
+
+def test_build_fee_reconciler_mainnet_returns_reconciler(mocker):
+    """Mainnet (live) mode: _build_fee_reconciler returns a FeeReconciler."""
+    s = Settings(
+        hl_network="mainnet",
+        hl_private_key="0x" + "a" * 64,
+        hl_account_address="0x" + "b" * 40,
+        _env_file=None,
+    )
+    result = _build_fee_reconciler(
+        s,
+        session_factory=mocker.MagicMock(),
+        market_data=mocker.MagicMock(),
+        bus=mocker.MagicMock(),
+    )
+    assert isinstance(result, FeeReconciler)
+
+
+def test_build_fee_reconciler_uses_account_address(mocker):
+    """FeeReconciler is constructed with the configured hl_account_address."""
+    account = "0x" + "c" * 40
+    s = Settings(
+        hl_network="mainnet",
+        hl_private_key="0x" + "a" * 64,
+        hl_account_address=account,
+        _env_file=None,
+    )
+    result = _build_fee_reconciler(
+        s,
+        session_factory=mocker.MagicMock(),
+        market_data=mocker.MagicMock(),
+        bus=mocker.MagicMock(),
+    )
+    assert isinstance(result, FeeReconciler)
+    assert result._user_address == account

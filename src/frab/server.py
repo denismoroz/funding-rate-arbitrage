@@ -25,6 +25,7 @@ from frab.db.models import (
 )
 from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
+from frab.engine.fee_reconciler import FeeReconciler
 from frab.engine.loop import Engine
 from frab.engine.reconcile import scan as reconcile_scan
 from frab.events.bus import EventBus, EventDbSink
@@ -120,6 +121,24 @@ def _build_executor(
         network=settings.hl_network,
         spot_token_map=_select_spot_token_map(settings.hl_network),
         slippage=settings.hl_live_slippage,
+    )
+
+
+def _build_fee_reconciler(
+    settings: Settings,
+    *,
+    session_factory,
+    market_data,
+    bus: EventBus,
+) -> "FeeReconciler | None":
+    """Return a FeeReconciler for live mode, None for paper mode."""
+    if settings.hl_network == "paper":
+        return None
+    return FeeReconciler(
+        session_factory=session_factory,
+        market_data=market_data,
+        user_address=settings.hl_account_address,
+        bus=bus,
     )
 
 
@@ -356,12 +375,22 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         )
         await _rehydrate_strategy_from_db(session_factory, strategy, strategy_id)
         await reconcile_scan(session_factory, strategy_id, bus)   # ← new
+
+        # Wire fee reconciler for live mode; paper mode has no real fills to reconcile.
+        fee_reconciler = _build_fee_reconciler(
+            settings,
+            session_factory=session_factory,
+            market_data=market_data,
+            bus=bus,
+        )
+
         engine = Engine(
             market_data=market_data,
             strategy=strategy,
             coins=resolved_coins,
             recorder=recorder,
             event_bus=bus,
+            fee_reconciler=fee_reconciler,
         )
         sink = EventDbSink(session_factory, bus)
 

@@ -12,9 +12,20 @@ from tenacity import (
     wait_exponential,
 )
 
-from frab.exchanges.base import FundingTick, MarketSpec, Quote
+from frab.exchanges.base import FundingTick, Leg, MarketSpec, Quote, Side, UserFill
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
+
+# Inverse of MAINNET_SPOT_TOKEN_MAP in server.py:
+# HL spot coins like "UBTC/USDC" → underlying perp coin "BTC".
+_SPOT_TOKEN_INVERSE: dict[str, str] = {
+    "UBTC": "BTC",
+    "UETH": "ETH",
+    "USOL": "SOL",
+    "AVAX0": "AVAX",
+    "LINK0": "LINK",
+    "AAVE0": "AAVE",
+}
 
 
 def _ms_to_dt(ms: int) -> datetime:
@@ -145,3 +156,52 @@ class HLMarketData:
                 tick_size=tick_size,
             ))
         return specs
+
+    def _normalize_hl_coin(self, hl_coin: str) -> tuple[str, Leg]:
+        """Normalize HL coin field to (coin, leg).
+
+        Perp coins are plain names like "BTC". Spot coins have a slash like
+        "UBTC/USDC" — strip the slash, look up the wrapped token in the inverse
+        map (UBTC → BTC), fall back to the part before the slash if not found.
+        """
+        if "/" in hl_coin:
+            wrapped = hl_coin.split("/")[0]
+            coin = _SPOT_TOKEN_INVERSE.get(wrapped, wrapped)
+            return coin, Leg.SPOT
+        return hl_coin, Leg.PERP
+
+    async def fetch_user_fills(self, user_address: str, since_ms: int) -> list[UserFill]:
+        """Fetch user's actual fills with real fees from HL.
+
+        POST /info  body: {"type": "userFillsByTime", "user": user_address, "startTime": since_ms}
+        Returns parsed list ordered by ts ascending.
+        """
+        data: list[dict] = await self._post({
+            "type": "userFillsByTime",
+            "user": user_address,
+            "startTime": since_ms,
+        })
+        if not data:
+            return []
+
+        fills: list[UserFill] = []
+        for record in data:
+            hl_coin = record["coin"]
+            coin, leg = self._normalize_hl_coin(hl_coin)
+            # HL side: "B" → BUY, "A" → SELL (maker/taker from the aggressor side)
+            side = Side.BUY if record["side"] == "B" else Side.SELL
+            fills.append(UserFill(
+                coin=coin,
+                ts=_ms_to_dt(int(record["time"])),
+                leg=leg,
+                side=side,
+                qty=abs(float(record["sz"])),
+                price=float(record["px"]),
+                fee=float(record["fee"]),
+                fee_token=record["feeToken"],
+                hl_oid=int(record["oid"]),
+                hl_tid=int(record["tid"]),
+            ))
+
+        fills.sort(key=lambda f: f.ts)
+        return fills

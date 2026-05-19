@@ -81,6 +81,20 @@ class PositionState:
     avg_entry_perp: float | None
 
 
+@dataclass(frozen=True, slots=True)
+class UserFill:
+    coin: str          # normalized coin name (e.g. "BTC", not "UBTC/USDC")
+    ts: datetime       # parsed from fill["time"] (ms since epoch, UTC)
+    leg: Leg           # PERP or SPOT — inferred from HL coin field (slash → SPOT)
+    side: Side         # BUY or SELL — HL "B" → BUY, "A" → SELL
+    qty: float         # abs(fill["sz"])
+    price: float       # float(fill["px"])
+    fee: float         # float(fill["fee"]) — USDC for perp, asset units for spot BUY
+    fee_token: str     # fill["feeToken"] e.g. "USDC", "UBTC"
+    hl_oid: int        # fill["oid"] — HL order id
+    hl_tid: int        # fill["tid"] — HL trade id, globally unique per fill
+
+
 @runtime_checkable
 class MarketDataSource(Protocol):
     name: str  # short identifier, e.g. "hyperliquid"

@@ -5,7 +5,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Awaitable, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Awaitable, Callable, Protocol, runtime_checkable
 
 import httpx
 import tenacity
@@ -14,7 +14,12 @@ from frab.events.bus import Event, EventBus
 from frab.exchanges.base import FundingTick, Leg, MarketDataSource, Quote, Side
 from frab.strategies.base import EquitySnapshot, Strategy, TickReport
 
+if TYPE_CHECKING:
+    from frab.engine.fee_reconciler import FeeReconciler
+
 logger = logging.getLogger(__name__)
+
+FEE_RECONCILE_EVERY_N_MINUTES = 5
 
 TRANSIENT_TICK_ERRORS = (httpx.HTTPError, tenacity.RetryError, asyncio.TimeoutError, ConnectionError)
 
@@ -61,6 +66,7 @@ class Engine:
         clock_fn: Callable[[], datetime] | None = None,
         sleep_fn: Callable[[float], Awaitable[None]] | None = None,
         event_bus: EventBus | None = None,
+        fee_reconciler: "FeeReconciler | None" = None,
     ) -> None:
         if len(coins) == 0:
             raise ValueError("coins must be non-empty")
@@ -71,8 +77,10 @@ class Engine:
         self._clock_fn = clock_fn if clock_fn is not None else (lambda: datetime.now(UTC))
         self._sleep = sleep_fn if sleep_fn is not None else asyncio.sleep
         self._event_bus = event_bus
+        self._fee_reconciler = fee_reconciler
         self._stop = False
         self._last_hour: datetime | None = None
+        self._tick_count: int = 0
 
     def stop(self) -> None:
         self._stop = True
@@ -93,6 +101,8 @@ class Engine:
         await self._event_bus.publish(event)
 
     async def tick_once(self, now: datetime) -> TickOutcome:
+        self._tick_count += 1
+
         # 1. Fetch quotes concurrently
         quote_tasks = [self._market_data.fetch_quote(coin) for coin in self._coins]
         quote_list = await asyncio.gather(*quote_tasks)
@@ -186,6 +196,24 @@ class Engine:
         else:
             funding = None
             tick_report = None
+
+        # 5b. Fee reconcile (every FEE_RECONCILE_EVERY_N_MINUTES ticks, non-fatal)
+        if (
+            self._fee_reconciler is not None
+            and self._tick_count % FEE_RECONCILE_EVERY_N_MINUTES == 0
+        ):
+            try:
+                await self._fee_reconciler.run_once()
+            except Exception as exc:
+                logger.error("fee_reconcile_failed: %s", exc, exc_info=True)
+                await self._publish(Event(
+                    ts=now,
+                    level="ERROR",
+                    source="fee_reconcile",
+                    kind="fee_reconcile_error",
+                    message=f"Fee reconcile failed: {type(exc).__name__}: {exc}",
+                    payload_json={"error_type": type(exc).__name__, "error_message": str(exc)},
+                ))
 
         # 6. Equity snapshot (every tick)
         equity = self._strategy.compute_equity(now)

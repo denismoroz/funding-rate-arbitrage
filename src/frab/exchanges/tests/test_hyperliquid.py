@@ -9,6 +9,7 @@ import respx
 from tenacity import wait_none
 
 import frab.exchanges.hyperliquid as hl_mod
+from frab.exchanges.base import Leg, Side
 from frab.exchanges.hyperliquid import HLMarketData, _ms_to_dt
 
 BASE_URL = "https://api.hyperliquid.xyz"
@@ -263,3 +264,144 @@ async def test_injected_client_not_closed():
     await md.aclose()
     assert not ext_client.is_closed
     await ext_client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# fetch_user_fills
+# ---------------------------------------------------------------------------
+
+def _fill_record(
+    coin: str,
+    time_ms: int,
+    side: str,
+    sz: str,
+    px: str,
+    fee: str,
+    fee_token: str,
+    oid: int,
+    tid: int,
+) -> dict:
+    return {
+        "coin": coin,
+        "time": time_ms,
+        "side": side,
+        "sz": sz,
+        "px": px,
+        "fee": fee,
+        "feeToken": fee_token,
+        "oid": oid,
+        "tid": tid,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_fills_parses_and_normalizes(mocker):
+    """3-fill response: spot BUY (UBTC/USDC), perp SELL (ETH), perp BUY (BTC)."""
+    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+
+    # ts values: fill2 is earliest to verify sort order
+    t1_ms = 1_700_000_002_000  # spot BUY
+    t2_ms = 1_700_000_000_000  # perp SELL — earliest
+    t3_ms = 1_700_000_001_000  # perp BUY
+
+    fills_response = [
+        _fill_record("UBTC/USDC", t1_ms, "B", "0.001", "80000.0", "0.00001", "UBTC", 1001, 2001),
+        _fill_record("ETH", t2_ms, "A", "0.5", "3000.0", "0.75", "USDC", 1002, 2002),
+        _fill_record("BTC", t3_ms, "B", "0.01", "79000.0", "1.58", "USDC", 1003, 2003),
+    ]
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").respond(200, json=fills_response)
+        client = httpx.AsyncClient(base_url=BASE_URL)
+        md = HLMarketData(api_url=INFO_URL, client=client)
+        result = await md.fetch_user_fills("0xABCD", since_ms=0)
+
+    assert len(result) == 3
+
+    # Verify sort order: ascending by ts
+    assert result[0].ts == _ms_to_dt(t2_ms)  # ETH perp SELL
+    assert result[1].ts == _ms_to_dt(t3_ms)  # BTC perp BUY
+    assert result[2].ts == _ms_to_dt(t1_ms)  # UBTC/USDC spot BUY
+
+    # Spot BUY (UBTC/USDC → BTC)
+    spot_fill = result[2]
+    assert spot_fill.coin == "BTC"
+    assert spot_fill.leg == Leg.SPOT
+    assert spot_fill.side == Side.BUY
+    assert spot_fill.qty == pytest.approx(0.001)
+    assert spot_fill.price == pytest.approx(80000.0)
+    assert spot_fill.fee == pytest.approx(0.00001)
+    assert spot_fill.fee_token == "UBTC"
+    assert spot_fill.hl_oid == 1001
+    assert spot_fill.hl_tid == 2001
+
+    # Perp SELL (ETH)
+    perp_sell = result[0]
+    assert perp_sell.coin == "ETH"
+    assert perp_sell.leg == Leg.PERP
+    assert perp_sell.side == Side.SELL
+    assert perp_sell.qty == pytest.approx(0.5)
+    assert perp_sell.fee_token == "USDC"
+
+    # Perp BUY (BTC)
+    perp_buy = result[1]
+    assert perp_buy.coin == "BTC"
+    assert perp_buy.leg == Leg.PERP
+    assert perp_buy.side == Side.BUY
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_fills_retries_on_5xx(mocker):
+    """500 on first attempt, 200 on second — retry should kick in."""
+    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+
+    fill = _fill_record("BTC", 1_700_000_000_000, "B", "0.01", "50000", "0.5", "USDC", 1, 1)
+    call_count = 0
+
+    async def side_effect(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(500)
+        return httpx.Response(200, json=[fill])
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").mock(side_effect=side_effect)
+        client = httpx.AsyncClient(base_url=BASE_URL)
+        md = HLMarketData(api_url=INFO_URL, client=client)
+        result = await md.fetch_user_fills("0xABCD", since_ms=0)
+
+    assert call_count == 2
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_fills_empty_returns_empty_list(mocker):
+    """Empty array response → empty list, no error."""
+    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").respond(200, json=[])
+        client = httpx.AsyncClient(base_url=BASE_URL)
+        md = HLMarketData(api_url=INFO_URL, client=client)
+        result = await md.fetch_user_fills("0xABCD", since_ms=0)
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_fills_unknown_spot_coin_fallback(mocker):
+    """Spot coin with no known mapping falls back to the part before the slash."""
+    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+
+    fill = _fill_record("PURR/USDC", 1_700_000_000_000, "B", "100.0", "1.0", "0.1", "USDC", 1, 1)
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").respond(200, json=[fill])
+        client = httpx.AsyncClient(base_url=BASE_URL)
+        md = HLMarketData(api_url=INFO_URL, client=client)
+        result = await md.fetch_user_fills("0xABCD", since_ms=0)
+
+    assert len(result) == 1
+    assert result[0].coin == "PURR"
+    assert result[0].leg == Leg.SPOT

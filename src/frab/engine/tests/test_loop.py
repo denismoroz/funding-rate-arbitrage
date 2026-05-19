@@ -1070,3 +1070,138 @@ async def test_run_does_not_swallow_non_transient_exceptions(market_data, strate
 
     with pytest.raises(ValueError, match="not a network error"):
         await engine.run()
+
+
+# ---------------------------------------------------------------------------
+# Test 26: fee_reconciler called every FEE_RECONCILE_EVERY_N_MINUTES ticks
+# ---------------------------------------------------------------------------
+
+
+async def test_fee_reconciler_called_every_n_ticks(market_data, strategy, mocker):
+    """fee_reconciler.run_once should be called on ticks 5, 10, ... but not on 1-4."""
+    from frab.engine.loop import FEE_RECONCILE_EVERY_N_MINUTES
+
+    bus = mocker.AsyncMock(spec=EventBus)
+    fee_reconciler = mocker.AsyncMock()
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = _tick_report()
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        event_bus=bus,
+        fee_reconciler=fee_reconciler,
+    )
+
+    # Run FEE_RECONCILE_EVERY_N_MINUTES ticks — reconciler should fire exactly once.
+    # Use varying times so some cross hour boundary (triggers on_hour_tick).
+    for i in range(FEE_RECONCILE_EVERY_N_MINUTES):
+        now = _T0 + timedelta(hours=i)
+        market_data.fetch_quote.return_value = _quote(ts=now)
+        market_data.fetch_funding.return_value = _funding(ts=now)
+        strategy.on_hour_tick.return_value = _tick_report(ts=now)
+        await engine.tick_once(now)
+
+    assert fee_reconciler.run_once.call_count == 1
+
+    # Another round of FEE_RECONCILE_EVERY_N_MINUTES ticks → second call.
+    for i in range(FEE_RECONCILE_EVERY_N_MINUTES):
+        now = _T0 + timedelta(hours=FEE_RECONCILE_EVERY_N_MINUTES + i)
+        market_data.fetch_quote.return_value = _quote(ts=now)
+        market_data.fetch_funding.return_value = _funding(ts=now)
+        strategy.on_hour_tick.return_value = _tick_report(ts=now)
+        await engine.tick_once(now)
+
+    assert fee_reconciler.run_once.call_count == 2
+
+
+async def test_fee_reconciler_not_called_on_non_multiple_ticks(market_data, strategy, mocker):
+    """Ticks 1–4 should NOT call the reconciler when N=5."""
+    from frab.engine.loop import FEE_RECONCILE_EVERY_N_MINUTES
+
+    fee_reconciler = mocker.AsyncMock()
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = _tick_report()
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        fee_reconciler=fee_reconciler,
+    )
+
+    for i in range(FEE_RECONCILE_EVERY_N_MINUTES - 1):
+        now = _T0 + timedelta(hours=i)
+        market_data.fetch_quote.return_value = _quote(ts=now)
+        market_data.fetch_funding.return_value = _funding(ts=now)
+        strategy.on_hour_tick.return_value = _tick_report(ts=now)
+        await engine.tick_once(now)
+
+    fee_reconciler.run_once.assert_not_called()
+
+
+async def test_fee_reconciler_error_continues_loop_and_emits_error_event(
+    market_data, strategy, mocker
+):
+    """If fee_reconciler.run_once raises, loop continues and emits an ERROR event."""
+    from frab.engine.loop import FEE_RECONCILE_EVERY_N_MINUTES
+
+    bus = mocker.AsyncMock(spec=EventBus)
+    fee_reconciler = mocker.AsyncMock()
+    fee_reconciler.run_once.side_effect = RuntimeError("reconcile exploded")
+
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = _tick_report()
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+        event_bus=bus,
+        fee_reconciler=fee_reconciler,
+    )
+
+    # Tick FEE_RECONCILE_EVERY_N_MINUTES times to trigger reconcile.
+    for i in range(FEE_RECONCILE_EVERY_N_MINUTES):
+        now = _T0 + timedelta(hours=i)
+        market_data.fetch_quote.return_value = _quote(ts=now)
+        market_data.fetch_funding.return_value = _funding(ts=now)
+        strategy.on_hour_tick.return_value = _tick_report(ts=now)
+        await engine.tick_once(now)  # must not raise
+
+    # Loop continued: compute_equity was called all N times
+    assert strategy.compute_equity.call_count == FEE_RECONCILE_EVERY_N_MINUTES
+
+    # ERROR event published
+    all_events = [call.args[0] for call in bus.publish.call_args_list]
+    error_events = [e for e in all_events if e.level == "ERROR" and e.kind == "fee_reconcile_error"]
+    assert len(error_events) == 1
+    assert error_events[0].source == "fee_reconcile"
+
+
+async def test_engine_no_fee_reconciler_runs_cleanly(market_data, strategy):
+    """Engine without fee_reconciler (None) still works correctly."""
+    market_data.fetch_quote.return_value = _quote()
+    market_data.fetch_funding.return_value = _funding()
+    strategy.on_hour_tick.return_value = _tick_report()
+
+    engine = Engine(
+        market_data=market_data,
+        strategy=strategy,
+        coins=("BTC",),
+    )
+
+    # Should complete without error even past the reconcile tick threshold
+    from frab.engine.loop import FEE_RECONCILE_EVERY_N_MINUTES
+    for i in range(FEE_RECONCILE_EVERY_N_MINUTES + 1):
+        now = _T0 + timedelta(hours=i)
+        market_data.fetch_quote.return_value = _quote(ts=now)
+        market_data.fetch_funding.return_value = _funding(ts=now)
+        strategy.on_hour_tick.return_value = _tick_report(ts=now)
+        await engine.tick_once(now)
