@@ -162,15 +162,42 @@ class HLMarketData:
         return specs
 
     async def _load_spot_idx_map(self) -> None:
+        """Cache pair_idx → base_token_name (e.g. 142 → 'UBTC').
+
+        HL spotMeta returns:
+          universe[i] = {"index": i, "name": "@N" or "PURR/USDC",
+                         "tokens": [base_token_idx, quote_token_idx]}
+          tokens[t]   = {"index": t, "name": "UBTC", ...}
+
+        For non-canonical pairs HL uses "@N" as the universe name, so we
+        must dereference tokens[universe[N].tokens[0]] to get the real
+        base-token name ("UBTC"). Canonical pairs have a slash name.
+        """
         if self._spot_idx_to_name is not None:
             return
         meta = await self._post({"type": "spotMeta"})
+        token_by_idx: dict[int, str] = {}
+        for t in meta.get("tokens", []):
+            tidx = t.get("index")
+            tname = t.get("name", "")
+            if isinstance(tidx, int) and tname:
+                token_by_idx[tidx] = tname
         mapping: dict[int, str] = {}
         for entry in meta.get("universe", []):
             idx = entry.get("index")
+            if not isinstance(idx, int):
+                continue
             name = entry.get("name", "")
-            if isinstance(idx, int) and "/" in name:
+            if "/" in name:
+                # Canonical pair like "PURR/USDC" — keep as-is.
                 mapping[idx] = name
+                continue
+            # Non-canonical "@N" — dereference base token.
+            toks = entry.get("tokens") or []
+            if toks and isinstance(toks[0], int):
+                base = token_by_idx.get(toks[0])
+                if base:
+                    mapping[idx] = f"{base}/USDC"
         self._spot_idx_to_name = mapping
 
     async def _normalize_hl_coin(self, hl_coin: str) -> tuple[str, Leg]:
@@ -179,7 +206,7 @@ class HLMarketData:
         Perp coins: plain names like "BTC".
         Spot coins (two HL formats):
           - "UBTC/USDC" — strip slash, map wrapped→underlying via _SPOT_TOKEN_INVERSE.
-          - "@142" — internal asset_id; resolve via spotMeta universe.
+          - "@142" — internal pair index; resolve via spotMeta universe + tokens.
         """
         if hl_coin.startswith("@"):
             try:

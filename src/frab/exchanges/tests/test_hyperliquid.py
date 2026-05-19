@@ -413,12 +413,18 @@ async def test_fetch_user_fills_resolves_at_index_format(mocker):
     """HL also returns spot fills as '@<idx>' — must resolve via spotMeta."""
     mocker.patch.object(hl_mod, "_WAIT", wait_none())
 
+    # HL real format: universe name is "@N" for non-canonical pairs;
+    # base token name lives in tokens[universe[i].tokens[0]].
     spot_meta = {
         "universe": [
-            {"index": 142, "name": "UBTC/USDC", "tokens": [142, 0], "isCanonical": True},
+            {"index": 142, "name": "@142", "tokens": [197, 0], "isCanonical": False},
             {"index": 0, "name": "PURR/USDC", "tokens": [1, 0], "isCanonical": True},
         ],
-        "tokens": [],
+        "tokens": [
+            {"index": 0, "name": "USDC"},
+            {"index": 1, "name": "PURR"},
+            {"index": 197, "name": "UBTC"},
+        ],
     }
     fill = _fill_record("@142", 1_700_000_000_000, "B", "0.00015", "76800.0", "0.00000011", "UBTC", 1, 1)
 
