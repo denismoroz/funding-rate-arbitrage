@@ -10,6 +10,7 @@ from frab.exchanges.paper import PaperExecutor
 from frab.server import (
     MAINNET_SPOT_TOKEN_MAP,
     _build_executor,
+    _build_params_override,
     _hl_info_url,
     _position_mode,
     _select_coins,
@@ -185,3 +186,57 @@ def test_build_executor_live_uses_hl_live_slippage_setting(mocker):
     _build_executor(s, market_data=mocker.MagicMock(), spot_taker_bps=7.0, perp_taker_bps=2.5)
     _, kwargs = mock_live.call_args
     assert kwargs["slippage"] == 0.025
+
+
+# ---------------------------------------------------------------------------
+# _build_params_override — env-driven risk caps for live mode
+# ---------------------------------------------------------------------------
+
+def test_build_params_override_paper_returns_empty_dict():
+    s = Settings(hl_network="paper", _env_file=None)
+    assert _build_params_override(s) == {}
+
+
+def test_build_params_override_live_sets_position_size_and_cap():
+    s = Settings(
+        hl_network="mainnet",
+        hl_private_key="0x" + "a" * 64,
+        hl_account_address="0x" + "b" * 40,
+        hl_position_size_usd=12.0,
+        hl_max_open_positions=1,
+        _env_file=None,
+    )
+    override = _build_params_override(s)
+    assert override["position_size_usdc"] == 12.0
+    assert override["concurrency_cap"] == 1
+
+
+def test_build_params_override_live_preserves_strategy_params_json():
+    s = Settings(
+        hl_network="testnet",
+        hl_private_key="0x" + "a" * 64,
+        hl_account_address="0x" + "b" * 40,
+        hl_position_size_usd=15.0,
+        hl_max_open_positions=2,
+        strategy_params_json='{"entry_threshold": 0.5}',
+        _env_file=None,
+    )
+    override = _build_params_override(s)
+    # User-supplied strategy_params_json values survive…
+    assert override["entry_threshold"] == 0.5
+    # …alongside HL-driven caps.
+    assert override["position_size_usdc"] == 15.0
+    assert override["concurrency_cap"] == 2
+
+
+def test_build_params_override_paper_ignores_hl_caps():
+    """Paper mode should not stamp position_size_usdc / concurrency_cap from HL settings."""
+    s = Settings(
+        hl_network="paper",
+        hl_position_size_usd=99.0,
+        hl_max_open_positions=99,
+        _env_file=None,
+    )
+    override = _build_params_override(s)
+    assert "position_size_usdc" not in override
+    assert "concurrency_cap" not in override

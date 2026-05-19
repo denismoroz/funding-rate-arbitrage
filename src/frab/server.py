@@ -74,6 +74,20 @@ def _position_mode(settings: Settings) -> PositionMode:
     return PositionMode.PAPER if settings.hl_network == "paper" else PositionMode.LIVE
 
 
+def _build_params_override(settings: Settings) -> dict:
+    """Merge strategy_params_json env override with HL-driven risk caps.
+
+    In non-paper modes, position_size_usdc and concurrency_cap come from the
+    env-level risk knobs (FRAB_HL_POSITION_SIZE_USD, FRAB_HL_MAX_OPEN_POSITIONS)
+    rather than from strategy defaults — keeps live caps in one place.
+    """
+    params_override = parse_params_override(settings.strategy_params_json) or {}
+    if settings.hl_network != "paper":
+        params_override["position_size_usdc"] = settings.hl_position_size_usd
+        params_override["concurrency_cap"] = settings.hl_max_open_positions
+    return params_override
+
+
 def _hl_info_url(settings: Settings) -> str:
     """Return the /info endpoint URL for HLMarketData based on network."""
     if settings.hl_network == "testnet":
@@ -139,6 +153,10 @@ async def _ensure_strategy(session_factory, params_json: dict, *, name: str, ver
             )
             s.add(existing)
             await s.flush()
+        else:
+            # Refresh params_json on each start so DB reflects current config
+            # (env-driven coins/sizing/cap can change between runs).
+            existing.params_json = params_json
 
         # Mark this strategy as running.
         existing.status = "running"
@@ -312,9 +330,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
         )
 
         spec = get_strategy_spec(settings.strategy_name)
-        params_override = parse_params_override(settings.strategy_params_json) or {}
-        if settings.hl_network != "paper":
-            params_override["position_size_usdc"] = settings.hl_position_size_usd
+        params_override = _build_params_override(settings)
         strategy, params_json = spec.build(
             coins=resolved_coins,
             params_override=params_override,
