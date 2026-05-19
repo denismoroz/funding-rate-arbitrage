@@ -1,0 +1,72 @@
+import os
+
+import pytest
+from pydantic import ValidationError
+
+from frab.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("FRAB_"):
+            monkeypatch.delenv(k, raising=False)
+
+
+def test_defaults():
+    s = Settings(hl_network="paper", _env_file=None)
+    assert s.hl_network == "paper"
+    assert s.hl_private_key is None
+    assert s.universe_tuple() == ()
+
+
+def test_universe_tuple_parses_csv():
+    s = Settings(hl_universe="purr, hype , btc", _env_file=None)
+    assert s.universe_tuple() == ("PURR", "HYPE", "BTC")
+
+
+def test_universe_tuple_empty():
+    assert Settings(hl_universe="", _env_file=None).universe_tuple() == ()
+    assert Settings(hl_universe="   ", _env_file=None).universe_tuple() == ()
+
+
+def test_testnet_requires_credentials():
+    with pytest.raises(ValidationError):
+        Settings(hl_network="testnet", _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(hl_network="mainnet", _env_file=None)
+
+
+def test_testnet_with_credentials_ok():
+    s = Settings(
+        hl_network="testnet",
+        hl_private_key="0xabc",
+        hl_account_address="0x" + "a" * 40,
+        _env_file=None,
+    )
+    assert s.hl_network == "testnet"
+    assert s.hl_account_address == "0x" + "a" * 40
+
+
+def test_bad_address_rejected():
+    with pytest.raises(ValidationError):
+        Settings(hl_account_address="not-an-address", _env_file=None)
+
+
+def test_secret_not_in_repr():
+    s = Settings(
+        hl_network="testnet",
+        hl_private_key="supersecretkey123",
+        hl_account_address="0x" + "b" * 40,
+        _env_file=None,
+    )
+    assert "supersecretkey123" not in repr(s)
+
+
+def test_env_prefix_applied(monkeypatch):
+    monkeypatch.setenv("FRAB_HL_NETWORK", "testnet")
+    monkeypatch.setenv("FRAB_HL_PRIVATE_KEY", "0xdeadbeef")
+    monkeypatch.setenv("FRAB_HL_ACCOUNT_ADDRESS", "0x" + "c" * 40)
+    s = Settings(_env_file=None)
+    assert s.hl_network == "testnet"
+    assert s.hl_account_address == "0x" + "c" * 40
