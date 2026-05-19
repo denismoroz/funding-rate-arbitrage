@@ -50,14 +50,13 @@ def test_select_coins_returns_settings_universe_when_set():
 # ---------------------------------------------------------------------------
 
 def test_select_spot_token_map_mainnet_has_wrappeds():
-    """Only canonical U-prefixed Unit bridges (1:1 with the perp coin)."""
+    """Only Unit Network bridges with proven 1:1 + liquidity (BTC/ETH/SOL)."""
     m = _select_spot_token_map("mainnet")
     assert m["BTC"] == "UBTC"
     assert m["ETH"] == "UETH"
     assert m["SOL"] == "USOL"
-    assert m["AVAX"] == "UAVAX"
-    # LINK0 / AAVE0 / DOGE intentionally excluded — not 1:1 with the perp.
-    for coin in ("LINK", "AAVE", "DOGE"):
+    # AVAX, LINK, AAVE, DOGE excluded: either no 1:1 bridge or no liquidity.
+    for coin in ("AVAX", "LINK", "AAVE", "DOGE"):
         assert coin not in m
 
 
@@ -383,7 +382,7 @@ _SPOTMETA_HAPPY = {
 async def test_validate_spot_pairs_happy_path(mocker):
     md = mocker.MagicMock()
     md._post = mocker.AsyncMock(return_value=_SPOTMETA_HAPPY)
-    await _validate_spot_pairs(md, ("BTC", "ETH", "SOL", "AVAX"))  # no raise
+    await _validate_spot_pairs(md, ("BTC", "ETH", "SOL"))  # no raise
 
 
 async def test_validate_spot_pairs_missing_map_entry_raises(mocker):
@@ -394,20 +393,25 @@ async def test_validate_spot_pairs_missing_map_entry_raises(mocker):
 
 
 async def test_validate_spot_pairs_base_token_not_on_hl_raises(mocker):
-    """A coin mapped to a wrapped token that HL doesn't list as USDC pair."""
+    """A coin mapped to a wrapped token that HL doesn't list as USDC pair.
+
+    Constructs a malformed map (BTC→UBOGUS) to simulate the case where the
+    server-side MAINNET_SPOT_TOKEN_MAP gets out of sync with HL spotMeta.
+    """
     md = mocker.MagicMock()
-    spotmeta_no_avax = {
+    spotmeta_no_ubtc = {
         "tokens": [
             {"index": 0, "name": "USDC"},
-            {"index": 197, "name": "UBTC"},
+            {"index": 200, "name": "UETH"},
         ],
         "universe": [
-            {"index": 142, "name": "@142", "tokens": [197, 0], "isCanonical": False},
+            {"index": 151, "name": "@151", "tokens": [200, 0], "isCanonical": False},
         ],
     }
-    md._post = mocker.AsyncMock(return_value=spotmeta_no_avax)
+    md._post = mocker.AsyncMock(return_value=spotmeta_no_ubtc)
+    # BTC is in the map (BTC→UBTC) but the spotMeta we mock doesn't include UBTC.
     with pytest.raises(RuntimeError, match="not on HL"):
-        await _validate_spot_pairs(md, ("BTC", "AVAX"))
+        await _validate_spot_pairs(md, ("BTC",))
 
 
 async def test_validate_spot_pairs_missing_usdc_raises(mocker):

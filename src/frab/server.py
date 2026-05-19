@@ -51,20 +51,23 @@ EXCHANGE_NAME = "hyperliquid"
 
 # Wrapped-token map for HL mainnet spot. Used when hl_network == "mainnet".
 #
-# CRITICAL: only "U"-prefixed Unit Network bridges are 1:1 tracked with the
-# HL canonical perp coin (UBTC≈BTC, UETH≈ETH, USOL≈SOL, UAVAX≈AVAX).
-# "X0" tokens (LINK0, AAVE0, etc.) are independent EVM-bridged assets with
-# their OWN price discovery — they do NOT hedge the canonical perp. Using
-# them for the spot leg breaks delta-neutrality (live incident 2026-05-19:
-# LINK0 spot fell to $7 while LINK perp stayed near $9.5 → -$3 loss on a
-# supposedly "hedged" position).
+# CRITICAL: spot leg only safe to use when the wrapped token is BOTH
+#   (a) priced 1:1 with the HL canonical perp coin (real bridge, not separate
+#       price discovery), AND
+#   (b) has enough liquidity that a market order can match within slippage.
 #
-# DOGE intentionally absent (no spot pair on HL mainnet).
+# Live audit 2026-05-19:
+#   UBTC, UETH, USOL — tight spreads, deep books, 1:1 with perp → SAFE.
+#   UAVAX — exists but UAVAX trades $8-9 while AVAX perp ~$13.5 (not 1:1) AND
+#     top-of-book spread is ~9% → market orders fail. EXCLUDED.
+#   LINK0, AAVE0, AVAX0 — HL's EVM bridges, independent price discovery,
+#     break delta-neutrality (LINK0 incident: -$3 on supposedly hedged pos).
+#     EXCLUDED.
+#   DOGE, etc. — no spot pair on HL mainnet at all.
 MAINNET_SPOT_TOKEN_MAP: dict[str, str] = {
-    "BTC":  "UBTC",
-    "ETH":  "UETH",
-    "SOL":  "USOL",
-    "AVAX": "UAVAX",
+    "BTC": "UBTC",
+    "ETH": "UETH",
+    "SOL": "USOL",
 }
 
 
