@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart,
@@ -24,7 +24,7 @@ import {
   type Fill,
   type Position,
 } from "../lib/api";
-import { formatCurrency, formatRelative, formatNumber } from "../lib/format";
+import { formatCurrency, formatCurrencyPrecise, formatQty, formatRelative, formatNumber } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { useLiveEvents, type WsStatus } from "../lib/useLiveEvents";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
@@ -63,8 +63,8 @@ function EquityTooltip({
   return (
     <div className="rounded border border-gray-200 bg-white p-2 text-xs shadow">
       <p className="font-semibold">{formatCurrency(d.total_equity)}</p>
-      <p className="text-green-600">funding: {formatCurrency(d.funding_cum)}</p>
-      <p className="text-red-500">fees: {formatCurrency(d.fees_cum)}</p>
+      <p className="text-green-600">funding: {formatCurrencyPrecise(d.funding_cum)}</p>
+      <p className="text-red-500">fees: {formatCurrencyPrecise(d.fees_cum)}</p>
       <p className="text-gray-400">{new Date(d.ts).toLocaleTimeString()}</p>
     </div>
   );
@@ -182,11 +182,49 @@ function EquityCard() {
 
   const latest = slice.length > 0 ? slice[slice.length - 1] : undefined;
 
+  const { yDecimals, yDomain, chartTitle } = useMemo(() => {
+    if (slice.length === 0) {
+      return { yDecimals: 2, yDomain: ["auto", "auto"] as [string, string], chartTitle: "Equity (last 24h)" };
+    }
+    const values = slice.map((d) => d.total_equity);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const sp = max - min;
+
+    let dec: number;
+    if (sp >= 10) dec = 0;
+    else if (sp >= 1) dec = 2;
+    else if (sp >= 0.01) dec = 3;
+    else dec = 4;
+
+    const domain: [string, string] = sp < 1
+      ? ["dataMin - 0.001", "dataMax + 0.001"]
+      : ["auto", "auto"];
+
+    // Compute time span label
+    const firstTs = new Date(slice[0].ts).getTime();
+    const lastTs = new Date(slice[slice.length - 1].ts).getTime();
+    const spanMs = lastTs - firstTs;
+    const spanHours = spanMs / (1000 * 60 * 60);
+    const spanMinutes = spanMs / (1000 * 60);
+    let title: string;
+    if (spanHours >= 23) {
+      title = "Equity (last 24h)";
+    } else if (spanHours >= 1) {
+      title = `Equity (last ${Math.floor(spanHours)}h)`;
+    } else {
+      const mins = Math.floor(spanMinutes / 5) * 5 || Math.floor(spanMinutes);
+      title = `Equity (last ${mins}m)`;
+    }
+
+    return { yDecimals: dec, yDomain: domain, chartTitle: title };
+  }, [slice]);
+
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold text-gray-700">
-          Equity (last 24h)
+          {chartTitle}
         </h2>
         {latest && (
           <div className="flex items-baseline gap-3 text-xs text-gray-500">
@@ -197,10 +235,10 @@ function EquityCard() {
               </span>
             </span>
             <span className="text-green-600">
-              funding {formatCurrency(latest.funding_cum)}
+              funding {formatCurrencyPrecise(latest.funding_cum)}
             </span>
             <span className="text-red-500">
-              fees {formatCurrency(latest.fees_cum)}
+              fees {formatCurrencyPrecise(latest.fees_cum)}
             </span>
           </div>
         )}
@@ -223,10 +261,11 @@ function EquityCard() {
               minTickGap={60}
             />
             <YAxis
-              domain={["auto", "auto"]}
-              tickFormatter={(v: number) =>
-                Math.abs(v) >= 1000 ? `$${(v / 1000).toFixed(2)}k` : `$${v.toFixed(0)}`
-              }
+              domain={yDomain}
+              tickFormatter={(v: number) => {
+                if (Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(2)}k`;
+                return `$${v.toFixed(yDecimals)}`;
+              }}
               tick={{ fontSize: 11 }}
               width={70}
             />
@@ -522,10 +561,10 @@ function OpenPositions() {
                         : "text-red-500"
                     }`}
                   >
-                    {formatCurrency(p.funding_collected)}
+                    {formatCurrencyPrecise(p.funding_collected)}
                   </td>
                   <td className="py-1 pr-3 text-right text-red-500">
-                    {formatCurrency(p.fees_paid)}
+                    {formatCurrencyPrecise(p.fees_paid)}
                   </td>
                   <td className="py-1 pr-3 text-right text-red-500">
                     {p.slippage_cost !== null ? formatCurrency(p.slippage_cost) : "—"}
@@ -693,13 +732,13 @@ function RecentFills() {
                     {f.side}
                   </td>
                   <td className="py-1 pr-3 text-right font-mono">
-                    {formatNumber(f.qty, 4)}
+                    {formatQty(f.qty)}
                   </td>
                   <td className="py-1 pr-3 text-right">
                     {formatCurrency(f.price)}
                   </td>
                   <td className="py-1 text-right text-red-400">
-                    {formatCurrency(f.fee)}
+                    {formatCurrencyPrecise(f.fee)}
                   </td>
                 </tr>
               ))}
