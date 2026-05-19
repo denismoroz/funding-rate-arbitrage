@@ -17,6 +17,7 @@ from frab.server import (
     _position_mode,
     _select_coins,
     _select_spot_token_map,
+    _validate_spot_pairs,
 )
 from frab.settings import Settings
 
@@ -49,14 +50,15 @@ def test_select_coins_returns_settings_universe_when_set():
 # ---------------------------------------------------------------------------
 
 def test_select_spot_token_map_mainnet_has_wrappeds():
+    """Only canonical U-prefixed Unit bridges (1:1 with the perp coin)."""
     m = _select_spot_token_map("mainnet")
     assert m["BTC"] == "UBTC"
     assert m["ETH"] == "UETH"
     assert m["SOL"] == "USOL"
-    assert m["AVAX"] == "AVAX0"
-    assert m["LINK"] == "LINK0"
-    assert m["AAVE"] == "AAVE0"
-    assert "DOGE" not in m
+    assert m["AVAX"] == "UAVAX"
+    # LINK0 / AAVE0 / DOGE intentionally excluded — not 1:1 with the perp.
+    for coin in ("LINK", "AAVE", "DOGE"):
+        assert coin not in m
 
 
 def test_select_spot_token_map_testnet_empty():
@@ -353,3 +355,63 @@ def test_build_fee_reconciler_strategy_defaults_to_none(mocker):
     assert isinstance(result, FeeReconciler)
     assert result._strategy is None
     assert result._strategy_id is None
+
+
+# ---------------------------------------------------------------------------
+# _validate_spot_pairs
+# ---------------------------------------------------------------------------
+
+_SPOTMETA_HAPPY = {
+    "tokens": [
+        {"index": 0, "name": "USDC"},
+        {"index": 197, "name": "UBTC"},
+        {"index": 200, "name": "UETH"},
+        {"index": 210, "name": "USOL"},
+        {"index": 220, "name": "UAVAX"},
+        {"index": 99, "name": "LINK0"},
+    ],
+    "universe": [
+        {"index": 142, "name": "@142", "tokens": [197, 0], "isCanonical": False},
+        {"index": 151, "name": "@151", "tokens": [200, 0], "isCanonical": False},
+        {"index": 156, "name": "@156", "tokens": [210, 0], "isCanonical": False},
+        {"index": 306, "name": "@306", "tokens": [220, 0], "isCanonical": False},
+        {"index": 213, "name": "@213", "tokens": [99, 0], "isCanonical": False},
+    ],
+}
+
+
+async def test_validate_spot_pairs_happy_path(mocker):
+    md = mocker.MagicMock()
+    md._post = mocker.AsyncMock(return_value=_SPOTMETA_HAPPY)
+    await _validate_spot_pairs(md, ("BTC", "ETH", "SOL", "AVAX"))  # no raise
+
+
+async def test_validate_spot_pairs_missing_map_entry_raises(mocker):
+    md = mocker.MagicMock()
+    md._post = mocker.AsyncMock(return_value=_SPOTMETA_HAPPY)
+    with pytest.raises(RuntimeError, match="no map entry"):
+        await _validate_spot_pairs(md, ("BTC", "DOGE"))
+
+
+async def test_validate_spot_pairs_base_token_not_on_hl_raises(mocker):
+    """A coin mapped to a wrapped token that HL doesn't list as USDC pair."""
+    md = mocker.MagicMock()
+    spotmeta_no_avax = {
+        "tokens": [
+            {"index": 0, "name": "USDC"},
+            {"index": 197, "name": "UBTC"},
+        ],
+        "universe": [
+            {"index": 142, "name": "@142", "tokens": [197, 0], "isCanonical": False},
+        ],
+    }
+    md._post = mocker.AsyncMock(return_value=spotmeta_no_avax)
+    with pytest.raises(RuntimeError, match="not on HL"):
+        await _validate_spot_pairs(md, ("BTC", "AVAX"))
+
+
+async def test_validate_spot_pairs_missing_usdc_raises(mocker):
+    md = mocker.MagicMock()
+    md._post = mocker.AsyncMock(return_value={"tokens": [], "universe": []})
+    with pytest.raises(RuntimeError, match="USDC token not found"):
+        await _validate_spot_pairs(md, ("BTC",))

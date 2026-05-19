@@ -50,14 +50,21 @@ DEFAULT_COINS: tuple[str, ...] = ("BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "
 EXCHANGE_NAME = "hyperliquid"
 
 # Wrapped-token map for HL mainnet spot. Used when hl_network == "mainnet".
+#
+# CRITICAL: only "U"-prefixed Unit Network bridges are 1:1 tracked with the
+# HL canonical perp coin (UBTC≈BTC, UETH≈ETH, USOL≈SOL, UAVAX≈AVAX).
+# "X0" tokens (LINK0, AAVE0, etc.) are independent EVM-bridged assets with
+# their OWN price discovery — they do NOT hedge the canonical perp. Using
+# them for the spot leg breaks delta-neutrality (live incident 2026-05-19:
+# LINK0 spot fell to $7 while LINK perp stayed near $9.5 → -$3 loss on a
+# supposedly "hedged" position).
+#
 # DOGE intentionally absent (no spot pair on HL mainnet).
 MAINNET_SPOT_TOKEN_MAP: dict[str, str] = {
     "BTC":  "UBTC",
     "ETH":  "UETH",
     "SOL":  "USOL",
-    "AVAX": "AVAX0",
-    "LINK": "LINK0",
-    "AAVE": "AAVE0",
+    "AVAX": "UAVAX",
 }
 
 
@@ -70,6 +77,47 @@ def _select_coins(settings: Settings, default: tuple[str, ...]) -> tuple[str, ..
 def _select_spot_token_map(network: str) -> dict[str, str]:
     """Spot base-token map; only mainnet uses wrapped names."""
     return MAINNET_SPOT_TOKEN_MAP if network == "mainnet" else {}
+
+
+async def _validate_spot_pairs(market_data, coins: tuple[str, ...]) -> None:
+    """Verify every coin's spot/USDC pair exists on HL with the expected base token.
+
+    Fail-fast at engine startup if MAINNET_SPOT_TOKEN_MAP entry doesn't resolve
+    to a real HL spot pair quoted in USDC. Prevents accidentally trading the
+    canonical perp against a non-1:1 wrapped token (breaks delta-neutrality).
+    """
+    meta = await market_data._post({"type": "spotMeta"})
+    tokens = {t["index"]: t.get("name", "") for t in meta.get("tokens", []) if isinstance(t.get("index"), int)}
+    usdc_idx: int | None = next((i for i, n in tokens.items() if n == "USDC"), None)
+    if usdc_idx is None:
+        raise RuntimeError("HL spotMeta: USDC token not found")
+
+    # Build {base_token_name: pair_universe_name} for USDC-quoted pairs.
+    base_to_pair: dict[str, str] = {}
+    for u in meta.get("universe", []):
+        toks = u.get("tokens") or []
+        if len(toks) != 2 or toks[1] != usdc_idx:
+            continue
+        base_name = tokens.get(toks[0])
+        if base_name:
+            base_to_pair[base_name] = u.get("name", "")
+
+    missing: list[str] = []
+    mismatched: list[str] = []
+    for coin in coins:
+        expected_base = MAINNET_SPOT_TOKEN_MAP.get(coin)
+        if expected_base is None:
+            missing.append(f"{coin} (no map entry)")
+            continue
+        if expected_base not in base_to_pair:
+            mismatched.append(f"{coin} → {expected_base}/USDC (not on HL)")
+
+    if missing or mismatched:
+        raise RuntimeError(
+            "Spot-pair validation failed for HL mainnet. "
+            f"missing_map: {missing}; not_on_hl: {mismatched}. "
+            "Either remove these coins from the universe or fix MAINNET_SPOT_TOKEN_MAP."
+        )
 
 
 def _position_mode(settings: Settings) -> PositionMode:
@@ -362,6 +410,13 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             api_url=_hl_info_url(settings),
             timeout_s=settings.hl_request_timeout_s,
         )
+
+        # Validate spot pairs on mainnet: every coin in the universe must have a
+        # spot/USDC pair on HL whose base token matches MAINNET_SPOT_TOKEN_MAP.
+        # Prevents trading the canonical perp against an unrelated wrapped token
+        # (e.g. "LINK" perp vs "LINK0/USDC" spot — not 1:1, broke hedge once).
+        if settings.hl_network == "mainnet":
+            await _validate_spot_pairs(market_data, resolved_coins)
         executor = _build_executor(
             settings,
             market_data=market_data,
