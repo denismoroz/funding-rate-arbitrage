@@ -130,6 +130,8 @@ def _build_fee_reconciler(
     session_factory,
     market_data,
     bus: EventBus,
+    strategy: "StrategyBase | None" = None,
+    strategy_id: int | None = None,
 ) -> "FeeReconciler | None":
     """Return a FeeReconciler for live mode, None for paper mode."""
     if settings.hl_network == "paper":
@@ -139,6 +141,8 @@ def _build_fee_reconciler(
         market_data=market_data,
         user_address=settings.hl_account_address,
         bus=bus,
+        strategy=strategy,
+        strategy_id=strategy_id,
     )
 
 
@@ -382,6 +386,8 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             session_factory=session_factory,
             market_data=market_data,
             bus=bus,
+            strategy=strategy,
+            strategy_id=strategy_id,
         )
 
         engine = Engine(

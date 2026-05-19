@@ -99,6 +99,10 @@ class TwoPhaseDynamic(Strategy):
     def fees_cum(self) -> float:
         return self._fees_cum
 
+    def set_fees_cum(self, value: float) -> None:
+        """Replace the running fees counter with the DB-authoritative total."""
+        self._fees_cum = value
+
     def open_positions(self) -> list[str]:
         return list(self._positions.keys())
 

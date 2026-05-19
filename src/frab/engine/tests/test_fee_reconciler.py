@@ -483,3 +483,93 @@ async def test_empty_hl_fills_succeeds(session_factory, mocker):
         skipped_already_set=0,
         unmatched_hl=0,
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 8: strategy sync-back — set_fees_cum called with DB total after match
+# ---------------------------------------------------------------------------
+
+
+async def test_strategy_fees_cum_updated_after_reconcile(session_factory, mocker):
+    """FeeReconciler with strategy + strategy_id calls set_fees_cum with the DB SUM."""
+    bus = EventBus()
+
+    _, btc_market_id, strat_id = await _seed_base(session_factory, coin="BTC")
+
+    fill_ts = _T0
+    await _seed_position_and_fill(
+        session_factory,
+        market_id=btc_market_id,
+        strategy_id=strat_id,
+        fill_ts=fill_ts,
+        fill_leg=Leg.PERP,
+        fill_side=Side.SELL,
+        fill_qty=0.01,
+        fill_price=50000.0,
+        fill_fee=0.0,
+    )
+
+    hl_fills = [
+        _hl_fill("BTC", fill_ts, Leg.PERP, Side.SELL, 0.01, fee=5.0, fee_token="USDC"),
+    ]
+
+    md = mocker.AsyncMock()
+    md.fetch_user_fills.return_value = hl_fills
+
+    mock_strategy = mocker.MagicMock()
+    reconciler = FeeReconciler(
+        session_factory=session_factory,
+        market_data=md,
+        user_address="0xABCD",
+        bus=bus,
+        lookback_hours=24,
+        clock_fn=lambda: _NOW,
+        strategy=mock_strategy,
+        strategy_id=strat_id,
+    )
+
+    report = await reconciler.run_once()
+
+    assert report.matched == 1
+    mock_strategy.set_fees_cum.assert_called_once_with(5.0)
+
+
+# ---------------------------------------------------------------------------
+# Test 9: backwards-compat — no strategy/strategy_id, no error, no setter call
+# ---------------------------------------------------------------------------
+
+
+async def test_no_strategy_no_setter_call(session_factory, mocker):
+    """FeeReconciler without strategy/strategy_id still works; set_fees_cum never called."""
+    bus = EventBus()
+
+    _, btc_market_id, strat_id = await _seed_base(session_factory, coin="BTC")
+
+    fill_ts = _T0
+    await _seed_position_and_fill(
+        session_factory,
+        market_id=btc_market_id,
+        strategy_id=strat_id,
+        fill_ts=fill_ts,
+        fill_leg=Leg.PERP,
+        fill_side=Side.SELL,
+        fill_qty=0.01,
+        fill_price=50000.0,
+        fill_fee=0.0,
+    )
+
+    hl_fills = [
+        _hl_fill("BTC", fill_ts, Leg.PERP, Side.SELL, 0.01, fee=5.0, fee_token="USDC"),
+    ]
+
+    md = mocker.AsyncMock()
+    md.fetch_user_fills.return_value = hl_fills
+
+    # Use the existing helper which passes neither strategy nor strategy_id
+    reconciler = _make_reconciler(session_factory, md, bus)
+    report = await reconciler.run_once()
+
+    assert report.matched == 1
+    # No AttributeError — reconciler has no strategy to call
+    assert reconciler._strategy is None
+    assert reconciler._strategy_id is None

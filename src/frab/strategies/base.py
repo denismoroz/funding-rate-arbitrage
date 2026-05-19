@@ -73,3 +73,7 @@ class Strategy(ABC):
     @abstractmethod
     def compute_equity(self, now: datetime) -> EquitySnapshot:
         ...  # pragma: no cover
+
+    def set_fees_cum(self, value: float) -> None:
+        """Replace the running fees counter with the DB-authoritative total."""
+        self._fees_cum = value  # type: ignore[attr-defined]

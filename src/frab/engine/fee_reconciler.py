@@ -19,6 +19,7 @@ from frab.db.models import Fill, Market, Position
 from frab.db.session import session_scope
 from frab.events.bus import Event, EventBus
 from frab.exchanges.base import UserFill
+from frab.strategies.base import Strategy
 
 logger = structlog.get_logger(__name__)
 
@@ -72,6 +73,8 @@ class FeeReconciler:
         bus: EventBus,
         lookback_hours: int = 24,
         clock_fn: Callable[[], datetime] | None = None,
+        strategy: Strategy | None = None,
+        strategy_id: int | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._market_data = market_data
@@ -79,6 +82,8 @@ class FeeReconciler:
         self._bus = bus
         self._lookback_hours = lookback_hours
         self._clock_fn = clock_fn if clock_fn is not None else (lambda: datetime.now(UTC))
+        self._strategy = strategy
+        self._strategy_id = strategy_id
 
     def _fee_usdc(self, hl_fill: UserFill) -> float:
         """Return fee in USDC.
@@ -205,6 +210,16 @@ class FeeReconciler:
                     .where(Position.id == pos_id)
                     .values(fees_paid=total_fees)
                 )
+
+            # Sync strategy's running fees counter from DB authoritative SUM
+            # so the next equity snapshot picks up reconciled fees.
+            if self._strategy is not None and self._strategy_id is not None:
+                sum_stmt = (
+                    select(func.sum(Position.fees_paid))
+                    .where(Position.strategy_id == self._strategy_id)
+                )
+                total = (await session.execute(sum_stmt)).scalar() or 0.0
+                self._strategy.set_fees_cum(float(total))
 
         report = ReconcileMatchReport(
             candidates_seen=len(hl_fills),
