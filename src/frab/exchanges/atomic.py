@@ -1,27 +1,41 @@
-"""AtomicExecutor: bounded retry + hedge-first paired open/close.
+"""AtomicExecutor: bounded retry + spot-first paired open/close.
 
-Hedge-first rationale
----------------------
-In a cash-and-carry / funding-rate-arbitrage strategy the perp short is the
-*hedge*: it is the leg whose P&L offsets spot price movement.  Opening the
-spot first leaves us temporarily long without a hedge — any adverse price move
-during the window between legs increases risk. Opening the perp short first
-means that, in the worst case (spot leg fails to fill), we are left holding a
-*defined* hedge position rather than a naked long.  The same logic applies on
-close: covering the perp first means, if the spot-sell leg fails, we are left
-holding spot (which is always fungible and can be unwound separately), never a
-naked short.
+Spot-first rationale
+--------------------
+Hyperliquid spot BUYs pay the taker fee in the bought asset (e.g. a BUY of
+UBTC/USDC pays fee in UBTC, not USDC). The on-chain delta is therefore
+``totalSz - fee_in_asset``, smaller than the requested order size. Hedging
+a spot leg using the requested-size figure leaves a residual unhedged
+asset balance and breaks the symmetric-leg invariant: when the strategy
+later tries to close with the requested-size, HL caps the sell to the
+actual balance and the executor sees that as a partial fill.
+
+By executing the spot leg first and reading back the actual balance delta
+via ``executor.get_position`` snapshots, the perp leg is sized to the
+*real* spot fill — both legs end up perfectly matched and close-time
+partials disappear.
+
+We give up the hedge-first protection (a defined perp hedge if the second
+leg fails) in exchange for correct qty accounting. At $10-$50 position
+sizes the 0.5s price-move risk during the leg window is sub-cent and
+strictly dominated by the partial-close-fail cost. For larger sizes this
+trade-off should be revisited.
+
+Idempotency replay is NOT implemented here. The DB-level UNIQUE constraint
+on ``fills.client_ref`` (added in migration f4c1d9e2a7b3) guarantees that
+a duplicate fill record cannot be persisted; recovery from a duplicated
+submit (e.g. after an engine crash mid-write) is the reconcile path's job.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Awaitable, Callable, Literal
 
 from frab.events.bus import Event, EventBus
-from frab.exchanges.base import Executor, FillReport, Leg, OrderRequest, Side
+from frab.exchanges.base import Executor, FillReport, Leg, OrderRequest, PositionState, Side
 
 logger = logging.getLogger(__name__)
 
@@ -90,14 +104,11 @@ class _SubmitOutcome:
 
 
 class AtomicExecutor:
-    """Wraps an underlying Executor with bounded retry + hedge-first paired ops.
+    """Wraps an underlying Executor with bounded retry + spot-first paired ops.
 
-    Hedge-first principle (rationale in module docstring):
-      - On open: perp short first, then spot buy.
-      - On close: perp cover first, then spot sell.
-      - Either way, the spot leg is always second. If anything fails after the
-        first leg fills, we are stuck holding a perp position (a defined hedge),
-        never a naked spot long.
+    Spot-first principle (rationale in module docstring):
+      - On open: spot buy first, then perp short sized to actual spot delta.
+      - On close: spot sell first, then perp cover sized to actual spot delta.
 
     Idempotency replay is NOT implemented here. The DB-level UNIQUE constraint
     on ``fills.client_ref`` (added in migration f4c1d9e2a7b3) guarantees that a
@@ -197,6 +208,16 @@ class AtomicExecutor:
             final_exc=errs[-1],
         )
 
+    async def _observe_spot_delta(self, coin: str, snap_before: PositionState | None) -> float:
+        """Snapshot spot balance after a fill and return delta vs snap_before.
+
+        Used to size the second (perp) leg to the actual spot fill.
+        """
+        snap_after = await self._underlying.get_position(coin)
+        spot_after = snap_after.spot_units if snap_after is not None else 0.0
+        spot_before = snap_before.spot_units if snap_before is not None else 0.0
+        return spot_after - spot_before
+
     # ------------------------------------------------------------------
     # Core retry logic
     # ------------------------------------------------------------------
@@ -286,81 +307,28 @@ class AtomicExecutor:
         perp_req: OrderRequest,
         spot_req: OrderRequest,
     ) -> PairedOpenResult:
-        """Open hedge-first: perp short, then spot buy.
+        """Open spot-first: spot buy, then perp short sized to the actual spot delta.
 
         Preconditions (validate; raise ValueError):
           - perp_req.leg == Leg.PERP and perp_req.side == Side.SELL
           - spot_req.leg == Leg.SPOT and spot_req.side == Side.BUY
           - perp_req.coin == spot_req.coin
-
-        Flow:
-          1. Try perp via submit_with_retry.  If it fails, publish
-             ``paired_open_failed`` and return without attempting spot.
-          2. Perp succeeded → try spot.  If it fails, publish
-             ``paired_open_failed`` mentioning "after perp filled" and return.
-          3. Both succeeded → status="ok".
         """
         self._validate_open_reqs(perp_req, spot_req)
         coin = perp_req.coin
 
-        # --- Leg 1: perp short ---
-        perp_outcome = await self._submit_counting(perp_req)
-        perp_attempts = perp_outcome.attempts
-        all_errors: list[str] = [repr(e) for e in perp_outcome.errors]
-
-        if perp_outcome.final_exc is not None:
-            exc = perp_outcome.final_exc
-            # Publish retry_exhausted if transient exhaustion
-            exhausted = perp_attempts == self._max_attempts and all(
-                self._is_transient(e) for e in perp_outcome.errors
-            )
-            if exhausted:
-                await self._bus.publish(
-                    self._make_event(
-                        level="ERROR",
-                        kind="retry_exhausted",
-                        message=f"submit failed after {perp_attempts} attempts: {repr(exc)}",
-                        payload_json={
-                            "coin": coin,
-                            "leg": perp_req.leg.value,
-                            "side": perp_req.side.value,
-                            "client_ref": perp_req.client_ref,
-                            "attempts": perp_attempts,
-                            "errors": [repr(e) for e in perp_outcome.errors],
-                        },
-                    )
-                )
-            await self._bus.publish(
-                self._make_event(
-                    level="ERROR",
-                    kind="paired_open_failed",
-                    message="perp leg failed",
-                    payload_json={"coin": coin, "error": repr(exc)},
-                )
-            )
-            return PairedOpenResult(
-                status="failed",
-                perp_fill=None,
-                spot_fill=None,
-                perp_attempts=perp_attempts,
-                spot_attempts=0,
-                errors=tuple(all_errors),
-            )
-
-        perp_fill = perp_outcome.fill
-
-        # --- Leg 2: spot buy ---
+        # --- Leg 1: spot buy ---
+        snap_before = await self._underlying.get_position(coin)
         spot_outcome = await self._submit_counting(spot_req)
         spot_attempts = spot_outcome.attempts
-        all_errors.extend(repr(e) for e in spot_outcome.errors)
+        all_errors: list[str] = [repr(e) for e in spot_outcome.errors]
 
         if spot_outcome.final_exc is not None:
             exc = spot_outcome.final_exc
-            # Publish retry_exhausted if transient exhaustion
-            spot_exhausted = spot_attempts == self._max_attempts and all(
+            exhausted = spot_attempts == self._max_attempts and all(
                 self._is_transient(e) for e in spot_outcome.errors
             )
-            if spot_exhausted:
+            if exhausted:
                 await self._bus.publish(
                     self._make_event(
                         level="ERROR",
@@ -380,18 +348,91 @@ class AtomicExecutor:
                 self._make_event(
                     level="ERROR",
                     kind="paired_open_failed",
-                    message="spot leg failed after perp filled",
+                    message="spot leg failed",
+                    payload_json={"coin": coin, "error": repr(exc)},
+                )
+            )
+            return PairedOpenResult(
+                status="failed",
+                perp_fill=None,
+                spot_fill=None,
+                perp_attempts=0,
+                spot_attempts=spot_attempts,
+                errors=tuple(all_errors),
+            )
+
+        # Observe actual spot delta (accounts for asset-denominated fees on HL)
+        spot_delta = await self._observe_spot_delta(coin, snap_before)
+
+        if abs(spot_delta) < 1e-12:
+            logger.warning(
+                "open_paired: spot fill observed zero delta for %s (snap_before=%s)",
+                coin, snap_before,
+            )
+            await self._bus.publish(
+                self._make_event(
+                    level="ERROR",
+                    kind="paired_open_failed",
+                    message="spot fill observed zero delta",
+                    payload_json={"coin": coin},
+                )
+            )
+            return PairedOpenResult(
+                status="failed",
+                perp_fill=None,
+                spot_fill=None,
+                perp_attempts=0,
+                spot_attempts=spot_attempts,
+                errors=tuple(all_errors),
+            )
+
+        # Adjust spot fill qty to actual on-chain delta
+        adjusted_spot_fill = replace(spot_outcome.fill, qty=spot_delta)
+
+        # --- Leg 2: perp short sized to actual spot delta ---
+        effective_perp_req = replace(perp_req, qty=abs(spot_delta))
+        perp_outcome = await self._submit_counting(effective_perp_req)
+        perp_attempts = perp_outcome.attempts
+        all_errors.extend(repr(e) for e in perp_outcome.errors)
+
+        if perp_outcome.final_exc is not None:
+            exc = perp_outcome.final_exc
+            perp_exhausted = perp_attempts == self._max_attempts and all(
+                self._is_transient(e) for e in perp_outcome.errors
+            )
+            if perp_exhausted:
+                await self._bus.publish(
+                    self._make_event(
+                        level="ERROR",
+                        kind="retry_exhausted",
+                        message=f"submit failed after {perp_attempts} attempts: {repr(exc)}",
+                        payload_json={
+                            "coin": coin,
+                            "leg": perp_req.leg.value,
+                            "side": perp_req.side.value,
+                            "client_ref": perp_req.client_ref,
+                            "attempts": perp_attempts,
+                            "errors": [repr(e) for e in perp_outcome.errors],
+                        },
+                    )
+                )
+            await self._bus.publish(
+                self._make_event(
+                    level="ERROR",
+                    kind="paired_open_failed",
+                    message=f"perp leg failed after spot filled (spot_delta={spot_delta})",
                     payload_json={
                         "coin": coin,
-                        "perp_client_ref": perp_req.client_ref,
+                        "spot_client_ref": spot_req.client_ref,
+                        "spot_delta": spot_delta,
                         "error": repr(exc),
                     },
                 )
             )
             return PairedOpenResult(
                 status="failed",
-                perp_fill=perp_fill,
-                spot_fill=None,
+                perp_fill=None,
+                spot_fill=adjusted_spot_fill,
                 perp_attempts=perp_attempts,
                 spot_attempts=spot_attempts,
                 errors=tuple(all_errors),
@@ -399,8 +440,8 @@ class AtomicExecutor:
 
         return PairedOpenResult(
             status="ok",
-            perp_fill=perp_fill,
-            spot_fill=spot_outcome.fill,
+            perp_fill=perp_outcome.fill,
+            spot_fill=adjusted_spot_fill,
             perp_attempts=perp_attempts,
             spot_attempts=spot_attempts,
             errors=(),
@@ -411,74 +452,28 @@ class AtomicExecutor:
         perp_req: OrderRequest,
         spot_req: OrderRequest,
     ) -> PairedCloseResult:
-        """Close hedge-first: perp cover (BUY), then spot sell.
+        """Close spot-first: spot sell, then perp cover (BUY) sized to actual spot delta.
 
         Preconditions:
           - perp_req.leg == Leg.PERP and perp_req.side == Side.BUY
           - spot_req.leg == Leg.SPOT and spot_req.side == Side.SELL
           - perp_req.coin == spot_req.coin
-
-        Same flow as open_paired, but with event kind="paired_close_failed" on failure.
         """
         self._validate_close_reqs(perp_req, spot_req)
         coin = perp_req.coin
 
-        # --- Leg 1: perp cover ---
-        perp_outcome = await self._submit_counting(perp_req)
-        perp_attempts = perp_outcome.attempts
-        all_errors: list[str] = [repr(e) for e in perp_outcome.errors]
-
-        if perp_outcome.final_exc is not None:
-            exc = perp_outcome.final_exc
-            exhausted = perp_attempts == self._max_attempts and all(
-                self._is_transient(e) for e in perp_outcome.errors
-            )
-            if exhausted:
-                await self._bus.publish(
-                    self._make_event(
-                        level="ERROR",
-                        kind="retry_exhausted",
-                        message=f"submit failed after {perp_attempts} attempts: {repr(exc)}",
-                        payload_json={
-                            "coin": coin,
-                            "leg": perp_req.leg.value,
-                            "side": perp_req.side.value,
-                            "client_ref": perp_req.client_ref,
-                            "attempts": perp_attempts,
-                            "errors": [repr(e) for e in perp_outcome.errors],
-                        },
-                    )
-                )
-            await self._bus.publish(
-                self._make_event(
-                    level="ERROR",
-                    kind="paired_close_failed",
-                    message="perp leg failed",
-                    payload_json={"coin": coin, "error": repr(exc)},
-                )
-            )
-            return PairedCloseResult(
-                status="failed",
-                perp_fill=None,
-                spot_fill=None,
-                perp_attempts=perp_attempts,
-                spot_attempts=0,
-                errors=tuple(all_errors),
-            )
-
-        perp_fill = perp_outcome.fill
-
-        # --- Leg 2: spot sell ---
+        # --- Leg 1: spot sell ---
+        snap_before = await self._underlying.get_position(coin)
         spot_outcome = await self._submit_counting(spot_req)
         spot_attempts = spot_outcome.attempts
-        all_errors.extend(repr(e) for e in spot_outcome.errors)
+        all_errors: list[str] = [repr(e) for e in spot_outcome.errors]
 
         if spot_outcome.final_exc is not None:
             exc = spot_outcome.final_exc
-            spot_exhausted = spot_attempts == self._max_attempts and all(
+            exhausted = spot_attempts == self._max_attempts and all(
                 self._is_transient(e) for e in spot_outcome.errors
             )
-            if spot_exhausted:
+            if exhausted:
                 await self._bus.publish(
                     self._make_event(
                         level="ERROR",
@@ -498,18 +493,91 @@ class AtomicExecutor:
                 self._make_event(
                     level="ERROR",
                     kind="paired_close_failed",
-                    message="spot leg failed after perp covered",
+                    message="spot leg failed",
+                    payload_json={"coin": coin, "error": repr(exc)},
+                )
+            )
+            return PairedCloseResult(
+                status="failed",
+                perp_fill=None,
+                spot_fill=None,
+                perp_attempts=0,
+                spot_attempts=spot_attempts,
+                errors=tuple(all_errors),
+            )
+
+        # Observe actual spot delta (negative: spot decreased on sell)
+        spot_delta = await self._observe_spot_delta(coin, snap_before)
+        abs_delta = abs(spot_delta)
+
+        if abs_delta < 1e-12:
+            logger.warning(
+                "close_paired: spot sell observed zero delta for %s (snap_before=%s)",
+                coin, snap_before,
+            )
+            await self._bus.publish(
+                self._make_event(
+                    level="ERROR",
+                    kind="paired_close_failed",
+                    message="spot fill observed zero delta",
+                    payload_json={"coin": coin},
+                )
+            )
+            return PairedCloseResult(
+                status="failed",
+                perp_fill=None,
+                spot_fill=None,
+                perp_attempts=0,
+                spot_attempts=spot_attempts,
+                errors=tuple(all_errors),
+            )
+
+        adjusted_spot_fill = replace(spot_outcome.fill, qty=abs_delta)
+
+        # --- Leg 2: perp cover sized to actual spot delta ---
+        effective_perp_req = replace(perp_req, qty=abs_delta)
+        perp_outcome = await self._submit_counting(effective_perp_req)
+        perp_attempts = perp_outcome.attempts
+        all_errors.extend(repr(e) for e in perp_outcome.errors)
+
+        if perp_outcome.final_exc is not None:
+            exc = perp_outcome.final_exc
+            perp_exhausted = perp_attempts == self._max_attempts and all(
+                self._is_transient(e) for e in perp_outcome.errors
+            )
+            if perp_exhausted:
+                await self._bus.publish(
+                    self._make_event(
+                        level="ERROR",
+                        kind="retry_exhausted",
+                        message=f"submit failed after {perp_attempts} attempts: {repr(exc)}",
+                        payload_json={
+                            "coin": coin,
+                            "leg": perp_req.leg.value,
+                            "side": perp_req.side.value,
+                            "client_ref": perp_req.client_ref,
+                            "attempts": perp_attempts,
+                            "errors": [repr(e) for e in perp_outcome.errors],
+                        },
+                    )
+                )
+            await self._bus.publish(
+                self._make_event(
+                    level="ERROR",
+                    kind="paired_close_failed",
+                    message=f"perp leg failed after spot sold (spot_delta={spot_delta})",
                     payload_json={
                         "coin": coin,
-                        "perp_client_ref": perp_req.client_ref,
+                        "spot_client_ref": spot_req.client_ref,
+                        "spot_delta": spot_delta,
                         "error": repr(exc),
                     },
                 )
             )
             return PairedCloseResult(
                 status="failed",
-                perp_fill=perp_fill,
-                spot_fill=None,
+                perp_fill=None,
+                spot_fill=adjusted_spot_fill,
                 perp_attempts=perp_attempts,
                 spot_attempts=spot_attempts,
                 errors=tuple(all_errors),
@@ -517,8 +585,8 @@ class AtomicExecutor:
 
         return PairedCloseResult(
             status="ok",
-            perp_fill=perp_fill,
-            spot_fill=spot_outcome.fill,
+            perp_fill=perp_outcome.fill,
+            spot_fill=adjusted_spot_fill,
             perp_attempts=perp_attempts,
             spot_attempts=spot_attempts,
             errors=(),

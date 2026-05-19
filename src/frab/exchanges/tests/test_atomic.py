@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -14,7 +15,7 @@ from frab.exchanges.atomic import (
     PairedOpenResult,
     default_is_transient,
 )
-from frab.exchanges.base import FillReport, Leg, OrderRequest, Side
+from frab.exchanges.base import FillReport, Leg, OrderRequest, PositionState, Side
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -34,6 +35,7 @@ def _make_fill(
     coin: str = _COIN,
     leg: Leg = Leg.PERP,
     side: Side = Side.SELL,
+    qty: float = 1.0,
     client_ref: str | None = None,
 ) -> FillReport:
     return FillReport(
@@ -41,7 +43,7 @@ def _make_fill(
         leg=leg,
         side=side,
         ts=_FIXED_DT,
-        qty=1.0,
+        qty=qty,
         price=50_000.0,
         fee=0.5,
         slippage_bps=2.0,
@@ -50,24 +52,34 @@ def _make_fill(
     )
 
 
-def _perp_open_req(coin: str = _COIN, client_ref: str | None = "perp-ref") -> OrderRequest:
+def _make_pos(coin: str = _COIN, spot_units: float = 0.0) -> PositionState:
+    return PositionState(
+        coin=coin,
+        spot_units=spot_units,
+        perp_units=0.0,
+        avg_entry_spot=None,
+        avg_entry_perp=None,
+    )
+
+
+def _perp_open_req(coin: str = _COIN, qty: float = 1.0, client_ref: str | None = "perp-ref") -> OrderRequest:
     """PERP SELL — open short."""
-    return OrderRequest(coin=coin, leg=Leg.PERP, side=Side.SELL, qty=1.0, client_ref=client_ref)
+    return OrderRequest(coin=coin, leg=Leg.PERP, side=Side.SELL, qty=qty, client_ref=client_ref)
 
 
-def _spot_open_req(coin: str = _COIN, client_ref: str | None = "spot-ref") -> OrderRequest:
+def _spot_open_req(coin: str = _COIN, qty: float = 1.0, client_ref: str | None = "spot-ref") -> OrderRequest:
     """SPOT BUY — buy spot."""
-    return OrderRequest(coin=coin, leg=Leg.SPOT, side=Side.BUY, qty=1.0, client_ref=client_ref)
+    return OrderRequest(coin=coin, leg=Leg.SPOT, side=Side.BUY, qty=qty, client_ref=client_ref)
 
 
-def _perp_close_req(coin: str = _COIN, client_ref: str | None = "perp-close-ref") -> OrderRequest:
+def _perp_close_req(coin: str = _COIN, qty: float = 1.0, client_ref: str | None = "perp-close-ref") -> OrderRequest:
     """PERP BUY — cover short."""
-    return OrderRequest(coin=coin, leg=Leg.PERP, side=Side.BUY, qty=1.0, client_ref=client_ref)
+    return OrderRequest(coin=coin, leg=Leg.PERP, side=Side.BUY, qty=qty, client_ref=client_ref)
 
 
-def _spot_close_req(coin: str = _COIN, client_ref: str | None = "spot-close-ref") -> OrderRequest:
+def _spot_close_req(coin: str = _COIN, qty: float = 1.0, client_ref: str | None = "spot-close-ref") -> OrderRequest:
     """SPOT SELL — sell spot."""
-    return OrderRequest(coin=coin, leg=Leg.SPOT, side=Side.SELL, qty=1.0, client_ref=client_ref)
+    return OrderRequest(coin=coin, leg=Leg.SPOT, side=Side.SELL, qty=qty, client_ref=client_ref)
 
 
 def _sleep_recorder() -> tuple[list[float], Any]:
@@ -85,6 +97,21 @@ async def _drain_events(bus: EventBus) -> list[Any]:
     # We can't drain retroactively — events must be captured via subscribe BEFORE publish.
     # This helper is used for post-hoc draining when we hold a queue reference.
     raise RuntimeError("Use 'async with bus.subscribe() as q:' before the operation")
+
+
+def _make_underlying(
+    submit_side_effect,
+    get_position_side_effect=None,
+) -> AsyncMock:
+    """Build a mock underlying executor."""
+    underlying = AsyncMock()
+    underlying.submit = AsyncMock(side_effect=submit_side_effect)
+    if get_position_side_effect is not None:
+        underlying.get_position = AsyncMock(side_effect=get_position_side_effect)
+    else:
+        # Default: always return zero spot balance
+        underlying.get_position = AsyncMock(return_value=_make_pos(spot_units=0.0))
+    return underlying
 
 
 # ---------------------------------------------------------------------------
@@ -110,8 +137,6 @@ async def test_submit_succeeds_first_try(bus: EventBus) -> None:
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
     underlying = AsyncMock()
     underlying.submit = AsyncMock(return_value=fill)
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
@@ -132,8 +157,6 @@ async def test_submit_retries_on_transient_then_succeeds(bus: EventBus) -> None:
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
     underlying = AsyncMock()
     underlying.submit = AsyncMock(side_effect=[asyncio.TimeoutError(), fill])
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
@@ -152,8 +175,6 @@ async def test_submit_exhausts_retries_publishes_event_and_raises(bus: EventBus)
 
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
-
-    from unittest.mock import AsyncMock
 
     underlying = AsyncMock()
     underlying.submit = AsyncMock(
@@ -193,8 +214,6 @@ async def test_submit_non_transient_no_retry(bus: EventBus) -> None:
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
     underlying = AsyncMock()
     underlying.submit = AsyncMock(side_effect=[ValueError("bad qty")])
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
@@ -213,8 +232,6 @@ async def test_submit_transient_then_non_transient(bus: EventBus) -> None:
 
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
-
-    from unittest.mock import AsyncMock
 
     underlying = AsyncMock()
     underlying.submit = AsyncMock(
@@ -245,8 +262,6 @@ async def test_custom_is_transient_predicate(bus: EventBus) -> None:
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
     fill = _make_fill()
 
     # KeyError should be retried (2 KeyErrors then success)
@@ -268,10 +283,9 @@ async def test_custom_is_transient_predicate(bus: EventBus) -> None:
 
     # TimeoutError should NOT be retried with custom predicate
     sleep_calls.clear()
-    from unittest.mock import AsyncMock as AM2
 
-    underlying2 = AM2()
-    underlying2.submit = AM2(side_effect=[asyncio.TimeoutError()])
+    underlying2 = AsyncMock()
+    underlying2.submit = AsyncMock(side_effect=[asyncio.TimeoutError()])
     ex2 = AtomicExecutor(
         underlying2,
         bus,
@@ -291,20 +305,44 @@ async def test_custom_is_transient_predicate(bus: EventBus) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def test_open_paired_calls_spot_first(bus: EventBus) -> None:
+    """8. Spot submit is called before perp submit."""
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY, qty=1.0)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL, qty=1.0)
+
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=0.0),   # pre-snapshot
+            _make_pos(spot_units=1.0),   # post-snapshot
+        ],
+    )
+    ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
+
+    await ex.open_paired(_perp_open_req(), _spot_open_req())
+
+    # First submit call is the spot req, second is the perp req
+    submit_calls = underlying.submit.call_args_list
+    assert len(submit_calls) == 2
+    first_req = submit_calls[0].args[0]
+    second_req = submit_calls[1].args[0]
+    assert first_req.leg == Leg.SPOT
+    assert second_req.leg == Leg.PERP
+
+
 async def test_open_paired_both_succeed(bus: EventBus) -> None:
-    """8. Perp fills, then spot fills. status=ok, both fills, errors=()."""
-    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL)
-    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY)
-    sleep_calls: list[float] = []
+    """9. Spot fills, then perp fills. status=ok, both fills, errors=()."""
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY, qty=1.0)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL, qty=1.0)
 
-    async def fake_sleep(s: float) -> None:
-        sleep_calls.append(s)
-
-    from unittest.mock import AsyncMock
-
-    underlying = AsyncMock()
-    underlying.submit = AsyncMock(side_effect=[perp_fill, spot_fill])
-    ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=0.0),
+            _make_pos(spot_units=1.0),
+        ],
+    )
+    ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
 
     async with bus.subscribe() as q:
         result = await ex.open_paired(_perp_open_req(), _spot_open_req())
@@ -312,23 +350,81 @@ async def test_open_paired_both_succeed(bus: EventBus) -> None:
     assert isinstance(result, PairedOpenResult)
     assert result.status == "ok"
     assert result.perp_fill is perp_fill
-    assert result.spot_fill is spot_fill
+    assert result.spot_fill is not None
     assert result.errors == ()
     assert q.empty()
 
 
-async def test_open_paired_perp_fails_no_spot_attempted(bus: EventBus) -> None:
-    """9. Perp raises TimeoutError 3x → spot not attempted, paired_open_failed published."""
+async def test_open_paired_sizes_perp_to_actual_spot_delta(bus: EventBus) -> None:
+    """10. Perp leg is sized to the actual spot balance delta, not the requested qty."""
+    requested_qty = 0.00015
+    actual_delta = 0.0001499  # HL fee deducted in asset
+
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY, qty=requested_qty)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL, qty=actual_delta)
+
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=0.0),
+            _make_pos(spot_units=actual_delta),
+        ],
+    )
+    ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
+
+    await ex.open_paired(
+        _perp_open_req(qty=requested_qty),
+        _spot_open_req(qty=requested_qty),
+    )
+
+    # Second submit (perp) should be called with qty == actual_delta
+    perp_call_req = underlying.submit.call_args_list[1].args[0]
+    assert perp_call_req.leg == Leg.PERP
+    assert perp_call_req.qty == pytest.approx(actual_delta)
+
+
+async def test_open_paired_returns_adjusted_spot_fill(bus: EventBus) -> None:
+    """11. spot_fill.qty in the result equals the observed delta, not the gross requested qty."""
+    requested_qty = 0.00015
+    actual_delta = 0.0001499
+
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY, qty=requested_qty)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL, qty=actual_delta)
+
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=0.0),
+            _make_pos(spot_units=actual_delta),
+        ],
+    )
+    ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
+
+    result = await ex.open_paired(
+        _perp_open_req(qty=requested_qty),
+        _spot_open_req(qty=requested_qty),
+    )
+
+    assert result.status == "ok"
+    assert result.spot_fill is not None
+    assert result.spot_fill.qty == pytest.approx(actual_delta)
+    # Other fields preserved from the original fill
+    assert result.spot_fill.price == spot_fill.price
+    assert result.spot_fill.fee == spot_fill.fee
+
+
+async def test_open_paired_spot_fails_no_perp_attempted(bus: EventBus) -> None:
+    """12. Spot raises TimeoutError 3x → perp never called, paired_open_failed published."""
     sleep_calls: list[float] = []
 
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
-    underlying = AsyncMock()
-    underlying.submit = AsyncMock(
-        side_effect=[asyncio.TimeoutError(), asyncio.TimeoutError(), asyncio.TimeoutError()]
+    underlying = _make_underlying(
+        submit_side_effect=[
+            asyncio.TimeoutError(), asyncio.TimeoutError(), asyncio.TimeoutError()
+        ],
+        get_position_side_effect=[_make_pos(spot_units=0.0)],
     )
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
 
@@ -342,66 +438,96 @@ async def test_open_paired_perp_fails_no_spot_attempted(bus: EventBus) -> None:
     assert result.status == "failed"
     assert result.perp_fill is None
     assert result.spot_fill is None
-    assert result.spot_attempts == 0
-    assert result.perp_attempts == 3
+    assert result.perp_attempts == 0
+    assert result.spot_attempts == 3
     assert len(result.errors) > 0
 
-    # Events: retry_exhausted + paired_open_failed
     kinds = [e.kind for e in events]
     assert "retry_exhausted" in kinds
     paired_evt = next(e for e in events if e.kind == "paired_open_failed")
-    assert "perp leg" in paired_evt.message
-    assert underlying.submit.call_count == 3  # spot was never attempted
+    assert "spot leg" in paired_evt.message
+    assert underlying.submit.call_count == 3  # perp was never attempted
 
 
-async def test_open_paired_spot_fails_after_perp_filled(bus: EventBus) -> None:
-    """10. Perp fills, spot raises TimeoutError 3x → failed, perp_fill present, 2 events."""
-    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL, client_ref="perp-ref")
+async def test_open_paired_perp_fails_after_spot_filled_publishes_paired_open_failed(bus: EventBus) -> None:
+    """13. Spot fills, perp raises TimeoutError 3x → failed, spot_fill present, events published."""
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY, qty=1.0, client_ref="spot-ref")
+    actual_delta = 1.0
     sleep_calls: list[float] = []
 
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
-    underlying = AsyncMock()
-    underlying.submit = AsyncMock(
-        side_effect=[
-            perp_fill,
+    underlying = _make_underlying(
+        submit_side_effect=[
+            spot_fill,
             asyncio.TimeoutError(),
             asyncio.TimeoutError(),
             asyncio.TimeoutError(),
-        ]
+        ],
+        get_position_side_effect=[
+            _make_pos(spot_units=0.0),
+            _make_pos(spot_units=actual_delta),
+        ],
     )
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
 
     async with bus.subscribe() as q:
-        result = await ex.open_paired(_perp_open_req(client_ref="perp-ref"), _spot_open_req())
+        result = await ex.open_paired(_perp_open_req(client_ref="perp-ref"), _spot_open_req(client_ref="spot-ref"))
 
         events = []
         while not q.empty():
             events.append(q.get_nowait())
 
     assert result.status == "failed"
-    assert result.perp_fill is perp_fill
-    assert result.spot_fill is None
-    assert result.spot_attempts == 3
-    assert result.perp_attempts == 1
+    assert result.spot_fill is not None
+    assert result.spot_fill.qty == pytest.approx(actual_delta)
+    assert result.perp_fill is None
+    assert result.perp_attempts == 3
+    assert result.spot_attempts == 1
 
     kinds = [e.kind for e in events]
-    # Both retry_exhausted (for spot) and paired_open_failed
     assert "retry_exhausted" in kinds
     assert "paired_open_failed" in kinds
     assert len(events) == 2
 
     paired_evt = next(e for e in events if e.kind == "paired_open_failed")
-    assert "after perp filled" in paired_evt.message
+    assert "after spot filled" in paired_evt.message
+
+
+async def test_open_paired_zero_spot_delta_publishes_failure(bus: EventBus) -> None:
+    """14. get_position returns same balance pre/post → delta=0 → fails, no perp call."""
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY, qty=1.0)
+
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=5.0),  # pre-snapshot
+            _make_pos(spot_units=5.0),  # post-snapshot: no change
+        ],
+    )
+    ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
+
+    async with bus.subscribe() as q:
+        result = await ex.open_paired(_perp_open_req(), _spot_open_req())
+
+        events = []
+        while not q.empty():
+            events.append(q.get_nowait())
+
+    assert result.status == "failed"
+    assert result.perp_fill is None
+    assert result.spot_fill is None
+    assert result.perp_attempts == 0
+    # Only one submit call (spot), perp never attempted
+    assert underlying.submit.call_count == 1
+
+    paired_evt = next(e for e in events if e.kind == "paired_open_failed")
+    assert "zero delta" in paired_evt.message
 
 
 async def test_open_paired_validates_perp_side(bus: EventBus) -> None:
-    """11. perp_req.side=BUY → ValueError, no underlying calls, no events."""
-    from unittest.mock import AsyncMock
-
+    """15. perp_req.side=BUY → ValueError, no underlying calls, no events."""
     underlying = AsyncMock()
     underlying.submit = AsyncMock()
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
@@ -417,9 +543,7 @@ async def test_open_paired_validates_perp_side(bus: EventBus) -> None:
 
 
 async def test_open_paired_validates_spot_side(bus: EventBus) -> None:
-    """12. spot_req.side=SELL → ValueError."""
-    from unittest.mock import AsyncMock
-
+    """16. spot_req.side=SELL → ValueError."""
     underlying = AsyncMock()
     underlying.submit = AsyncMock()
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
@@ -435,9 +559,7 @@ async def test_open_paired_validates_spot_side(bus: EventBus) -> None:
 
 
 async def test_open_paired_validates_legs(bus: EventBus) -> None:
-    """13. perp_req.leg=SPOT → ValueError; spot_req.leg=PERP → ValueError."""
-    from unittest.mock import AsyncMock
-
+    """17. perp_req.leg=SPOT → ValueError; spot_req.leg=PERP → ValueError."""
     underlying = AsyncMock()
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
 
@@ -455,9 +577,7 @@ async def test_open_paired_validates_legs(bus: EventBus) -> None:
 
 
 async def test_open_paired_validates_coin_match(bus: EventBus) -> None:
-    """14. perp_req.coin="BTC", spot_req.coin="ETH" → ValueError."""
-    from unittest.mock import AsyncMock
-
+    """18. perp_req.coin="BTC", spot_req.coin="ETH" → ValueError."""
     underlying = AsyncMock()
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
 
@@ -470,20 +590,21 @@ async def test_open_paired_validates_coin_match(bus: EventBus) -> None:
     underlying.submit.assert_not_called()
 
 
-async def test_open_paired_perp_transient_recovers(bus: EventBus) -> None:
-    """15. Perp transient once then succeeds; spot succeeds. OK, sleeps only for perp."""
-    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL)
-    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY)
+async def test_open_paired_spot_transient_recovers(bus: EventBus) -> None:
+    """19. Spot transient once then succeeds; perp succeeds. OK, one sleep."""
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.BUY, qty=1.0)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.SELL, qty=1.0)
     sleep_calls: list[float] = []
 
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
-    underlying = AsyncMock()
-    underlying.submit = AsyncMock(
-        side_effect=[asyncio.TimeoutError(), perp_fill, spot_fill]
+    underlying = _make_underlying(
+        submit_side_effect=[asyncio.TimeoutError(), spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=0.0),  # pre-snapshot
+            _make_pos(spot_units=1.0),  # post-snapshot
+        ],
     )
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
 
@@ -492,8 +613,8 @@ async def test_open_paired_perp_transient_recovers(bus: EventBus) -> None:
 
     assert result.status == "ok"
     assert result.perp_fill is perp_fill
-    assert result.spot_fill is spot_fill
-    assert sleep_calls == [2.0]  # one sleep for perp retry
+    assert result.spot_fill is not None
+    assert sleep_calls == [2.0]  # one sleep for spot retry
     assert q.empty()
 
 
@@ -502,15 +623,42 @@ async def test_open_paired_perp_transient_recovers(bus: EventBus) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def test_close_paired_calls_spot_first(bus: EventBus) -> None:
+    """20. Spot submit is called before perp submit on close."""
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.SELL, qty=1.0)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.BUY, qty=1.0)
+
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=1.0),   # pre-snapshot
+            _make_pos(spot_units=0.0),   # post-snapshot (sold)
+        ],
+    )
+    ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
+
+    await ex.close_paired(_perp_close_req(), _spot_close_req())
+
+    submit_calls = underlying.submit.call_args_list
+    assert len(submit_calls) == 2
+    first_req = submit_calls[0].args[0]
+    second_req = submit_calls[1].args[0]
+    assert first_req.leg == Leg.SPOT
+    assert second_req.leg == Leg.PERP
+
+
 async def test_close_paired_both_succeed(bus: EventBus) -> None:
-    """16. Both perp cover and spot sell succeed."""
-    perp_fill = _make_fill(leg=Leg.PERP, side=Side.BUY)
-    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.SELL)
+    """21. Both spot sell and perp cover succeed."""
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.SELL, qty=1.0)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.BUY, qty=1.0)
 
-    from unittest.mock import AsyncMock
-
-    underlying = AsyncMock()
-    underlying.submit = AsyncMock(side_effect=[perp_fill, spot_fill])
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=1.0),
+            _make_pos(spot_units=0.0),
+        ],
+    )
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
 
     async with bus.subscribe() as q:
@@ -519,23 +667,50 @@ async def test_close_paired_both_succeed(bus: EventBus) -> None:
     assert isinstance(result, PairedCloseResult)
     assert result.status == "ok"
     assert result.perp_fill is perp_fill
-    assert result.spot_fill is spot_fill
+    assert result.spot_fill is not None
     assert result.errors == ()
     assert q.empty()
 
 
-async def test_close_paired_perp_fails_no_spot_attempted(bus: EventBus) -> None:
-    """17. Perp cover fails → spot not attempted, paired_close_failed published."""
+async def test_close_paired_sizes_perp_to_abs_spot_delta(bus: EventBus) -> None:
+    """22. Perp leg qty equals abs(spot balance delta) on close."""
+    requested_qty = 1.0
+    actual_sold = 0.9999  # slightly less due to hypothetical rounding
+
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.SELL, qty=requested_qty)
+    perp_fill = _make_fill(leg=Leg.PERP, side=Side.BUY, qty=actual_sold)
+
+    underlying = _make_underlying(
+        submit_side_effect=[spot_fill, perp_fill],
+        get_position_side_effect=[
+            _make_pos(spot_units=1.0),
+            _make_pos(spot_units=1.0 - actual_sold),  # decreased by actual_sold
+        ],
+    )
+    ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
+
+    await ex.close_paired(
+        _perp_close_req(qty=requested_qty),
+        _spot_close_req(qty=requested_qty),
+    )
+
+    perp_call_req = underlying.submit.call_args_list[1].args[0]
+    assert perp_call_req.leg == Leg.PERP
+    assert perp_call_req.qty == pytest.approx(actual_sold)
+
+
+async def test_close_paired_spot_fails_no_perp_attempted(bus: EventBus) -> None:
+    """23. Spot sell fails → perp not attempted, paired_close_failed published."""
     sleep_calls: list[float] = []
 
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
-    underlying = AsyncMock()
-    underlying.submit = AsyncMock(
-        side_effect=[asyncio.TimeoutError(), asyncio.TimeoutError(), asyncio.TimeoutError()]
+    underlying = _make_underlying(
+        submit_side_effect=[
+            asyncio.TimeoutError(), asyncio.TimeoutError(), asyncio.TimeoutError()
+        ],
+        get_position_side_effect=[_make_pos(spot_units=1.0)],
     )
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
 
@@ -549,41 +724,42 @@ async def test_close_paired_perp_fails_no_spot_attempted(bus: EventBus) -> None:
     assert result.status == "failed"
     assert result.perp_fill is None
     assert result.spot_fill is None
-    assert result.spot_attempts == 0
-    assert result.perp_attempts == 3
+    assert result.perp_attempts == 0
+    assert result.spot_attempts == 3
 
     kinds = [e.kind for e in events]
     assert "paired_close_failed" in kinds
     paired_evt = next(e for e in events if e.kind == "paired_close_failed")
-    assert "perp leg" in paired_evt.message
+    assert "spot leg" in paired_evt.message
     assert underlying.submit.call_count == 3
 
 
-async def test_close_paired_spot_fails_after_perp_covered(bus: EventBus) -> None:
-    """18. Perp covered, then spot sell fails → status=failed, perp_fill present."""
-    perp_fill = _make_fill(leg=Leg.PERP, side=Side.BUY, client_ref="perp-close-ref")
+async def test_close_paired_perp_fails_after_spot_sold(bus: EventBus) -> None:
+    """24. Spot sells, perp cover fails → status=failed, spot_fill present."""
+    spot_fill = _make_fill(leg=Leg.SPOT, side=Side.SELL, qty=1.0, client_ref="spot-close-ref")
     sleep_calls: list[float] = []
 
     async def fake_sleep(s: float) -> None:
         sleep_calls.append(s)
 
-    from unittest.mock import AsyncMock
-
-    underlying = AsyncMock()
-    underlying.submit = AsyncMock(
-        side_effect=[
-            perp_fill,
+    underlying = _make_underlying(
+        submit_side_effect=[
+            spot_fill,
             asyncio.TimeoutError(),
             asyncio.TimeoutError(),
             asyncio.TimeoutError(),
-        ]
+        ],
+        get_position_side_effect=[
+            _make_pos(spot_units=1.0),
+            _make_pos(spot_units=0.0),
+        ],
     )
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK, sleep=fake_sleep)
 
     async with bus.subscribe() as q:
         result = await ex.close_paired(
             _perp_close_req(client_ref="perp-close-ref"),
-            _spot_close_req(),
+            _spot_close_req(client_ref="spot-close-ref"),
         )
 
         events = []
@@ -591,22 +767,21 @@ async def test_close_paired_spot_fails_after_perp_covered(bus: EventBus) -> None
             events.append(q.get_nowait())
 
     assert result.status == "failed"
-    assert result.perp_fill is perp_fill
-    assert result.spot_fill is None
-    assert result.spot_attempts == 3
+    assert result.spot_fill is not None
+    assert result.perp_fill is None
+    assert result.perp_attempts == 3
+    assert result.spot_attempts == 1
 
     kinds = [e.kind for e in events]
     assert "retry_exhausted" in kinds
     assert "paired_close_failed" in kinds
 
     paired_evt = next(e for e in events if e.kind == "paired_close_failed")
-    assert "after perp covered" in paired_evt.message
+    assert "after spot sold" in paired_evt.message
 
 
 async def test_close_paired_validates_perp_side(bus: EventBus) -> None:
-    """19. perp_req.side=SELL → ValueError."""
-    from unittest.mock import AsyncMock
-
+    """25. perp_req.side=SELL → ValueError."""
     underlying = AsyncMock()
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
 
@@ -621,9 +796,7 @@ async def test_close_paired_validates_perp_side(bus: EventBus) -> None:
 
 
 async def test_close_paired_validates_spot_side(bus: EventBus) -> None:
-    """20. spot_req.side=BUY → ValueError."""
-    from unittest.mock import AsyncMock
-
+    """26. spot_req.side=BUY → ValueError."""
     underlying = AsyncMock()
     ex = AtomicExecutor(underlying, bus, clock=_CLOCK)
 
@@ -643,36 +816,28 @@ async def test_close_paired_validates_spot_side(bus: EventBus) -> None:
 
 
 def test_init_rejects_max_attempts_zero(bus: EventBus) -> None:
-    """21. max_attempts=0 → ValueError."""
-    from unittest.mock import AsyncMock
-
+    """27. max_attempts=0 → ValueError."""
     underlying = AsyncMock()
     with pytest.raises(ValueError, match="max_attempts"):
         AtomicExecutor(underlying, bus, max_attempts=0)
 
 
 def test_init_rejects_short_sleep_array(bus: EventBus) -> None:
-    """22. max_attempts=3 with sleep_between_attempts=(2.0,) → ValueError."""
-    from unittest.mock import AsyncMock
-
+    """28. max_attempts=3 with sleep_between_attempts=(2.0,) → ValueError."""
     underlying = AsyncMock()
     with pytest.raises(ValueError):
         AtomicExecutor(underlying, bus, max_attempts=3, sleep_between_attempts=(2.0,))
 
 
 def test_init_rejects_negative_sleep(bus: EventBus) -> None:
-    """23. sleep_between_attempts with negative value → ValueError."""
-    from unittest.mock import AsyncMock
-
+    """29. sleep_between_attempts with negative value → ValueError."""
     underlying = AsyncMock()
     with pytest.raises(ValueError, match=">= 0"):
         AtomicExecutor(underlying, bus, sleep_between_attempts=(2.0, -1.0))
 
 
 def test_init_accepts_longer_sleep_array_than_needed(bus: EventBus) -> None:
-    """24. max_attempts=2 with sleep_between=(2.0, 5.0) is valid (extras ignored)."""
-    from unittest.mock import AsyncMock
-
+    """30. max_attempts=2 with sleep_between=(2.0, 5.0) is valid (extras ignored)."""
     underlying = AsyncMock()
     # Should not raise
     ex = AtomicExecutor(
