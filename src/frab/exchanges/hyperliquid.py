@@ -119,9 +119,13 @@ class HLMarketData:
             self._post({"type": "l2Book", "coin": coin}),
         )
         mark = float(mids_data[coin])
-        levels = book["levels"]
-        bid = float(levels[0][0]["px"])
-        ask = float(levels[1][0]["px"])
+        levels = book.get("levels") or []
+        bids = levels[0] if len(levels) >= 1 else []
+        asks = levels[1] if len(levels) >= 2 else []
+        # Fall back to mark when an orderbook side is empty (HL testnet often
+        # has thin/empty books — engine must not crash on this).
+        bid = float(bids[0]["px"]) if bids else mark
+        ask = float(asks[0]["px"]) if asks else mark
         ts = _ms_to_dt(int(book["time"]))
         return Quote(coin=coin, ts=ts, bid=bid, ask=ask, mark=mark, spot=None)
 

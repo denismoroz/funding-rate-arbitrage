@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -14,10 +15,15 @@ import sqlalchemy
 from frab.settings import PROJECT_ROOT, get_settings
 from frab.db.models import Exchange, FundingRate, Market
 from frab.db.session import session_scope
-from frab.exchanges.base import MarketDataSource
+from frab.exchanges.base import Leg, MarketDataSource, OrderRequest, Side
 from frab.exchanges.hyperliquid import HLMarketData
+from frab.exchanges.hyperliquid_live import LiveHLExecutor
+from frab.server import _hl_info_url
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+
+live_smoke_app = typer.Typer(help="HL testnet API smoke (read + tiny round-trip orders)")
+app.add_typer(live_smoke_app, name="live-smoke")
 
 EXCHANGE_NAME = "hyperliquid"
 
@@ -220,3 +226,292 @@ def serve(
     coin_tuple = tuple(c.strip().upper() for c in coins.split(",") if c.strip())
     asgi_app = build_app(coin_tuple)
     uvicorn.run(asgi_app, host=host, port=port, log_level=log_level.lower())
+
+
+# ---------------------------------------------------------------------------
+# live-smoke helpers
+# ---------------------------------------------------------------------------
+
+def _smoke_check_network(settings) -> None:
+    """Refuse to run smoke against paper mode."""
+    if settings.hl_network == "paper":
+        typer.echo("ERROR: live-smoke only works in testnet or mainnet mode (hl_network != 'paper')")
+        raise typer.Exit(code=2)
+    if settings.hl_private_key is None or settings.hl_account_address is None:
+        typer.echo("ERROR: hl_private_key and hl_account_address are required for live-smoke")
+        raise typer.Exit(code=2)
+
+
+def _build_smoke_clients(settings):
+    """Return (market_data, executor) from settings."""
+    market_data = HLMarketData(
+        api_url=_hl_info_url(settings),
+        timeout_s=settings.hl_request_timeout_s,
+    )
+    executor = LiveHLExecutor(
+        private_key=settings.hl_private_key.get_secret_value(),
+        account_address=settings.hl_account_address,
+        network=settings.hl_network,
+        slippage=settings.hl_live_slippage,
+    )
+    return market_data, executor
+
+
+def _build_smoke_clients_with_slippage(settings, slippage: float):
+    """Return (market_data, executor) with a custom slippage override."""
+    market_data = HLMarketData(
+        api_url=_hl_info_url(settings),
+        timeout_s=settings.hl_request_timeout_s,
+    )
+    executor = LiveHLExecutor(
+        private_key=settings.hl_private_key.get_secret_value(),
+        account_address=settings.hl_account_address,
+        network=settings.hl_network,
+        slippage=slippage,
+    )
+    return market_data, executor
+
+
+def _hdr(text: str) -> None:
+    typer.echo(typer.style(text, bold=True))
+
+
+async def _smoke_read_impl(settings) -> None:
+    market_data, executor = _build_smoke_clients(settings)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+
+    try:
+        # 1. meta
+        _hdr("=== meta ===")
+        meta = await market_data.fetch_meta()
+        typer.echo(f"  perp coins: {len(meta)}")
+        sample_names = [s.coin for s in meta[:5]]
+        typer.echo(f"  first 5: {sample_names}")
+
+        # 2. spot_meta — via _info SDK directly (no HLMarketData method for this)
+        _hdr("=== spot_meta ===")
+        spot_meta = await asyncio.to_thread(executor._info.spot_meta)
+        tokens = spot_meta.get("tokens", [])
+        pairs = spot_meta.get("universe", [])
+        typer.echo(f"  tokens: {len(tokens)}   pairs: {len(pairs)}")
+
+        # 3. allMids — via _info SDK directly
+        _hdr("=== allMids ===")
+        mids = await asyncio.to_thread(executor._info.all_mids)
+        mid_items = list(mids.items())
+        typer.echo(f"  coins with mids: {len(mid_items)}")
+        for coin, mid in mid_items[:3]:
+            typer.echo(f"    {coin}: {mid}")
+
+        # 4. funding (latest tick)
+        _hdr("=== funding/PURR (latest) ===")
+        tick = await market_data.fetch_funding("PURR")
+        typer.echo(f"  rate: {tick.rate:.8f}   annualized: {tick.annualized_pct:.2f}%   ts: {tick.ts}")
+
+        # 5. funding history (bulk)
+        _hdr("=== funding_history/PURR (last 12 h) ===")
+        since_ms = now_ms - 12 * 3600 * 1000
+        ticks = await market_data.fetch_funding_history("PURR", since_ms)
+        typer.echo(f"  ticks: {len(ticks)}")
+        if ticks:
+            typer.echo(f"  first ts: {ticks[0].ts}   last ts: {ticks[-1].ts}")
+
+        # 6. l2Book perp (HYPE — testnet has more depth than PURR perp)
+        _hdr("=== l2Book perp/HYPE ===")
+        quote_perp = await market_data.fetch_quote("HYPE")
+        typer.echo(f"  bid: {quote_perp.bid}   ask: {quote_perp.ask}   mark: {quote_perp.mark}")
+
+        # 7. l2Book spot — via _info SDK (pair name format)
+        _hdr("=== l2Book spot/PURR-USDC ===")
+        book = await asyncio.to_thread(executor._info.l2_snapshot, "PURR/USDC")
+        levels = book.get("levels") or []
+        bids = levels[0] if len(levels) >= 1 else []
+        asks = levels[1] if len(levels) >= 2 else []
+        top_bid = bids[0]["px"] if bids else "N/A"
+        top_ask = asks[0]["px"] if asks else "N/A"
+        typer.echo(f"  top bid: {top_bid}   top ask: {top_ask}")
+
+        # 8. user_state (perp)
+        _hdr("=== user_state (perp) ===")
+        state = await asyncio.to_thread(executor._info.user_state, settings.hl_account_address)
+        margin = state.get("marginSummary", {})
+        typer.echo(f"  accountValue: {margin.get('accountValue', 'N/A')}")
+        typer.echo(f"  withdrawable: {state.get('withdrawable', 'N/A')}")
+        typer.echo(f"  open positions: {len(state.get('assetPositions', []))}")
+
+        # 9. spot_user_state
+        _hdr("=== spot_user_state ===")
+        spot_state = await asyncio.to_thread(executor._info.spot_user_state, settings.hl_account_address)
+        balances = spot_state.get("balances", [])
+        typer.echo(f"  balances ({len(balances)}):")
+        for bal in balances:
+            typer.echo(f"    {bal.get('coin', '?')}: total={bal.get('total', '?')}  hold={bal.get('hold', '?')}")
+
+    finally:
+        await market_data.aclose()
+
+    _hdr("=== OK — all read endpoints responded ===")
+
+
+async def _smoke_spot_impl(settings, coin: str, qty: float) -> None:
+    market_data, executor = _build_smoke_clients(settings)
+
+    try:
+        _hdr(f"=== spot smoke: {coin}/USDC ===")
+        quote_before = await market_data.fetch_quote(coin)
+        typer.echo(f"  mark before: {quote_before.mark}")
+
+        buy_ref = f"smoke-spot-buy-{int(time.time() * 1000)}"
+        buy_req = OrderRequest(
+            coin=coin,
+            leg=Leg.SPOT,
+            side=Side.BUY,
+            qty=qty,
+            client_ref=buy_ref,
+        )
+        typer.echo(f"  submitting BUY {qty} {coin}/USDC ...")
+        buy_fill = await executor.submit(buy_req)
+        typer.echo(
+            f"  BUY fill — price: {buy_fill.price}  qty: {buy_fill.qty}  fee: {buy_fill.fee}  ref: {buy_fill.client_ref}"
+        )
+
+        await asyncio.sleep(1.0)
+
+        sell_ref = f"smoke-spot-sell-{int(time.time() * 1000)}"
+        sell_req = OrderRequest(
+            coin=coin,
+            leg=Leg.SPOT,
+            side=Side.SELL,
+            qty=qty,
+            client_ref=sell_ref,
+        )
+        typer.echo(f"  submitting SELL {qty} {coin}/USDC ...")
+        sell_fill = await executor.submit(sell_req)
+        typer.echo(
+            f"  SELL fill — price: {sell_fill.price}  qty: {sell_fill.qty}  fee: {sell_fill.fee}  ref: {sell_fill.client_ref}"
+        )
+
+        net_pnl = (sell_fill.price - buy_fill.price) * qty - buy_fill.fee - sell_fill.fee
+        typer.echo(f"  net PnL (cost of smoke): {net_pnl:.6f} USDC")
+
+    finally:
+        await market_data.aclose()
+
+    _hdr("=== spot smoke complete ===")
+
+
+async def _smoke_perp_impl(settings, coin: str, qty: float, slippage: float) -> None:
+    market_data, executor = _build_smoke_clients_with_slippage(settings, slippage)
+
+    try:
+        _hdr(f"=== perp smoke: {coin} ===")
+        quote_before = await market_data.fetch_quote(coin)
+        typer.echo(f"  mark before: {quote_before.mark}")
+
+        sell_ref = f"smoke-perp-sell-{int(time.time() * 1000)}"
+        sell_req = OrderRequest(
+            coin=coin,
+            leg=Leg.PERP,
+            side=Side.SELL,
+            qty=qty,
+            client_ref=sell_ref,
+        )
+        typer.echo(f"  submitting SELL (short) {qty} {coin} perp ...")
+        sell_fill = await executor.submit(sell_req)
+        typer.echo(
+            f"  SELL fill — price: {sell_fill.price}  qty: {sell_fill.qty}  fee: {sell_fill.fee}  ref: {sell_fill.client_ref}"
+        )
+
+        await asyncio.sleep(1.0)
+
+        buy_ref = f"smoke-perp-buy-{int(time.time() * 1000)}"
+        buy_req = OrderRequest(
+            coin=coin,
+            leg=Leg.PERP,
+            side=Side.BUY,
+            qty=qty,
+            client_ref=buy_ref,
+        )
+        typer.echo(f"  submitting BUY (cover) {qty} {coin} perp ...")
+        buy_fill = await executor.submit(buy_req)
+        typer.echo(
+            f"  BUY fill — price: {buy_fill.price}  qty: {buy_fill.qty}  fee: {buy_fill.fee}  ref: {buy_fill.client_ref}"
+        )
+
+        # Short P&L: opened at sell_fill.price, closed at buy_fill.price
+        net_pnl = (sell_fill.price - buy_fill.price) * qty - sell_fill.fee - buy_fill.fee
+        typer.echo(f"  net PnL (cost of smoke): {net_pnl:.6f} USDC")
+
+    finally:
+        await market_data.aclose()
+
+    _hdr("=== perp smoke complete ===")
+
+
+# ---------------------------------------------------------------------------
+# live-smoke subcommands
+# ---------------------------------------------------------------------------
+
+@live_smoke_app.command("read")
+def smoke_read() -> None:
+    """Exercise all read endpoints (no signing)."""
+    settings = get_settings()
+    _smoke_check_network(settings)
+    asyncio.run(_smoke_read_impl(settings))
+
+
+@live_smoke_app.command("spot")
+def smoke_spot(
+    coin: str = "PURR",
+    qty: float = 1.0,
+) -> None:
+    """Open + close a tiny spot position (round-trip) to validate signed orders."""
+    settings = get_settings()
+    _smoke_check_network(settings)
+    typer.echo(
+        f"spot smoke: BUY then SELL {qty} {coin}/USDC on {settings.hl_network} — proceed?"
+    )
+    typer.confirm("Proceed?", abort=True)
+    asyncio.run(_smoke_spot_impl(settings, coin, qty))
+
+
+@live_smoke_app.command("perp")
+def smoke_perp(
+    coin: str = "HYPE",
+    qty: float = 0.5,
+    slippage: float = 0.30,
+) -> None:
+    """Open + close a tiny perp short (round-trip) to validate signed orders."""
+    settings = get_settings()
+    _smoke_check_network(settings)
+    typer.echo(
+        f"perp smoke: SHORT then COVER {qty} {coin} perp on {settings.hl_network} — proceed?"
+    )
+    typer.confirm("Proceed?", abort=True)
+    asyncio.run(_smoke_perp_impl(settings, coin, qty, slippage))
+
+
+@live_smoke_app.command("all")
+def smoke_all(
+    spot_coin: str = "PURR",
+    spot_qty: float = 1.0,
+    perp_coin: str = "HYPE",
+    perp_qty: float = 0.5,
+    perp_slippage: float = 0.30,
+) -> None:
+    """Run read + spot + perp smoke in sequence (one confirmation prompt)."""
+    settings = get_settings()
+    _smoke_check_network(settings)
+    typer.echo(
+        f"Full smoke on {settings.hl_network}: "
+        f"8 read calls + spot round-trip ({spot_qty} {spot_coin}/USDC) "
+        f"+ perp round-trip ({perp_qty} {perp_coin})."
+    )
+    typer.confirm("Run full smoke — 2 round-trip orders + 8 read calls — proceed?", abort=True)
+
+    async def _run_all() -> None:
+        await _smoke_read_impl(settings)
+        await _smoke_spot_impl(settings, spot_coin, spot_qty)
+        await _smoke_perp_impl(settings, perp_coin, perp_qty, perp_slippage)
+
+    asyncio.run(_run_all())
