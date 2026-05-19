@@ -26,6 +26,7 @@ from frab.db.models import (
 from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.engine.fee_reconciler import FeeReconciler
+from frab.engine.funding_reconciler import FundingReconciler
 from frab.engine.loop import Engine
 from frab.engine.reconcile import scan as reconcile_scan
 from frab.events.bus import EventBus, EventDbSink
@@ -137,6 +138,28 @@ def _build_fee_reconciler(
     if settings.hl_network == "paper":
         return None
     return FeeReconciler(
+        session_factory=session_factory,
+        market_data=market_data,
+        user_address=settings.hl_account_address,
+        bus=bus,
+        strategy=strategy,
+        strategy_id=strategy_id,
+    )
+
+
+def _build_funding_reconciler(
+    settings: Settings,
+    *,
+    session_factory,
+    market_data,
+    bus: EventBus,
+    strategy: "StrategyBase | None" = None,
+    strategy_id: int | None = None,
+) -> "FundingReconciler | None":
+    """Return a FundingReconciler for live mode, None for paper mode."""
+    if settings.hl_network == "paper":
+        return None
+    return FundingReconciler(
         session_factory=session_factory,
         market_data=market_data,
         user_address=settings.hl_account_address,
@@ -390,6 +413,16 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             strategy_id=strategy_id,
         )
 
+        # Wire funding reconciler for live mode; paper mode skips HL userFunding.
+        funding_reconciler = _build_funding_reconciler(
+            settings,
+            session_factory=session_factory,
+            market_data=market_data,
+            bus=bus,
+            strategy=strategy,
+            strategy_id=strategy_id,
+        )
+
         engine = Engine(
             market_data=market_data,
             strategy=strategy,
@@ -397,6 +430,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             recorder=recorder,
             event_bus=bus,
             fee_reconciler=fee_reconciler,
+            funding_reconciler=funding_reconciler,
         )
         sink = EventDbSink(session_factory, bus)
 

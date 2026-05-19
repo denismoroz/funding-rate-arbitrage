@@ -439,3 +439,85 @@ async def test_fetch_user_fills_resolves_at_index_format(mocker):
     assert len(result) == 1
     assert result[0].coin == "BTC"
     assert result[0].leg == Leg.SPOT
+
+
+# ---------------------------------------------------------------------------
+# fetch_user_funding
+# ---------------------------------------------------------------------------
+
+
+def _user_funding_record(coin: str, time_ms: int, usdc: str, szi: str, rate: str, hash_: str = "0xH") -> dict:
+    return {
+        "time": time_ms,
+        "hash": hash_,
+        "delta": {
+            "type": "funding",
+            "coin": coin,
+            "usdc": usdc,
+            "szi": szi,
+            "fundingRate": rate,
+            "nSamples": None,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_funding_parses_and_sorts(mocker):
+    """3 funding payments — positive and negative; sorted ascending; signs preserved."""
+    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+
+    t1 = 1_700_000_002_000  # latest
+    t2 = 1_700_000_000_000  # earliest
+    t3 = 1_700_000_001_000  # middle
+
+    payments_response = [
+        _user_funding_record("BTC", t1, "0.000150", "-0.00015", "0.0000125"),
+        _user_funding_record("BTC", t2, "0.000140", "-0.00014", "0.0000125"),
+        _user_funding_record("BTC", t3, "-0.000050", "0.00015", "-0.0000045"),  # we paid
+    ]
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").respond(200, json=payments_response)
+        client = httpx.AsyncClient(base_url=BASE_URL)
+        md = HLMarketData(api_url=INFO_URL, client=client)
+        result = await md.fetch_user_funding("0xABCD", since_ms=0)
+
+    assert len(result) == 3
+    # Ascending by ts
+    assert result[0].ts == _ms_to_dt(t2)
+    assert result[1].ts == _ms_to_dt(t3)
+    assert result[2].ts == _ms_to_dt(t1)
+    # Sign preservation
+    assert result[1].usdc == pytest.approx(-0.000050)
+    assert result[2].usdc == pytest.approx(0.000150)
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_funding_retries_on_5xx(mocker):
+    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+    payments_response = [_user_funding_record("BTC", 1_700_000_000_000, "0.0001", "-0.00015", "0.0000125")]
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        route = mock.post("/info")
+        route.side_effect = [
+            httpx.Response(500, json={"error": "boom"}),
+            httpx.Response(200, json=payments_response),
+        ]
+        client = httpx.AsyncClient(base_url=BASE_URL)
+        md = HLMarketData(api_url=INFO_URL, client=client)
+        result = await md.fetch_user_funding("0xABCD", since_ms=0)
+
+    assert len(result) == 1
+    assert route.call_count == 2  # one retry
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_funding_empty_returns_empty_list(mocker):
+    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").respond(200, json=[])
+        client = httpx.AsyncClient(base_url=BASE_URL)
+        md = HLMarketData(api_url=INFO_URL, client=client)
+        result = await md.fetch_user_funding("0xABCD", since_ms=0)
+
+    assert result == []

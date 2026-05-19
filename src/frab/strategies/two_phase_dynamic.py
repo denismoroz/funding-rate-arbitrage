@@ -103,6 +103,10 @@ class TwoPhaseDynamic(Strategy):
         """Replace the running fees counter with the DB-authoritative total."""
         self._fees_cum = value
 
+    def set_funding_cum(self, value: float) -> None:
+        """Replace the running funding counter with the DB-authoritative total."""
+        self._funding_cum = value
+
     def open_positions(self) -> list[str]:
         return list(self._positions.keys())
 
@@ -198,7 +202,10 @@ class TwoPhaseDynamic(Strategy):
             if coin in funding:
                 self._market_state.add_funding(funding[coin])
 
-        # Step 2: funding accrual on open positions
+        # Step 2: funding accrual (local estimate for phase decisions).
+        # FundingReconciler periodically overwrites position.funding_collected
+        # with HL's authoritative SUM, so this local += is a short-lived
+        # estimate bounded by the reconciler cadence.
         funding_accrued: list[tuple[str, float]] = []
         for coin, pos in self._positions.items():
             if coin not in funding or coin not in self._last_quotes:

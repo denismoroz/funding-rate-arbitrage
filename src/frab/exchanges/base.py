@@ -95,6 +95,16 @@ class UserFill:
     hl_tid: int        # fill["tid"] — HL trade id, globally unique per fill
 
 
+@dataclass(frozen=True, slots=True)
+class FundingPayment:
+    coin: str      # plain perp coin name, e.g. "BTC"
+    ts: datetime   # from delta["time"], UTC-aware
+    usdc: float    # signed payment amount in USDC (+ = received, - = paid)
+    szi: float     # signed position size at event time
+    rate: float    # fundingRate
+    hash: str      # HL tx hash, useful for idempotency/dedup
+
+
 @runtime_checkable
 class MarketDataSource(Protocol):
     name: str  # short identifier, e.g. "hyperliquid"

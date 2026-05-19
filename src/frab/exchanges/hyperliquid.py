@@ -12,7 +12,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from frab.exchanges.base import FundingTick, Leg, MarketSpec, Quote, Side, UserFill
+from frab.exchanges.base import FundingPayment, FundingTick, Leg, MarketSpec, Quote, Side, UserFill
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
@@ -233,3 +233,32 @@ class HLMarketData:
 
         fills.sort(key=lambda f: f.ts)
         return fills
+
+    async def fetch_user_funding(self, user_address: str, since_ms: int) -> list[FundingPayment]:
+        """Fetch realized funding payments from HL.
+
+        POST /info  body: {"type": "userFunding", "user": user_address, "startTime": since_ms}
+        Returns parsed list ordered by ts ascending.
+        """
+        data: list[dict] = await self._post({
+            "type": "userFunding",
+            "user": user_address,
+            "startTime": since_ms,
+        })
+        if not data:
+            return []
+
+        payments: list[FundingPayment] = []
+        for record in data:
+            delta = record["delta"]
+            payments.append(FundingPayment(
+                coin=delta["coin"],
+                ts=_ms_to_dt(int(record["time"])),
+                usdc=float(delta["usdc"]),
+                szi=float(delta["szi"]),
+                rate=float(delta["fundingRate"]),
+                hash=record["hash"],
+            ))
+
+        payments.sort(key=lambda p: p.ts)
+        return payments

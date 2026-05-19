@@ -16,6 +16,7 @@ from frab.strategies.base import EquitySnapshot, Strategy, TickReport
 
 if TYPE_CHECKING:
     from frab.engine.fee_reconciler import FeeReconciler
+    from frab.engine.funding_reconciler import FundingReconciler
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class Engine:
         sleep_fn: Callable[[float], Awaitable[None]] | None = None,
         event_bus: EventBus | None = None,
         fee_reconciler: "FeeReconciler | None" = None,
+        funding_reconciler: "FundingReconciler | None" = None,
     ) -> None:
         if len(coins) == 0:
             raise ValueError("coins must be non-empty")
@@ -82,6 +84,7 @@ class Engine:
         self._sleep = sleep_fn if sleep_fn is not None else asyncio.sleep
         self._event_bus = event_bus
         self._fee_reconciler = fee_reconciler
+        self._funding_reconciler = funding_reconciler
         self._stop = False
         self._last_hour: datetime | None = None
         # True until tick_once() rehydrates _last_hour from the recorder.
@@ -228,6 +231,24 @@ class Engine:
                     source="fee_reconcile",
                     kind="fee_reconcile_error",
                     message=f"Fee reconcile failed: {type(exc).__name__}: {exc}",
+                    payload_json={"error_type": type(exc).__name__, "error_message": str(exc)},
+                ))
+
+        # 5c. Funding reconcile (same cadence as fee reconcile, non-fatal)
+        if (
+            self._funding_reconciler is not None
+            and self._tick_count % FEE_RECONCILE_EVERY_N_MINUTES == 0
+        ):
+            try:
+                await self._funding_reconciler.run_once()
+            except Exception as exc:
+                logger.error("funding_reconcile_failed: %s", exc, exc_info=True)
+                await self._publish(Event(
+                    ts=now,
+                    level="ERROR",
+                    source="funding_reconcile",
+                    kind="funding_reconcile_error",
+                    message=f"Funding reconcile failed: {type(exc).__name__}: {exc}",
                     payload_json={"error_type": type(exc).__name__, "error_message": str(exc)},
                 ))
 
