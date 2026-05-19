@@ -1,0 +1,186 @@
+"""LiveHLExecutor: routes real orders to Hyperliquid via hyperliquid-python-sdk.
+
+The same coin maps to two different on-exchange names:
+  - PERP leg uses bare coin name, e.g. "BTC" / "PURR".
+  - SPOT leg uses a pair name, e.g. "UBTC/USDC" or "PURR/USDC".
+
+`spot_token_map` lets callers override the spot base-token name (e.g. testnet
+PURR == PURR identity; mainnet BTC → UBTC). Default is identity.
+
+Reconcile-vs-DB cross-check lives outside this class (engine/reconcile.scan
+plus a future helper); this executor's `reconcile()` is a no-op.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import UTC, datetime
+from typing import Any, Callable, Literal
+
+from eth_account import Account
+from hyperliquid.exchange import Exchange
+from hyperliquid.info import Info
+from hyperliquid.utils import constants
+
+from frab.exchanges.base import (
+    FillReport,
+    Leg,
+    OrderRequest,
+    PositionState,
+    Side,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _base_url(network: Literal["testnet", "mainnet"]) -> str:
+    if network == "testnet":
+        return constants.TESTNET_API_URL
+    if network == "mainnet":
+        return constants.MAINNET_API_URL
+    raise ValueError(f"unsupported network: {network!r}")
+
+
+class LiveHLExecutor:
+    name = "hyperliquid"
+
+    def __init__(
+        self,
+        *,
+        private_key: str | None = None,
+        account_address: str | None = None,
+        network: Literal["testnet", "mainnet"] = "testnet",
+        info: Info | None = None,
+        exchange: Exchange | None = None,
+        spot_token_map: dict[str, str] | None = None,
+        spot_quote_token: str = "USDC",
+        slippage: float = 0.01,
+        clock_fn: Callable[[], datetime] | None = None,
+    ) -> None:
+        if info is None:
+            info = Info(_base_url(network), skip_ws=True)
+        if exchange is None:
+            if private_key is None or account_address is None:
+                raise ValueError("private_key and account_address required when exchange is not injected")
+            wallet = Account.from_key(private_key)
+            exchange = Exchange(wallet=wallet, base_url=_base_url(network), account_address=account_address)
+
+        self._info = info
+        self._exchange = exchange
+
+        if account_address is not None:
+            self._address: str | None = account_address
+        else:
+            # Try to pull from injected exchange (only if it carries a real string attr)
+            candidate = getattr(exchange, "account_address", None)
+            self._address = candidate if isinstance(candidate, str) else None
+
+        self._spot_token_map: dict[str, str] = spot_token_map if spot_token_map is not None else {}
+        self._spot_quote_token = spot_quote_token
+        self._slippage = slippage
+        self._clock_fn = clock_fn if clock_fn is not None else lambda: datetime.now(UTC)
+
+    def _make_name(self, req: OrderRequest) -> str:
+        if req.leg == Leg.PERP:
+            return req.coin
+        # SPOT: pair name using token map
+        base = self._spot_token_map.get(req.coin, req.coin)
+        return f"{base}/{self._spot_quote_token}"
+
+    async def submit(self, req: OrderRequest) -> FillReport:
+        name = self._make_name(req)
+        is_buy = req.side == Side.BUY
+
+        resp = await asyncio.to_thread(
+            self._exchange.market_open, name, is_buy, req.qty, None, self._slippage
+        )
+
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            raise RuntimeError(f"HL order rejected: {resp!r}")
+        try:
+            status0 = resp["response"]["data"]["statuses"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"HL order response shape unexpected: {resp!r}") from exc
+
+        if "filled" in status0:
+            filled = status0["filled"]
+            qty = float(filled["totalSz"])
+            price = float(filled["avgPx"])
+            # Per-fill fee not always echoed in market_open response.
+            # Default to 0.0 and let a separate reconcile pass derive it from user_fills later.
+            fee = float(filled.get("fee", 0.0))
+        elif "error" in status0:
+            raise RuntimeError(f"HL order error: {status0['error']!r}")
+        elif "resting" in status0:
+            # Market IOC should not rest; if it did, treat as failure.
+            raise RuntimeError(f"HL market order unexpectedly resting: {status0!r}")
+        else:
+            raise RuntimeError(f"HL order unrecognized status: {status0!r}")
+
+        return FillReport(
+            coin=req.coin,
+            leg=req.leg,
+            side=req.side,
+            ts=self._clock_fn(),
+            qty=qty,
+            price=price,
+            fee=fee,
+            slippage_bps=self._slippage * 1e4,
+            is_paper=False,
+            client_ref=req.client_ref,
+        )
+
+    async def get_position(self, coin: str) -> PositionState | None:
+        if self._address is None:
+            raise RuntimeError("account_address required for get_position")
+
+        perp_state, spot_state = await asyncio.gather(
+            asyncio.to_thread(self._info.user_state, self._address),
+            asyncio.to_thread(self._info.spot_user_state, self._address),
+        )
+
+        perp_units = 0.0
+        avg_entry_perp: float | None = None
+        for entry in perp_state.get("assetPositions", []):
+            pos = entry.get("position", {})
+            if pos.get("coin") == coin:
+                perp_units = float(pos["szi"])
+                if "entryPx" in pos:
+                    avg_entry_perp = float(pos["entryPx"])
+                break
+
+        spot_coin = self._spot_token_map.get(coin, coin)
+        spot_units = 0.0
+        avg_entry_spot: float | None = None
+        for balance in spot_state.get("balances", []):
+            if balance.get("coin") == spot_coin:
+                spot_units = float(balance["total"])
+                entry_ntl = float(balance.get("entryNtl", 0))
+                if spot_units > 0 and entry_ntl > 0:
+                    avg_entry_spot = entry_ntl / spot_units
+                break
+
+        if abs(perp_units) < 1e-12 and abs(spot_units) < 1e-12:
+            return None
+
+        return PositionState(
+            coin=coin,
+            spot_units=spot_units,
+            perp_units=perp_units,
+            avg_entry_spot=avg_entry_spot,
+            avg_entry_perp=avg_entry_perp,
+        )
+
+    async def reconcile(self) -> None:
+        logger.debug("reconcile is no-op in LiveHLExecutor")
+        return None
+
+    async def fetch_account_state(self) -> dict[str, Any]:
+        """Return raw perp + spot account state dicts for external reconcile callers."""
+        if self._address is None:
+            raise RuntimeError("account_address required for fetch_account_state")
+        perp_state, spot_state = await asyncio.gather(
+            asyncio.to_thread(self._info.user_state, self._address),
+            asyncio.to_thread(self._info.spot_user_state, self._address),
+        )
+        return {"perp": perp_state, "spot": spot_state}
