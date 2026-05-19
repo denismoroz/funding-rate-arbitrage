@@ -111,6 +111,8 @@ def _make_underlying(
     else:
         # Default: always return zero spot balance
         underlying.get_position = AsyncMock(return_value=_make_pos(spot_units=0.0))
+    # round_qty: identity by default (tests using full-precision floats stay green)
+    underlying.round_qty = AsyncMock(side_effect=lambda coin, qty: qty)
     return underlying
 
 

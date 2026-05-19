@@ -386,11 +386,28 @@ class AtomicExecutor:
                 errors=tuple(all_errors),
             )
 
-        # Adjust spot fill qty to actual on-chain delta
-        adjusted_spot_fill = replace(spot_outcome.fill, qty=spot_delta)
+        # Round spot delta down to perp asset's szDecimals — HL refuses to sign
+        # orders with finer qty precision. Both legs are then recorded at the
+        # same coarse qty; any spot residual stays as dust on the wallet.
+        rounded_qty = await self._underlying.round_qty(perp_req.coin, abs(spot_delta))
+        if rounded_qty < 1e-12:
+            await self._bus.publish(self._make_event(
+                level="ERROR", kind="paired_open_failed",
+                message=f"spot delta {spot_delta} rounds to zero at perp precision",
+                payload_json={"coin": coin, "spot_delta": spot_delta},
+            ))
+            return PairedOpenResult(
+                status="failed", perp_fill=None,
+                spot_fill=replace(spot_outcome.fill, qty=spot_delta),
+                perp_attempts=0, spot_attempts=spot_attempts,
+                errors=tuple(all_errors),
+            )
+
+        # Both legs record the same rounded qty; spot residual remains as dust
+        adjusted_spot_fill = replace(spot_outcome.fill, qty=rounded_qty)
 
         # --- Leg 2: perp short sized to actual spot delta ---
-        effective_perp_req = replace(perp_req, qty=abs(spot_delta))
+        effective_perp_req = replace(perp_req, qty=rounded_qty)
         perp_outcome = await self._submit_counting(effective_perp_req)
         perp_attempts = perp_outcome.attempts
         all_errors.extend(repr(e) for e in perp_outcome.errors)
@@ -532,10 +549,25 @@ class AtomicExecutor:
                 errors=tuple(all_errors),
             )
 
-        adjusted_spot_fill = replace(spot_outcome.fill, qty=abs_delta)
+        # Round to perp asset szDecimals (HL refuses finer precision)
+        rounded_qty = await self._underlying.round_qty(perp_req.coin, abs_delta)
+        if rounded_qty < 1e-12:
+            await self._bus.publish(self._make_event(
+                level="ERROR", kind="paired_close_failed",
+                message=f"spot delta {abs_delta} rounds to zero at perp precision",
+                payload_json={"coin": coin, "spot_delta": spot_delta},
+            ))
+            return PairedCloseResult(
+                status="failed", perp_fill=None,
+                spot_fill=replace(spot_outcome.fill, qty=abs_delta),
+                perp_attempts=0, spot_attempts=spot_attempts,
+                errors=tuple(all_errors),
+            )
+
+        adjusted_spot_fill = replace(spot_outcome.fill, qty=rounded_qty)
 
         # --- Leg 2: perp cover sized to actual spot delta ---
-        effective_perp_req = replace(perp_req, qty=abs_delta)
+        effective_perp_req = replace(perp_req, qty=rounded_qty)
         perp_outcome = await self._submit_counting(effective_perp_req)
         perp_attempts = perp_outcome.attempts
         all_errors.extend(repr(e) for e in perp_outcome.errors)

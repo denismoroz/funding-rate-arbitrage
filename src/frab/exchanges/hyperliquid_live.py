@@ -98,6 +98,7 @@ class LiveHLExecutor:
         self._slippage = slippage
         self._partial_fill_tolerance = partial_fill_tolerance
         self._clock_fn = clock_fn if clock_fn is not None else lambda: datetime.now(UTC)
+        self._sz_decimals_cache: dict[str, int] | None = None
 
     def _make_name(self, req: OrderRequest) -> str:
         if req.leg == Leg.PERP:
@@ -202,6 +203,17 @@ class LiveHLExecutor:
     async def reconcile(self) -> None:
         logger.debug("reconcile is no-op in LiveHLExecutor")
         return None
+
+    async def round_qty(self, coin: str, qty: float) -> float:
+        """Floor qty to the asset's szDecimals (HL rejects orders with finer precision)."""
+        if self._sz_decimals_cache is None:
+            meta = await asyncio.to_thread(self._info.meta)
+            self._sz_decimals_cache = {u["name"]: int(u["szDecimals"]) for u in meta["universe"]}
+        sz_dec = self._sz_decimals_cache.get(coin)
+        if sz_dec is None:
+            raise ValueError(f"unknown coin {coin!r} (not in perp meta)")
+        step = 10 ** -sz_dec
+        return int(qty / step) * step
 
     async def fetch_account_state(self) -> dict[str, Any]:
         """Return raw perp + spot account state dicts for external reconcile callers."""

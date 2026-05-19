@@ -15,6 +15,8 @@ import sqlalchemy
 from frab.settings import PROJECT_ROOT, get_settings
 from frab.db.models import Exchange, FundingRate, Market
 from frab.db.session import session_scope
+from frab.events.bus import EventBus
+from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.base import Leg, MarketDataSource, OrderRequest, Side
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.hyperliquid_live import LiveHLExecutor
@@ -517,3 +519,86 @@ def smoke_all(
         await _smoke_perp_impl(settings, perp_coin, perp_qty, perp_slippage)
 
     asyncio.run(_run_all())
+
+
+async def _smoke_paired_impl(settings, coin: str, qty: float, wait_sec: float) -> None:
+    _, executor = _build_smoke_clients(settings)
+    bus = EventBus()
+    atomic = AtomicExecutor(executor, bus, max_attempts=1, sleep_between_attempts=())
+
+    ts = int(time.time() * 1000)
+    perp_open = OrderRequest(
+        coin=coin, leg=Leg.PERP, side=Side.SELL, qty=qty,
+        client_ref=f"smoke-paired-open-perp-{ts}",
+    )
+    spot_open = OrderRequest(
+        coin=coin, leg=Leg.SPOT, side=Side.BUY, qty=qty,
+        client_ref=f"smoke-paired-open-spot-{ts}",
+    )
+
+    _hdr("=== open_paired ===")
+    typer.echo(f"  requested {qty} {coin}")
+    open_result = await atomic.open_paired(perp_open, spot_open)
+    typer.echo(f"  status: {open_result.status}")
+    if open_result.spot_fill is not None:
+        typer.echo(f"  spot fill: qty={open_result.spot_fill.qty}  px={open_result.spot_fill.price}")
+    if open_result.perp_fill is not None:
+        typer.echo(f"  perp fill: qty={open_result.perp_fill.qty}  px={open_result.perp_fill.price}")
+    if open_result.status != "ok":
+        typer.echo(f"  errors: {open_result.errors}")
+        return
+
+    typer.echo(f"  waiting {wait_sec}s ...")
+    await asyncio.sleep(wait_sec)
+
+    pos = await executor.get_position(coin)
+    _hdr("=== position after open ===")
+    if pos is not None:
+        typer.echo(f"  spot_units: {pos.spot_units}   perp_units: {pos.perp_units}")
+    else:
+        typer.echo("  (zero)")
+
+    actual_qty = open_result.spot_fill.qty
+    ts2 = int(time.time() * 1000)
+    perp_close = OrderRequest(
+        coin=coin, leg=Leg.PERP, side=Side.BUY, qty=actual_qty,
+        client_ref=f"smoke-paired-close-perp-{ts2}",
+    )
+    spot_close = OrderRequest(
+        coin=coin, leg=Leg.SPOT, side=Side.SELL, qty=actual_qty,
+        client_ref=f"smoke-paired-close-spot-{ts2}",
+    )
+
+    _hdr("=== close_paired ===")
+    typer.echo(f"  closing {actual_qty} {coin}")
+    close_result = await atomic.close_paired(perp_close, spot_close)
+    typer.echo(f"  status: {close_result.status}")
+    if close_result.spot_fill is not None:
+        typer.echo(f"  spot fill: qty={close_result.spot_fill.qty}  px={close_result.spot_fill.price}")
+    if close_result.perp_fill is not None:
+        typer.echo(f"  perp fill: qty={close_result.perp_fill.qty}  px={close_result.perp_fill.price}")
+    if close_result.status != "ok":
+        typer.echo(f"  errors: {close_result.errors}")
+
+    pos2 = await executor.get_position(coin)
+    _hdr("=== position after close ===")
+    if pos2 is not None:
+        typer.echo(f"  spot_units: {pos2.spot_units}   perp_units: {pos2.perp_units}")
+    else:
+        typer.echo("  (zero)")
+
+
+@live_smoke_app.command("paired")
+def smoke_paired(
+    coin: str = "BTC",
+    qty: float = 0.00015,
+    wait_sec: float = 5.0,
+) -> None:
+    """Atomic open_paired + close_paired round-trip (validates spot-first flow)."""
+    settings = get_settings()
+    _smoke_check_network(settings)
+    typer.echo(
+        f"paired smoke: open + close {qty} {coin} (spot+perp) on {settings.hl_network} — proceed?"
+    )
+    typer.confirm("Proceed?", abort=True)
+    asyncio.run(_smoke_paired_impl(settings, coin, qty, wait_sec))

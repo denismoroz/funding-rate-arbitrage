@@ -134,3 +134,6 @@ class PaperExecutor:
 
     async def reconcile(self) -> None:
         return None
+
+    async def round_qty(self, coin: str, qty: float) -> float:
+        return qty
