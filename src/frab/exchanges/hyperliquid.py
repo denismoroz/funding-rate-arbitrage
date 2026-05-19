@@ -59,6 +59,10 @@ class HLMarketData:
         else:
             self._client = httpx.AsyncClient(timeout=timeout_s)
             self._owns_client = True
+        # Lazy cache: spot pair asset_id (e.g. 142) → pair name (e.g. "UBTC/USDC").
+        # HL userFillsByTime returns spot fills as "@<asset_id>" instead of
+        # the pretty name, so we resolve via spotMeta on first need.
+        self._spot_idx_to_name: dict[int, str] | None = None
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -157,13 +161,37 @@ class HLMarketData:
             ))
         return specs
 
-    def _normalize_hl_coin(self, hl_coin: str) -> tuple[str, Leg]:
+    async def _load_spot_idx_map(self) -> None:
+        if self._spot_idx_to_name is not None:
+            return
+        meta = await self._post({"type": "spotMeta"})
+        mapping: dict[int, str] = {}
+        for entry in meta.get("universe", []):
+            idx = entry.get("index")
+            name = entry.get("name", "")
+            if isinstance(idx, int) and "/" in name:
+                mapping[idx] = name
+        self._spot_idx_to_name = mapping
+
+    async def _normalize_hl_coin(self, hl_coin: str) -> tuple[str, Leg]:
         """Normalize HL coin field to (coin, leg).
 
-        Perp coins are plain names like "BTC". Spot coins have a slash like
-        "UBTC/USDC" — strip the slash, look up the wrapped token in the inverse
-        map (UBTC → BTC), fall back to the part before the slash if not found.
+        Perp coins: plain names like "BTC".
+        Spot coins (two HL formats):
+          - "UBTC/USDC" — strip slash, map wrapped→underlying via _SPOT_TOKEN_INVERSE.
+          - "@142" — internal asset_id; resolve via spotMeta universe.
         """
+        if hl_coin.startswith("@"):
+            try:
+                idx = int(hl_coin[1:])
+            except ValueError:
+                return hl_coin, Leg.PERP
+            await self._load_spot_idx_map()
+            name = (self._spot_idx_to_name or {}).get(idx)
+            if name and "/" in name:
+                wrapped = name.split("/")[0]
+                return _SPOT_TOKEN_INVERSE.get(wrapped, wrapped), Leg.SPOT
+            return hl_coin, Leg.PERP
         if "/" in hl_coin:
             wrapped = hl_coin.split("/")[0]
             coin = _SPOT_TOKEN_INVERSE.get(wrapped, wrapped)
@@ -187,7 +215,7 @@ class HLMarketData:
         fills: list[UserFill] = []
         for record in data:
             hl_coin = record["coin"]
-            coin, leg = self._normalize_hl_coin(hl_coin)
+            coin, leg = await self._normalize_hl_coin(hl_coin)
             # HL side: "B" → BUY, "A" → SELL (maker/taker from the aggressor side)
             side = Side.BUY if record["side"] == "B" else Side.SELL
             fills.append(UserFill(

@@ -1,6 +1,7 @@
 """Tests for HLMarketData."""
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -404,4 +405,37 @@ async def test_fetch_user_fills_unknown_spot_coin_fallback(mocker):
 
     assert len(result) == 1
     assert result[0].coin == "PURR"
+    assert result[0].leg == Leg.SPOT
+
+
+@pytest.mark.asyncio
+async def test_fetch_user_fills_resolves_at_index_format(mocker):
+    """HL also returns spot fills as '@<idx>' — must resolve via spotMeta."""
+    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+
+    spot_meta = {
+        "universe": [
+            {"index": 142, "name": "UBTC/USDC", "tokens": [142, 0], "isCanonical": True},
+            {"index": 0, "name": "PURR/USDC", "tokens": [1, 0], "isCanonical": True},
+        ],
+        "tokens": [],
+    }
+    fill = _fill_record("@142", 1_700_000_000_000, "B", "0.00015", "76800.0", "0.00000011", "UBTC", 1, 1)
+
+    async def routed(request):
+        body = json.loads(request.content)
+        if body.get("type") == "spotMeta":
+            return httpx.Response(200, json=spot_meta)
+        if body.get("type") == "userFillsByTime":
+            return httpx.Response(200, json=[fill])
+        return httpx.Response(400)
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").mock(side_effect=routed)
+        client = httpx.AsyncClient(base_url=BASE_URL)
+        md = HLMarketData(api_url=INFO_URL, client=client)
+        result = await md.fetch_user_fills("0xABCD", since_ms=0)
+
+    assert len(result) == 1
+    assert result[0].coin == "BTC"
     assert result[0].leg == Leg.SPOT
