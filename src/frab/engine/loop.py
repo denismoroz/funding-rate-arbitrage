@@ -30,6 +30,7 @@ class Recorder(Protocol):
     async def save_funding(self, tick: FundingTick) -> None: ...
     async def save_tick_report(self, report: TickReport) -> None: ...
     async def save_equity(self, snapshot: EquitySnapshot) -> None: ...
+    async def latest_hour_ts(self) -> datetime | None: ...
 
 
 class NullRecorder:
@@ -43,6 +44,9 @@ class NullRecorder:
         return None
 
     async def save_equity(self, snapshot: EquitySnapshot) -> None:
+        return None
+
+    async def latest_hour_ts(self) -> datetime | None:
         return None
 
 
@@ -80,6 +84,10 @@ class Engine:
         self._fee_reconciler = fee_reconciler
         self._stop = False
         self._last_hour: datetime | None = None
+        # True until tick_once() rehydrates _last_hour from the recorder.
+        # Prevents the first post-restart tick from re-firing the hour
+        # branch when the current hour was already accrued before restart.
+        self._needs_hydration: bool = True
         self._tick_count: int = 0
 
     def stop(self) -> None:
@@ -102,6 +110,14 @@ class Engine:
 
     async def tick_once(self, now: datetime) -> TickOutcome:
         self._tick_count += 1
+
+        # Rehydrate _last_hour from the recorder on the first tick after
+        # process start so we don't re-accrue funding for an hour that a
+        # prior engine instance already accrued.
+        if self._needs_hydration:
+            self._needs_hydration = False
+            if self._last_hour is None:
+                self._last_hour = await self._recorder.latest_hour_ts()
 
         # 1. Fetch quotes concurrently
         quote_tasks = [self._market_data.fetch_quote(coin) for coin in self._coins]

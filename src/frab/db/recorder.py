@@ -416,3 +416,15 @@ class DbRecorder:
                     fees_cum=snapshot.fees_cum,
                 )
             )
+
+    async def latest_hour_ts(self):
+        """Floor-to-hour ts of the most recent funding_rates row, or None."""
+        from sqlalchemy import func
+        async with session_scope(self._session_factory) as session:
+            ts = await session.scalar(select(func.max(FundingRate.ts)))
+        if ts is None:
+            return None
+        if ts.tzinfo is None:
+            from datetime import UTC as _UTC
+            ts = ts.replace(tzinfo=_UTC)
+        return ts.replace(minute=0, second=0, microsecond=0)

@@ -450,6 +450,65 @@ def test_force_hour_tick_resets_last_hour(mocker):
 
 
 # ---------------------------------------------------------------------------
+# Hydration: _last_hour restored from recorder so restart doesn't re-fire
+# the hour branch for an already-accrued hour.
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_once_hydrates_last_hour_suppresses_same_hour(
+    market_data, strategy, recorder
+):
+    """Recorder reports current hour already accrued → no hour branch fires."""
+    now = datetime(2026, 5, 19, 13, 34, 0, tzinfo=UTC)
+    recorder.latest_hour_ts.return_value = datetime(2026, 5, 19, 13, 0, 0, tzinfo=UTC)
+
+    engine = Engine(
+        market_data=market_data, strategy=strategy, coins=("BTC",), recorder=recorder
+    )
+    outcome = await engine.tick_once(now)
+
+    # Minute tick still fires
+    strategy.on_minute_tick.assert_called_once()
+    # Hour tick suppressed (recorder said this hour was already done)
+    strategy.on_hour_tick.assert_not_called()
+    market_data.fetch_funding.assert_not_called()
+    assert outcome.funding is None
+    assert outcome.tick_report is None
+    assert engine._last_hour == datetime(2026, 5, 19, 13, 0, 0, tzinfo=UTC)
+
+
+async def test_tick_once_hydrate_none_preserves_cold_start(
+    market_data, strategy, recorder
+):
+    """Cold DB (recorder returns None) → first tick fires hour branch (backwards-compat)."""
+    now = datetime(2026, 5, 19, 13, 34, 0, tzinfo=UTC)
+    recorder.latest_hour_ts.return_value = None
+
+    engine = Engine(
+        market_data=market_data, strategy=strategy, coins=("BTC",), recorder=recorder
+    )
+    await engine.tick_once(now)
+
+    strategy.on_hour_tick.assert_called_once()
+
+
+async def test_tick_once_hydrate_previous_hour_fires_at_new_hour(
+    market_data, strategy, recorder
+):
+    """Recorder hydrates to previous hour; current tick is in new hour → fires."""
+    now = datetime(2026, 5, 19, 14, 0, 0, tzinfo=UTC)
+    recorder.latest_hour_ts.return_value = datetime(2026, 5, 19, 13, 0, 0, tzinfo=UTC)
+
+    engine = Engine(
+        market_data=market_data, strategy=strategy, coins=("BTC",), recorder=recorder
+    )
+    await engine.tick_once(now)
+
+    strategy.on_hour_tick.assert_called_once()
+    assert engine._last_hour == datetime(2026, 5, 19, 14, 0, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
 # Test 12: run calls tick_once until stop
 # ---------------------------------------------------------------------------
 
