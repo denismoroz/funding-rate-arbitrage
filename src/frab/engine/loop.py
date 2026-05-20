@@ -73,6 +73,7 @@ class Engine:
         event_bus: EventBus | None = None,
         fee_reconciler: "FeeReconciler | None" = None,
         funding_reconciler: "FundingReconciler | None" = None,
+        wallet_snapshotter: "Callable[[], Awaitable[None]] | None" = None,
     ) -> None:
         if len(coins) == 0:
             raise ValueError("coins must be non-empty")
@@ -85,6 +86,7 @@ class Engine:
         self._event_bus = event_bus
         self._fee_reconciler = fee_reconciler
         self._funding_reconciler = funding_reconciler
+        self._wallet_snapshotter = wallet_snapshotter
         self._stop = False
         self._last_hour: datetime | None = None
         # True until tick_once() rehydrates _last_hour from the recorder.
@@ -251,6 +253,13 @@ class Engine:
                     message=f"Funding reconcile failed: {type(exc).__name__}: {exc}",
                     payload_json={"error_type": type(exc).__name__, "error_message": str(exc)},
                 ))
+
+        # 5d. Wallet snapshot (every tick, non-fatal, mainnet only)
+        if self._wallet_snapshotter is not None:
+            try:
+                await self._wallet_snapshotter()
+            except Exception as exc:
+                logger.warning("wallet_snapshot_failed: %s", exc, exc_info=True)
 
         # 6. Equity snapshot (every tick)
         equity = self._strategy.compute_equity(now)

@@ -21,6 +21,7 @@ from frab.db.models import (
     Position,
     PositionMode,
     PositionStatus,
+    Price,
     Strategy,
 )
 from frab.db.recorder import DbRecorder
@@ -196,6 +197,45 @@ def _build_fee_reconciler(
         strategy=strategy,
         strategy_id=strategy_id,
     )
+
+
+def _build_wallet_snapshotter(
+    settings: Settings,
+    *,
+    session_factory,
+    executor,
+    recorder: "DbRecorder",
+):
+    """Return an async callable that records a WalletSnapshot, or None for paper mode."""
+    if settings.hl_network != "mainnet":
+        return None
+
+    async def _snapshot() -> None:
+        now = datetime.now(UTC)
+        # Fetch latest mark per coin from DB to price spot holdings
+        mark_prices: dict[str, float] = {}
+        async with session_scope(session_factory) as s:
+            rows = await s.execute(
+                select(Market.coin, Price.mark, Price.ts)
+                .join(Price, Price.market_id == Market.id)
+                .order_by(Price.ts.desc())
+                .limit(500)
+            )
+            for coin, mark, _price_ts in rows.all():
+                if coin not in mark_prices:
+                    mark_prices[coin] = float(mark)
+
+        raw = await executor.fetch_wallet_state(mark_prices=mark_prices)
+        spot_equity = sum(b["usd_value"] for b in raw["spot_balances"])
+        await recorder.record_wallet_snapshot(
+            ts=now,
+            account_value=raw["total_usd"],
+            perp_equity=raw["perp_account_value"],
+            spot_equity=spot_equity,
+            withdrawable=raw["usdc_spot"],
+        )
+
+    return _snapshot
 
 
 def _build_funding_reconciler(
@@ -481,6 +521,14 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             strategy_id=strategy_id,
         )
 
+        # Wire wallet snapshotter for live mode; paper mode has no wallet to snapshot.
+        wallet_snapshotter = _build_wallet_snapshotter(
+            settings,
+            session_factory=session_factory,
+            executor=executor,
+            recorder=recorder,
+        )
+
         engine = Engine(
             market_data=market_data,
             strategy=strategy,
@@ -489,6 +537,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             event_bus=bus,
             fee_reconciler=fee_reconciler,
             funding_reconciler=funding_reconciler,
+            wallet_snapshotter=wallet_snapshotter,
         )
         sink = EventDbSink(session_factory, bus)
 

@@ -77,6 +77,15 @@ export type EquitySnapshot = {
   fees_cum: number;
 };
 
+export type WalletSnapshot = {
+  id: number;
+  ts: string;
+  account_value: number;
+  perp_equity: number;
+  spot_equity: number;
+  withdrawable: number;
+};
+
 export type Fill = {
   id: number;
   position_id: number;
@@ -197,6 +206,16 @@ export function fetchEquity(
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   if (opts?.since != null) params.set("since", opts.since);
   return apiFetch<EquitySnapshot[]>(`/equity?${params}`);
+}
+
+export function fetchWalletHistory(
+  opts?: { limit?: number; since?: string },
+): Promise<WalletSnapshot[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.since != null) params.set("since", opts.since);
+  const qs = params.toString();
+  return apiFetch<WalletSnapshot[]>(`/equity/wallet-history${qs ? "?" + qs : ""}`);
 }
 
 export function fetchPositions(opts?: {

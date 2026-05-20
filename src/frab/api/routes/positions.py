@@ -118,14 +118,16 @@ async def list_positions(
             ):
                 slippage_cost += (position.exit_perp_price - position.exit_spot_price) * position.spot_units
 
-        # Break-even date projection (OPEN positions only)
+        # Break-even date projection (OPEN positions only).
+        # Use |slippage| so favorable open basis isn't counted as profit —
+        # basis typically reverses on close and shouldn't offset fees.
         breakeven_at: datetime | None = None
         if position.status == PositionStatus.OPEN and slippage_cost is not None and mark is not None:
             sig_annual = latest_signals.get((position.strategy_id, coin))
             if sig_annual is not None and sig_annual > 0:
                 remaining = max(
                     0.0,
-                    position.fees_paid + slippage_cost - position.funding_collected,
+                    position.fees_paid + abs(slippage_cost) - position.funding_collected,
                 )
                 if remaining <= 0.0:
                     breakeven_at = position.opened_at

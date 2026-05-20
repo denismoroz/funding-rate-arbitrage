@@ -188,6 +188,18 @@ class EquitySnapshot(Base):
     fees_cum: Mapped[float]
 
 
+class WalletSnapshot(Base):
+    __tablename__ = "wallet_snapshots"
+    __table_args__ = (Index("ix_wallet_snapshots_ts", "ts"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    account_value: Mapped[float]
+    perp_equity: Mapped[float]
+    spot_equity: Mapped[float]
+    withdrawable: Mapped[float]
+
+
 class Event(Base):
     __tablename__ = "events"
     __table_args__ = (

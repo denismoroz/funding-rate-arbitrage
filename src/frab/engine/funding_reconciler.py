@@ -81,8 +81,24 @@ class FundingReconciler:
         positions_updated = 0
         # Track which (coin, ts) pairs were matched to any position.
         matched_keys: set[tuple[str, datetime]] = set()
+        # Earliest opened_at per coin across ALL positions in DB — used to
+        # filter out pre-history HL funding payments that predate our first
+        # tracked position (legitimate income but unattributable).
+        earliest_opened: dict[str, datetime] = {}
 
         async with session_scope(self._session_factory) as session:
+            min_stmt = (
+                select(Market.coin, func.min(Position.opened_at))
+                .join(Position, Position.market_id == Market.id)
+                .group_by(Market.coin)
+            )
+            for coin_name, min_ts in (await session.execute(min_stmt)).all():
+                if min_ts is None:
+                    continue
+                if min_ts.tzinfo is None:
+                    min_ts = min_ts.replace(tzinfo=UTC)
+                earliest_opened[coin_name] = min_ts
+
             # Load open positions and recently-closed positions within lookback.
             stmt = (
                 select(Position, Market.coin)
@@ -133,9 +149,18 @@ class FundingReconciler:
                 self._strategy.set_funding_cum(float(total))
 
         # Count unmatched: payments with no position match at all.
-        unmatched_payments = [
-            p for p in payments if (p.coin, p.ts) not in matched_keys
-        ]
+        # Exclude pre-history: payments whose ts predates our earliest tracked
+        # position for that coin (legitimate income but unattributable).
+        # Payments for coins we've never had a position in DO count as unmatched
+        # (suspicious — wrong wallet address or schema drift).
+        unmatched_payments = []
+        for p in payments:
+            if (p.coin, p.ts) in matched_keys:
+                continue
+            earliest = earliest_opened.get(p.coin)
+            if earliest is not None and p.ts < earliest:
+                continue
+            unmatched_payments.append(p)
         unmatched = len(unmatched_payments)
 
         report = FundingReconcileReport(

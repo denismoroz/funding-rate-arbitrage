@@ -201,8 +201,9 @@ async def test_payment_before_open_excluded(session_factory, mocker):
     report = await rec.run_once()
 
     assert await _get_funding(session_factory, pos_id) == pytest.approx(0.0002)
-    # The pre-open payment is unmatched
-    assert report.unmatched == 1
+    # Pre-history payments (before earliest opened_at for this coin) are
+    # silently excluded — they're legit HL income but unattributable.
+    assert report.unmatched == 0
 
 
 async def test_unmatched_coin_warning_event(session_factory, mocker):

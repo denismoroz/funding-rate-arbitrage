@@ -20,8 +20,8 @@ import {
   fetchPositionFundingHistory,
   fetchAlerts,
   fetchWallet,
+  fetchWalletHistory,
   type Alert,
-  type EquitySnapshot,
   type Fill,
   type Position,
 } from "../lib/api";
@@ -52,20 +52,32 @@ function ErrorMsg({ message }: { message: string }) {
 
 // ── Equity chart tooltip ───────────────────────────────────────────────────────
 
+type ChartPoint = {
+  ts: string;
+  value: number;
+  // Optional sidecars (only present when the row is a strategy snapshot)
+  funding_cum?: number;
+  fees_cum?: number;
+};
+
 function EquityTooltip({
   active,
   payload,
 }: {
   active?: boolean;
-  payload?: Array<{ payload: EquitySnapshot }>;
+  payload?: Array<{ payload: ChartPoint }>;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   return (
     <div className="rounded border border-gray-200 bg-white p-2 text-xs shadow">
-      <p className="font-semibold">{formatCurrency(d.total_equity)}</p>
-      <p className="text-green-600">funding: {formatCurrencyPrecise(d.funding_cum)}</p>
-      <p className="text-red-500">fees: {formatCurrencyPrecise(d.fees_cum)}</p>
+      <p className="font-semibold">{formatCurrency(d.value)}</p>
+      {d.funding_cum != null && (
+        <p className="text-green-600">funding: {formatCurrencyPrecise(d.funding_cum)}</p>
+      )}
+      {d.fees_cum != null && (
+        <p className="text-red-500">fees: {formatCurrencyPrecise(d.fees_cum)}</p>
+      )}
       <p className="text-gray-400">{new Date(d.ts).toLocaleTimeString()}</p>
     </div>
   );
@@ -163,14 +175,18 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
 
 function EquityCard() {
   const strategyId = useActiveStrategyId();
-  const { data, isLoading, error } = useQuery({
+  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: stratData, isLoading: stratLoading, error: stratError } = useQuery({
     queryKey: ["equity", strategyId],
-    queryFn: () =>
-      fetchEquity(strategyId!, {
-        limit: 2000,
-        since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-      }),
+    queryFn: () => fetchEquity(strategyId!, { limit: 2000, since: since24h }),
     enabled: !!strategyId,
+  });
+
+  const { data: walletHistory } = useQuery({
+    queryKey: ["wallet-history"],
+    queryFn: () => fetchWalletHistory({ limit: 2000, since: since24h }),
+    refetchInterval: 30_000,
   });
 
   const { data: walletData } = useQuery({
@@ -180,25 +196,47 @@ function EquityCard() {
     refetchInterval: 30_000,
   });
 
-  const slice = data
-    ? (() => {
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-        const recent = data.filter((d) => new Date(d.ts).getTime() >= cutoff);
-        return recent.length > 0 ? recent : data;
-      })()
-    : [];
+  // Prefer wallet history (real HL state); fall back to strategy synthetic equity.
+  const usingWallet = (walletHistory?.length ?? 0) > 0;
+  const isLoading = stratLoading;
+  const error = stratError;
 
-  const latest = slice.length > 0 ? slice[slice.length - 1] : undefined;
+  const slice: ChartPoint[] = useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    if (usingWallet) {
+      const all = (walletHistory ?? []).map<ChartPoint>((w) => ({
+        ts: w.ts,
+        value: w.account_value,
+      }));
+      const recent = all.filter((d) => new Date(d.ts).getTime() >= cutoff);
+      return recent.length > 0 ? recent : all;
+    }
+    const all = (stratData ?? []).map<ChartPoint>((s) => ({
+      ts: s.ts,
+      value: s.total_equity,
+      funding_cum: s.funding_cum,
+      fees_cum: s.fees_cum,
+    }));
+    const recent = all.filter((d) => new Date(d.ts).getTime() >= cutoff);
+    return recent.length > 0 ? recent : all;
+  }, [usingWallet, walletHistory, stratData]);
 
-  // Use wallet total when available; fall back to local accounting equity
+  const latestStrat = stratData && stratData.length > 0 ? stratData[stratData.length - 1] : undefined;
+
+  // Use wallet live total when available; fall back to local accounting equity.
   const totalDisplay =
-    walletData != null ? walletData.total_usd : latest?.total_equity;
+    walletData != null ? walletData.total_usd : latestStrat?.total_equity;
 
   const { yDecimals, yDomain, chartTitle } = useMemo(() => {
+    const prefix = usingWallet ? "Wallet" : "Equity";
     if (slice.length === 0) {
-      return { yDecimals: 2, yDomain: ["auto", "auto"] as [string, string], chartTitle: "Equity (last 24h)" };
+      return {
+        yDecimals: 2,
+        yDomain: ["auto", "auto"] as [string, string],
+        chartTitle: `${prefix} (last 24h)`,
+      };
     }
-    const values = slice.map((d) => d.total_equity);
+    const values = slice.map((d) => d.value);
     const min = Math.min(...values);
     const max = Math.max(...values);
     const sp = max - min;
@@ -220,16 +258,16 @@ function EquityCard() {
     const spanMinutes = spanMs / (1000 * 60);
     let title: string;
     if (spanHours >= 23) {
-      title = "Equity (last 24h)";
+      title = `${prefix} (last 24h)`;
     } else if (spanHours >= 1) {
-      title = `Equity (last ${Math.floor(spanHours)}h)`;
+      title = `${prefix} (last ${Math.floor(spanHours)}h)`;
     } else {
       const mins = Math.floor(spanMinutes / 5) * 5 || Math.floor(spanMinutes);
-      title = `Equity (last ${mins}m)`;
+      title = `${prefix} (last ${mins}m)`;
     }
 
     return { yDecimals: dec, yDomain: domain, chartTitle: title };
-  }, [slice]);
+  }, [slice, usingWallet]);
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -237,7 +275,7 @@ function EquityCard() {
         <h2 className="text-sm font-semibold text-gray-700">
           {chartTitle}
         </h2>
-        {(totalDisplay != null || latest) && (
+        {(totalDisplay != null || latestStrat) && (
           <div className="flex items-baseline gap-3 text-xs text-gray-500">
             <span>
               Total{" "}
@@ -248,13 +286,13 @@ function EquityCard() {
                 <span className="ml-1 text-xs text-gray-400">(wallet)</span>
               )}
             </span>
-            {latest && (
+            {latestStrat && (
               <>
                 <span className="text-green-600">
-                  funding {formatCurrencyPrecise(latest.funding_cum)}
+                  funding {formatCurrencyPrecise(latestStrat.funding_cum)}
                 </span>
                 <span className="text-red-500">
-                  fees {formatCurrencyPrecise(latest.fees_cum)}
+                  fees {formatCurrencyPrecise(latestStrat.fees_cum)}
                 </span>
               </>
             )}
@@ -290,7 +328,7 @@ function EquityCard() {
             <Tooltip content={<EquityTooltip />} />
             <Line
               type="monotone"
-              dataKey="total_equity"
+              dataKey="value"
               stroke="#6366f1"
               strokeWidth={2}
               dot={false}

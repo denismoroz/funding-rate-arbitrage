@@ -25,6 +25,7 @@ EXPECTED_TABLES = {
     "equity_snapshots",
     "events",
     "position_funding_accruals",
+    "wallet_snapshots",
 }
 
 

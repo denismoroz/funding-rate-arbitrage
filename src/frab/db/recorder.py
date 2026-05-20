@@ -17,6 +17,7 @@ from frab.db.models import (
     PositionStatus,
     Price,
     Signal,
+    WalletSnapshot as WalletSnapshotModel,
 )
 from frab.db.session import session_scope
 from frab.engine.signals import Decision
@@ -414,6 +415,26 @@ class DbRecorder:
                     perp_realized_cum=snapshot.perp_realized_cum,
                     funding_cum=snapshot.funding_cum,
                     fees_cum=snapshot.fees_cum,
+                )
+            )
+
+    async def record_wallet_snapshot(
+        self,
+        *,
+        ts,
+        account_value: float,
+        perp_equity: float,
+        spot_equity: float,
+        withdrawable: float,
+    ) -> None:
+        async with session_scope(self._session_factory) as session:
+            session.add(
+                WalletSnapshotModel(
+                    ts=ts,
+                    account_value=account_value,
+                    perp_equity=perp_equity,
+                    spot_equity=spot_equity,
+                    withdrawable=withdrawable,
                 )
             )
 

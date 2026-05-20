@@ -50,6 +50,17 @@ class EquityOut(_UtcAwareOut):
     fees_cum: float
 
 
+class WalletSnapshotOut(_UtcAwareOut):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ts: datetime
+    account_value: float
+    perp_equity: float
+    spot_equity: float
+    withdrawable: float
+
+
 class FillOut(_UtcAwareOut):
     model_config = ConfigDict(from_attributes=True)
 
