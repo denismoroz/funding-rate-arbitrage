@@ -33,7 +33,7 @@ class DbRecorder:
         session_factory: async_sessionmaker[AsyncSession],
         strategy_id: int,
         exchange_id: int,
-        mode: PositionMode = PositionMode.PAPER,
+        mode: PositionMode = PositionMode.LIVE,
     ) -> None:
         self._session_factory = session_factory
         self._strategy_id = strategy_id
@@ -235,7 +235,6 @@ class DbRecorder:
                         price=spot_fill.price,
                         fee=spot_fill.fee,
                         slippage_bps=spot_fill.slippage_bps,
-                        is_paper=spot_fill.is_paper,
                         client_ref=spot_fill.client_ref,
                     )
                 )
@@ -249,7 +248,6 @@ class DbRecorder:
                         price=perp_fill.price,
                         fee=perp_fill.fee,
                         slippage_bps=perp_fill.slippage_bps,
-                        is_paper=perp_fill.is_paper,
                         client_ref=perp_fill.client_ref,
                     )
                 )
@@ -318,7 +316,6 @@ class DbRecorder:
                         price=spot_fill.price,
                         fee=spot_fill.fee,
                         slippage_bps=spot_fill.slippage_bps,
-                        is_paper=spot_fill.is_paper,
                         client_ref=spot_fill.client_ref,
                     )
                 )
@@ -332,7 +329,6 @@ class DbRecorder:
                         price=perp_fill.price,
                         fee=perp_fill.fee,
                         slippage_bps=perp_fill.slippage_bps,
-                        is_paper=perp_fill.is_paper,
                         client_ref=perp_fill.client_ref,
                     )
                 )
@@ -387,7 +383,6 @@ class DbRecorder:
                         price=fill.price,
                         fee=fill.fee,
                         slippage_bps=fill.slippage_bps,
-                        is_paper=fill.is_paper,
                         client_ref=fill.client_ref,
                     ))
 

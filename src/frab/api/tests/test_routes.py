@@ -214,7 +214,7 @@ async def _make_position(s, *, strategy_id: int, market_id: int, status: Positio
     pos = Position(
         strategy_id=strategy_id,
         market_id=market_id,
-        mode=PositionMode.PAPER,
+        mode=PositionMode.LIVE,
         status=status,
         opened_at=_utc(),
         spot_units=1.0,
@@ -273,7 +273,6 @@ async def test_get_positions_includes_fills(api_client, session_factory):
                 price=100.0,
                 fee=0.5,
                 slippage_bps=1.0,
-                is_paper=True,
             ))
 
     resp = await api_client.get("/api/positions")
@@ -546,7 +545,7 @@ async def test_direct_list_positions(session_factory):
         await s.flush()
         pos = Position(
             strategy_id=strat.id, market_id=mkt.id,
-            mode=PositionMode.PAPER, status=PositionStatus.OPEN,
+            mode=PositionMode.LIVE, status=PositionStatus.OPEN,
             opened_at=_utc(), spot_units=1.0, perp_units=1.0,
             entry_spot_price=100.0, entry_perp_price=100.0,
         )
@@ -554,7 +553,7 @@ async def test_direct_list_positions(session_factory):
         await s.flush()
         s.add(Fill(
             position_id=pos.id, ts=_utc(), leg=Leg.SPOT, side=Side.BUY,
-            qty=1.0, price=100.0, fee=0.5, slippage_bps=1.0, is_paper=True,
+            qty=1.0, price=100.0, fee=0.5, slippage_bps=1.0,
         ))
         sid = strat.id
 

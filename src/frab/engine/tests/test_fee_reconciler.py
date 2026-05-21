@@ -98,7 +98,6 @@ async def _seed_position_and_fill(
     fill_qty: float,
     fill_price: float = 50000.0,
     fill_fee: float = 0.0,
-    is_paper: bool = False,
 ) -> tuple[int, int]:
     """Insert Position + Fill. Return (position_id, fill_id)."""
     async with session_scope(session_factory) as s:
@@ -126,7 +125,6 @@ async def _seed_position_and_fill(
             price=fill_price,
             fee=fill_fee,
             slippage_bps=0.0,
-            is_paper=is_paper,
         )
         s.add(fill)
         await s.flush()

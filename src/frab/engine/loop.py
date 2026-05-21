@@ -168,7 +168,7 @@ class Engine:
                     level="INFO",
                     source="engine",
                     kind="position.opened",
-                    message=f"Opened paper position on {coin}",
+                    message=f"Opened position on {coin}",
                     payload_json={
                         "coin": coin,
                         "spot_entry_price": spot.price,
@@ -179,7 +179,6 @@ class Engine:
                         "perp_qty": perp.qty,
                         "perp_fee": perp.fee,
                         "perp_slippage_bps": perp.slippage_bps,
-                        "is_paper": spot.is_paper,
                     },
                 ))
 
@@ -200,7 +199,7 @@ class Engine:
                     level="INFO",
                     source="engine",
                     kind="position.closed",
-                    message=f"Closed paper position on {coin}",
+                    message=f"Closed position on {coin}",
                     payload_json={
                         "coin": coin,
                         "spot_exit_price": spot.price,
@@ -211,7 +210,6 @@ class Engine:
                         "perp_qty": perp.qty,
                         "perp_fee": perp.fee,
                         "perp_slippage_bps": perp.slippage_bps,
-                        "is_paper": spot.is_paper,
                     },
                 ))
         else:

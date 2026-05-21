@@ -62,7 +62,7 @@ class _ReplayExecutor:
         return FillReport(
             coin=req.coin, leg=req.leg, side=req.side,
             ts=datetime.now(UTC), qty=req.qty, price=price,
-            fee=fee, slippage_bps=self._slip, is_paper=True,
+            fee=fee, slippage_bps=self._slip,
             client_ref=req.client_ref,
         )
 

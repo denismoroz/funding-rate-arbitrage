@@ -73,7 +73,6 @@ class FillOut(_UtcAwareOut):
     price: float
     fee: float
     slippage_bps: float
-    is_paper: bool
 
 
 class PositionOut(_UtcAwareOut):

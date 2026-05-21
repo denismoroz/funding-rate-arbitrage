@@ -48,7 +48,7 @@ async def _seed_failed_position(
         pos = Position(
             strategy_id=strategy_id,
             market_id=market_id,
-            mode=PositionMode.PAPER,
+            mode=PositionMode.LIVE,
             status=PositionStatus.FAILED,
             opened_at=opened_at,
             spot_units=0.1,

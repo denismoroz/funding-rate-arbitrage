@@ -73,7 +73,7 @@ def _make_pos(strategy_id: int, market_id: int, status: PositionStatus) -> Posit
     return Position(
         strategy_id=strategy_id,
         market_id=market_id,
-        mode="paper",
+        mode="live",
         status=status,
         opened_at=_T0,
         spot_units=0.1,

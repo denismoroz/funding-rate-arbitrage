@@ -48,7 +48,7 @@ async def _seed_position_with_mark(
         pos = Position(
             strategy_id=strategy_id,
             market_id=mkt.id,
-            mode=PositionMode.PAPER,
+            mode=PositionMode.LIVE,
             status=PositionStatus.OPEN,
             opened_at=_utc(),
             spot_units=spot_units,

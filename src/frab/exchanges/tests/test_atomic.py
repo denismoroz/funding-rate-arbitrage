@@ -47,7 +47,6 @@ def _make_fill(
         price=50_000.0,
         fee=0.5,
         slippage_bps=2.0,
-        is_paper=True,
         client_ref=client_ref,
     )
 

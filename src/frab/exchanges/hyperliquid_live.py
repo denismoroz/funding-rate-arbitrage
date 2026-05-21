@@ -147,7 +147,6 @@ class LiveHLExecutor:
             price=price,
             fee=fee,
             slippage_bps=self._slippage * 1e4,
-            is_paper=False,
             client_ref=req.client_ref,
         )
 
@@ -283,7 +282,6 @@ class LiveHLExecutor:
             price=price,
             fee=fee,
             slippage_bps=self._slippage * 1e4,
-            is_paper=False,
             client_ref=None,
         )
 

@@ -64,7 +64,6 @@ def _make_spot_buy(coin: str, qty: float = 0.1, price: float = 30_000.0, fee: fl
         price=price,
         fee=fee,
         slippage_bps=2.0,
-        is_paper=True,
     )
 
 
@@ -78,7 +77,6 @@ def _make_perp_sell(coin: str, qty: float = 0.1, price: float = 30_010.0, fee: f
         price=price,
         fee=fee,
         slippage_bps=1.5,
-        is_paper=True,
     )
 
 
@@ -92,7 +90,6 @@ def _make_spot_sell(coin: str, qty: float = 0.1, price: float = 31_000.0, fee: f
         price=price,
         fee=fee,
         slippage_bps=2.0,
-        is_paper=True,
     )
 
 
@@ -106,7 +103,6 @@ def _make_perp_buy(coin: str, qty: float = 0.1, price: float = 31_010.0, fee: fl
         price=price,
         fee=fee,
         slippage_bps=1.5,
-        is_paper=True,
     )
 
 
@@ -169,7 +165,7 @@ async def test_prime_loads_open_positions(session_factory):
         open_pos = Position(
             strategy_id=strat_id,
             market_id=coin_map["BTC"],
-            mode=PositionMode.PAPER,
+            mode=PositionMode.LIVE,
             status=PositionStatus.OPEN,
             opened_at=_TS,
             spot_units=0.1,
@@ -180,7 +176,7 @@ async def test_prime_loads_open_positions(session_factory):
         closed_pos = Position(
             strategy_id=strat_id,
             market_id=coin_map["ETH"],
-            mode=PositionMode.PAPER,
+            mode=PositionMode.LIVE,
             status=PositionStatus.CLOSED,
             opened_at=_TS,
             closed_at=_TS2,
@@ -935,12 +931,12 @@ async def test_save_tick_report_opens_persist_client_ref(session_factory):
     spot_buy = FillReport(
         coin="BTC", leg=Leg.SPOT, side=Side.BUY, ts=_TS,
         qty=0.1, price=30_000.0, fee=0.21, slippage_bps=2.0,
-        is_paper=True, client_ref="spot-open-ref-001",
+        client_ref="spot-open-ref-001",
     )
     perp_sell = FillReport(
         coin="BTC", leg=Leg.PERP, side=Side.SELL, ts=_TS,
         qty=0.1, price=30_010.0, fee=0.075, slippage_bps=1.5,
-        is_paper=True, client_ref="perp-open-ref-001",
+        client_ref="perp-open-ref-001",
     )
 
     report = TickReport(
@@ -980,12 +976,12 @@ async def test_save_tick_report_closes_persist_client_ref(session_factory):
     spot_sell = FillReport(
         coin="BTC", leg=Leg.SPOT, side=Side.SELL, ts=_TS2,
         qty=0.1, price=31_000.0, fee=0.21, slippage_bps=2.0,
-        is_paper=True, client_ref="spot-close-ref-002",
+        client_ref="spot-close-ref-002",
     )
     perp_buy = FillReport(
         coin="BTC", leg=Leg.PERP, side=Side.BUY, ts=_TS2,
         qty=0.1, price=31_010.0, fee=0.075, slippage_bps=1.5,
-        is_paper=True, client_ref="perp-close-ref-002",
+        client_ref="perp-close-ref-002",
     )
 
     close_report = TickReport(
@@ -1029,7 +1025,7 @@ async def test_save_tick_report_failed_open_perp_only_writes_failed_position(ses
     perp_fill = FillReport(
         coin="BTC", leg=Leg.PERP, side=Side.SELL, ts=_TS,
         qty=0.05, price=30_010.0, fee=0.075, slippage_bps=1.5,
-        is_paper=False, client_ref="perp-fail-ref-001",
+        client_ref="perp-fail-ref-001",
     )
 
     report = TickReport(
@@ -1133,17 +1129,17 @@ async def test_save_tick_report_mixed_opened_and_failed_open(session_factory):
     sol_spot_buy = FillReport(
         coin="SOL", leg=Leg.SPOT, side=Side.BUY, ts=_TS,
         qty=10.0, price=150.0, fee=0.10, slippage_bps=2.0,
-        is_paper=True, client_ref="sol-spot-ref",
+        client_ref="sol-spot-ref",
     )
     sol_perp_sell = FillReport(
         coin="SOL", leg=Leg.PERP, side=Side.SELL, ts=_TS,
         qty=10.0, price=150.5, fee=0.05, slippage_bps=1.0,
-        is_paper=True, client_ref="sol-perp-ref",
+        client_ref="sol-perp-ref",
     )
     avax_perp_fill = FillReport(
         coin="AVAX", leg=Leg.PERP, side=Side.SELL, ts=_TS,
         qty=5.0, price=35.0, fee=0.02, slippage_bps=1.0,
-        is_paper=True, client_ref="avax-perp-fail-ref",
+        client_ref="avax-perp-fail-ref",
     )
 
     report = TickReport(

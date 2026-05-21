@@ -61,22 +61,22 @@ def _tick_report(ts: datetime = _T0):
 
 def _spot_buy_fill(coin="BTC", price=100.0, qty=10.0):
     return FillReport(coin=coin, leg=Leg.SPOT, side=Side.BUY, ts=_T0, qty=qty,
-                      price=price, fee=0.07, slippage_bps=2.0, is_paper=True)
+                      price=price, fee=0.07, slippage_bps=2.0)
 
 
 def _perp_sell_fill(coin="BTC", price=100.0, qty=10.0):
     return FillReport(coin=coin, leg=Leg.PERP, side=Side.SELL, ts=_T0, qty=qty,
-                      price=price, fee=0.035, slippage_bps=2.0, is_paper=True)
+                      price=price, fee=0.035, slippage_bps=2.0)
 
 
 def _spot_sell_fill(coin="BTC", price=110.0, qty=10.0):
     return FillReport(coin=coin, leg=Leg.SPOT, side=Side.SELL, ts=_T0, qty=qty,
-                      price=price, fee=0.07, slippage_bps=2.0, is_paper=True)
+                      price=price, fee=0.07, slippage_bps=2.0)
 
 
 def _perp_buy_fill(coin="BTC", price=110.0, qty=10.0):
     return FillReport(coin=coin, leg=Leg.PERP, side=Side.BUY, ts=_T0, qty=qty,
-                      price=price, fee=0.035, slippage_bps=2.0, is_paper=True)
+                      price=price, fee=0.035, slippage_bps=2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +690,6 @@ async def test_tick_once_publishes_position_opened(market_data, strategy, record
     assert event.payload_json["spot_qty"] == 10.0
     assert event.payload_json["perp_entry_price"] == 100.0
     assert event.payload_json["perp_qty"] == 10.0
-    assert event.payload_json["is_paper"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -734,7 +733,6 @@ async def test_tick_once_publishes_position_closed(market_data, strategy, record
     assert event.payload_json["spot_qty"] == 10.0
     assert event.payload_json["perp_exit_price"] == 110.0
     assert event.payload_json["perp_qty"] == 10.0
-    assert event.payload_json["is_paper"] is True
 
 
 # ---------------------------------------------------------------------------

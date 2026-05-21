@@ -14,7 +14,6 @@ def now_utc() -> datetime:
 
 
 class PositionMode(StrEnum):
-    PAPER = "paper"
     LIVE = "live"
 
 
@@ -153,15 +152,14 @@ class Fill(Base):
     price: Mapped[float]
     fee: Mapped[float]
     slippage_bps: Mapped[float]
-    is_paper: Mapped[bool] = mapped_column(default=True)
     client_ref: Mapped[Optional[str]] = mapped_column(nullable=True)
 
 
 class PositionFundingAccrual(Base):
     """Per-tick funding delta attributed to a single open position.
 
-    Paper mode: written by the strategy via DbRecorder on each hour-tick.
-    Live mode (future): can be written from exchange `userFundingHistory` feed.
+    Written by the strategy via DbRecorder on each hour-tick; reconcilers later
+    replace local estimates with HL's authoritative SUM.
     """
     __tablename__ = "position_funding_accruals"
     __table_args__ = (Index("ix_pfa_position_ts", "position_id", "ts"),)

@@ -68,7 +68,6 @@ class FillReport:
     price: float
     fee: float
     slippage_bps: float
-    is_paper: bool
     client_ref: str | None = None
 
 

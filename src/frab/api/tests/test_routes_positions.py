@@ -39,7 +39,7 @@ async def _seed_position(session_factory) -> int:
         pos = Position(
             strategy_id=strat.id,
             market_id=mkt.id,
-            mode=PositionMode.PAPER,
+            mode=PositionMode.LIVE,
             status=PositionStatus.OPEN,
             opened_at=_utc(),
             spot_units=0.1,
@@ -101,7 +101,7 @@ async def _seed_position_with_price(session_factory, mark: float) -> tuple[int, 
         pos = Position(
             strategy_id=strat.id,
             market_id=mkt.id,
-            mode=PositionMode.PAPER,
+            mode=PositionMode.LIVE,
             status=PositionStatus.OPEN,
             opened_at=_utc(),
             spot_units=0.5,
@@ -157,7 +157,7 @@ async def test_list_positions_mtm_fields_none_when_no_price(api_client, session_
         pos = Position(
             strategy_id=strat.id,
             market_id=mkt.id,
-            mode=PositionMode.PAPER,
+            mode=PositionMode.LIVE,
             status=PositionStatus.OPEN,
             opened_at=_utc(),
             spot_units=10.0,
@@ -219,7 +219,7 @@ async def _seed_slip_position(
         pos = Position(
             strategy_id=strat.id,
             market_id=mkt.id,
-            mode=PositionMode.PAPER,
+            mode=PositionMode.LIVE,
             status=status,
             opened_at=_utc(),
             closed_at=_utc(1) if status == PositionStatus.CLOSED else None,

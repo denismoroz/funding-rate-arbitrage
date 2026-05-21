@@ -58,7 +58,6 @@ async def test_submit_perp_filled_returns_fillreport(mocker):
     assert fill.price == pytest.approx(30000.0)
     assert fill.fee == pytest.approx(0.1)
     assert fill.slippage_bps == pytest.approx(100.0)  # 0.01 * 1e4
-    assert fill.is_paper is False
     assert fill.client_ref == "ref-xyz"
     assert fill.ts == _FIXED_DT
 
@@ -423,7 +422,6 @@ async def test_close_position_short_uses_executor_slippage(mocker):
     assert fill.qty == pytest.approx(0.00001)
     assert fill.price == pytest.approx(77005.0)
     assert fill.slippage_bps == pytest.approx(100.0)  # 1% — NOT SDK default 5%
-    assert fill.is_paper is False
     exchange.market_close.assert_called_once_with("BTC", None, None, 0.01)
 
 

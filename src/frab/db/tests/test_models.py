@@ -392,7 +392,7 @@ async def test_fill_defaults(session, make_strategy, make_exchange, make_positio
     session.add(fill)
     await session.flush()
 
-    assert fill.is_paper is True
+    assert fill.id is not None
 
 
 async def test_fill_read(session, make_strategy, make_exchange, make_position):
@@ -414,7 +414,7 @@ async def test_fill_read(session, make_strategy, make_exchange, make_position):
 
     fill = Fill(
         position_id=pos.id, ts=_DT(8), leg="perp", side="sell",
-        qty=0.1, price=30010.0, fee=0.075, slippage_bps=1.5, is_paper=False,
+        qty=0.1, price=30010.0, fee=0.075, slippage_bps=1.5,
     )
     session.add(fill)
     await session.flush()
@@ -422,7 +422,6 @@ async def test_fill_read(session, make_strategy, make_exchange, make_position):
     result = await session.execute(select(Fill).where(Fill.position_id == pos.id))
     row = result.scalar_one()
     assert row.leg == "perp"
-    assert row.is_paper is False
 
 
 async def test_equity_snapshot_crud(session, make_strategy):

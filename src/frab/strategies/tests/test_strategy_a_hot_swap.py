@@ -37,7 +37,6 @@ def _fill(coin, leg, side, qty=10.0, price=100.0, fee=0.0) -> FillReport:
         price=price,
         fee=fee,
         slippage_bps=2.0,
-        is_paper=True,
         client_ref=None,
     )
 
