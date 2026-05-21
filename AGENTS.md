@@ -30,7 +30,7 @@
 
 ## 1. Что это
 
-- **Backend** (`src/frab/`) — FastAPI + asyncio engine, торгует Strategy A (funding-harvest) в **paper mode** на live Hyperliquid feed. Пишет в SQLite (`data/frab.db`).
+- **Backend** (`src/frab/`) — FastAPI + asyncio engine, торгует две стратегии (`strategy_a` funding-harvest, `two_phase_dynamic` two-phase exit) на mainnet Hyperliquid. Пишет в SQLite (`data/frab.db`).
 - **Frontend** (`web/`) — Vite + React 18 + TS Dashboard. Читает `/api/*` через dev-proxy.
 - **Research** (`research/`) — оффлайн backtest engine и эксперименты, не трогаются prod-кодом.
 
@@ -38,10 +38,12 @@
 
 | Host | Role | Где |
 |------|------|-----|
-| local mac | **dev** — здесь идёт разработка, новые фичи, тесты | `/Users/d/prj/funding-rate-arbitrage` |
-| `10.8.0.5` (mbp2.local) | **prod** — always-on paper-trading | `ssh dis@10.8.0.5`, `/Users/dis/prj/funding-rate-arbitrage` |
+| local mac | **dev** — разработка + dry-run-обсервация поверх prod-DB | `/Users/d/prj/funding-rate-arbitrage` |
+| `10.8.0.5` (mbp2.local) | **prod** — always-on mainnet trading | `ssh dis@10.8.0.5`, `/Users/dis/prj/funding-rate-arbitrage` |
 
 Prod-инстанс крутится 24/7 (mac не уходит в sleep), source-of-truth для оценки live pace стратегии. Web UI: `http://10.8.0.5:5173/`.
+
+Local engine по умолчанию запускается с `--dry-run`: фетчит quotes/funding/signals и пишет equity, но не вызывает executor (`dry-run: skipped OPEN/CLOSE for {coin}` в логах). Чтобы реально торговать с local — убрать `--dry-run` из `deploy/launchd/com.frab.engine.plist.template` и переинсталлировать (`install.sh engine`).
 
 ### 1.1 Prod (10.8.0.5) — пути и особенности
 
@@ -259,8 +261,47 @@ cd web && npm run dev
 
 ## 11. Что НЕ настроено (явно отложено)
 
-- LiveExecutor (real orders на HL) — пока только PaperExecutor.
-- Strategy B (stake & hedge) — заходит после стабильной A.
+- Strategy B (stake & hedge) — заходит после стабильной A/two_phase.
 - Drift как 2-я биржа — adapter готов, но не интегрирован.
 - Telegram/email alerts — event bus готов, sink'и добавятся позже.
 - Auth/multi-user — local single-user.
+
+---
+
+## 12. Local dry-run поверх prod-DB
+
+Сценарий: запустить локально ту же стратегию что и на prod, на том же mainnet-кошельке, в режиме наблюдения (никаких ордеров), но со свежим состоянием из prod. Полезно чтобы протестить новый код или просто посмотреть decisions side-by-side.
+
+```bash
+# 1. Остановить локальный engine, если он крутится
+launchctl bootout gui/$(id -u)/com.frab.engine
+
+# 2. Бэкап текущей локальной DB
+cp data/frab.db "data/frab.db.bak-pre-prod-pull-$(date +%Y%m%d-%H%M%S)"
+
+# 3. Снять консистентный снапшот prod (WAL-safe) и забрать
+ssh dis@10.8.0.5 'sqlite3 /Users/dis/prj/funding-rate-arbitrage/data/frab.db ".backup /tmp/frab-snap.db"'
+scp dis@10.8.0.5:/tmp/frab-snap.db data/frab.db
+ssh dis@10.8.0.5 'rm -f /tmp/frab-snap.db'
+
+# 4. Прогнать локальные миграции поверх pulled-DB
+uv run frab init-db
+
+# 5. Поднять engine. По умолчанию `com.frab.engine.plist.template` уже
+#    содержит --dry-run — никаких ордеров не будет.
+deploy/launchd/install.sh engine
+
+# 6. Проверить
+curl -s localhost:8765/healthz
+grep "dry_run=True" logs/engine.err.log | tail -1
+```
+
+Что увидишь в логах при dry-run:
+```
+serve: dry_run=True (source=cli flag)
+frab serve: started (..., mode=live, coins=('BTC','ETH','SOL'))
+dry-run: skipped OPEN for AVAX   # если signal превысит entry_threshold
+dry-run: skipped CLOSE for BTC   # если phase2/phase1 решит закрыть
+```
+
+Equity-snapshots на local будут плавно меняться от MTM/funding-accrual; на prod — те же изменения плюс реальные fills.
