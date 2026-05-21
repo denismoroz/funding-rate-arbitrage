@@ -436,7 +436,7 @@ async def _resolve_exchange(session_factory) -> tuple[int, float, float]:
         return exc.id, exc.spot_taker_bps, exc.perp_taker_bps
 
 
-def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
+def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) -> FastAPI:
     settings = get_settings()
     db_engine = create_engine(settings.db_url)
     session_factory = make_session_factory(db_engine)
@@ -479,6 +479,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS) -> FastAPI:
             coins=resolved_coins,
             params_override=params_override,
             executor=atomic,
+            dry_run=dry_run,
         )
 
         instance_token = uuid.uuid4().hex

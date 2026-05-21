@@ -1,6 +1,7 @@
 """Two-phase exit + dynamic min_hold funding-harvest strategy."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -22,6 +23,8 @@ from frab.exchanges.base import (
 )
 from frab.strategies.base import EquitySnapshot, FailedOpen, SignalEvent, Strategy, TickReport
 from frab.strategies.strategy_a import AccumulatorsSnapshot, OpenPositionSnapshot
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,9 +75,10 @@ class TwoPhaseDynamic(Strategy):
     name = "two_phase_dynamic"
     version = "v1"
 
-    def __init__(self, params: TwoPhaseDynamicParams, executor: AtomicExecutor) -> None:
+    def __init__(self, params: TwoPhaseDynamicParams, executor: AtomicExecutor, *, dry_run: bool = False) -> None:
         self._params = params
         self._executor = executor
+        self._dry_run = dry_run
         self._market_state = MarketState(params.coins, params.signal_window_hours, funding_interval_hours=1.0)
         self._positions: dict[str, _PositionRecord] = {}
         self._last_quotes: dict[str, Quote] = {}
@@ -297,6 +301,9 @@ class TwoPhaseDynamic(Strategy):
                 TwoPhaseDecision.CLOSE_PHASE1_CAP,
                 TwoPhaseDecision.CLOSE_PHASE2,
             ):
+                if self._dry_run:
+                    logger.warning("dry-run: skipped CLOSE for %s", coin)
+                    continue
                 close_fills, ok = await self._close_position(coin, now)
                 if ok:
                     fills_log.extend(close_fills)
@@ -318,6 +325,9 @@ class TwoPhaseDynamic(Strategy):
                     candidates.append((coin, smoothed))
             candidates.sort(key=lambda x: -x[1])  # strongest first
             for coin, entry_signal in candidates[:slots_free]:
+                if self._dry_run:
+                    logger.warning("dry-run: skipped OPEN for %s", coin)
+                    continue
                 min_hold = compute_position_min_hold(
                     entry_signal_annual=entry_signal,
                     safety_mult=self._params.safety_mult,

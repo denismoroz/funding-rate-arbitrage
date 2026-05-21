@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     strategy_name: str = Field(default="strategy_a")  # "strategy_a" | "two_phase_dynamic"
     strategy_params_json: str = Field(default="")     # optional JSON override of default params
 
+    dry_run: bool = Field(default=False)
+
     log_level: str = Field(default="INFO")
 
     hl_network: Literal["paper", "testnet", "mainnet"] = Field(default="paper")

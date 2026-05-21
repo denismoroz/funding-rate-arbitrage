@@ -798,6 +798,75 @@ async def test_open_paired_failure_records_failed_open_no_position_change(mocker
 
 
 @pytest.mark.asyncio
+async def test_dry_run_skips_open_decisions(mocker):
+    """dry_run=True: OPEN signal fires but no executor call and no position created."""
+    ex = mocker.MagicMock(spec=AtomicExecutor)
+    ex.open_paired = mocker.AsyncMock()
+    ex.close_paired = mocker.AsyncMock()
+
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=1, signal_window_hours=1),
+        ex,
+        dry_run=True,
+    )
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    # rate 0.0001 → annual 0.876 > 0.30 → OPEN decision
+    report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    assert report.opened == ()
+    assert report.fills == ()
+    assert len(strat._positions) == 0
+    ex.open_paired.assert_not_called()
+    ex.close_paired.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_skips_close_decisions(mocker):
+    """dry_run=True: CLOSE signal fires but no executor call and position stays open."""
+    ex = mocker.MagicMock(spec=AtomicExecutor)
+    ex.open_paired = mocker.AsyncMock()
+    ex.close_paired = mocker.AsyncMock()
+
+    strat = StrategyA(
+        StrategyAParams(
+            coins=("BTC",),
+            concurrency_cap=1,
+            signal_window_hours=1,
+            min_hold_hours=0,
+        ),
+        ex,
+        dry_run=True,
+    )
+    # Pre-populate a position via rehydrate
+    strat.rehydrate(
+        positions=[
+            OpenPositionSnapshot(
+                coin="BTC",
+                opened_at=T0,
+                spot_qty=10.0,
+                perp_qty=10.0,
+                entry_spot_price=100.0,
+                entry_perp_price=100.0,
+                funding_collected=0.0,
+                fees_paid=0.0,
+                position_min_hold_hours=0,
+            )
+        ]
+    )
+    assert "BTC" in strat._positions
+
+    t1 = T0 + HOUR
+    await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
+    # Strongly negative rate → CLOSE decision
+    report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -0.001)})
+
+    assert report.closed == ()
+    assert "BTC" in strat._positions  # position must remain
+    ex.close_paired.assert_not_called()
+    ex.open_paired.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_close_paired_failure_keeps_position_open(mocker):
     """close_paired returns status=failed → position remains, accumulators unchanged."""
     strat = StrategyA(

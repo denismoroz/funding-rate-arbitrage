@@ -36,6 +36,7 @@ class StrategySpec(Protocol):
         coins: tuple[str, ...],
         params_override: dict | None,
         executor: AtomicExecutor,
+        dry_run: bool = False,
     ) -> tuple[Strategy, dict]:
         """Returns (strategy_instance, params_json_dict_for_db)."""
 
@@ -83,7 +84,7 @@ class _StrategyASpec:
         ),
     }
 
-    def build(self, coins, params_override, executor):
+    def build(self, coins, params_override, executor, dry_run: bool = False):
         kwargs: dict = {"coins": tuple(coins)}
         if params_override:
             allowed = {
@@ -96,7 +97,7 @@ class _StrategyASpec:
                 else:
                     logger.warning("strategy_a: ignoring unknown param %r", k)
         params = StrategyAParams(**kwargs)
-        strategy = StrategyA(params=params, executor=executor)
+        strategy = StrategyA(params=params, executor=executor, dry_run=dry_run)
         params_json = {
             "coins": list(params.coins),
             "entry_threshold": params.entry_threshold,
@@ -201,7 +202,7 @@ class _TwoPhaseDynamicSpec:
         ),
     }
 
-    def build(self, coins, params_override, executor):
+    def build(self, coins, params_override, executor, dry_run: bool = False):
         kwargs: dict = {"coins": tuple(coins)}
         if params_override:
             allowed = {
@@ -217,7 +218,7 @@ class _TwoPhaseDynamicSpec:
                 else:
                     logger.warning("two_phase_dynamic: ignoring unknown param %r", k)
         params = TwoPhaseDynamicParams(**kwargs)
-        strategy = TwoPhaseDynamic(params=params, executor=executor)
+        strategy = TwoPhaseDynamic(params=params, executor=executor, dry_run=dry_run)
         params_json = {
             "coins": list(params.coins),
             "entry_threshold": params.entry_threshold,

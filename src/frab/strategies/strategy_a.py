@@ -1,6 +1,7 @@
 """Strategy A: funding-harvest with concurrency cap."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -16,6 +17,8 @@ from frab.exchanges.base import (
     Side,
 )
 from frab.strategies.base import EquitySnapshot, FailedOpen, SignalEvent, Strategy, TickReport
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,9 +85,10 @@ class StrategyA(Strategy):
     name = "strategy_a"
     version = "v1"
 
-    def __init__(self, params: StrategyAParams, executor: AtomicExecutor) -> None:
+    def __init__(self, params: StrategyAParams, executor: AtomicExecutor, *, dry_run: bool = False) -> None:
         self._params = params
         self._executor = executor
+        self._dry_run = dry_run
         self._market_state = MarketState(params.coins, params.signal_window_hours, funding_interval_hours=1.0)
         self._positions: dict[str, _PositionRecord] = {}
         self._last_quotes: dict[str, Quote] = {}
@@ -242,6 +246,9 @@ class StrategyA(Strategy):
         closed: list[str] = []
         for coin, dec in coin_decisions.items():
             if dec == Decision.CLOSE:
+                if self._dry_run:
+                    logger.warning("dry-run: skipped CLOSE for %s", coin)
+                    continue
                 close_fills, ok = await self._close_position(coin, now)
                 if ok:
                     fills_log.extend(close_fills)
@@ -262,6 +269,9 @@ class StrategyA(Strategy):
                     candidates.append((coin, smoothed))
             candidates.sort(key=lambda x: -x[1])  # strongest first
             for coin, _ in candidates[:slots_free]:
+                if self._dry_run:
+                    logger.warning("dry-run: skipped OPEN for %s", coin)
+                    continue
                 open_fills, failed = await self._open_position(coin, now)
                 if failed is None:
                     fills_log.extend(open_fills)

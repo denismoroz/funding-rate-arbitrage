@@ -898,6 +898,79 @@ async def test_funding_accrual_updates_position(mocker):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+async def test_dry_run_skips_open_decisions(mocker):
+    """dry_run=True: OPEN signal fires but no executor call and no position created."""
+    ex = mocker.MagicMock(spec=AtomicExecutor)
+    ex.open_paired = mocker.AsyncMock()
+    ex.close_paired = mocker.AsyncMock()
+
+    strat = TwoPhaseDynamic(
+        _default_params(coins=("BTC",), concurrency_cap=1, entry_threshold=0.10),
+        ex,
+        dry_run=True,
+    )
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    # rate 0.0001 → annual 0.876 > 0.10 → OPEN decision
+    report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    assert report.opened == ()
+    assert report.fills == ()
+    assert report.opened_min_holds == ()
+    assert len(strat._positions) == 0
+    ex.open_paired.assert_not_called()
+    ex.close_paired.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_skips_close_decisions(mocker):
+    """dry_run=True: CLOSE signal fires but no executor call and position stays open."""
+    ex = mocker.MagicMock(spec=AtomicExecutor)
+    ex.open_paired = mocker.AsyncMock()
+    ex.close_paired = mocker.AsyncMock()
+
+    strat = TwoPhaseDynamic(
+        _default_params(
+            coins=("BTC",),
+            concurrency_cap=1,
+            base_min_hold_hours=1,
+            cap_min_hold_hours=1,
+            safety_mult=1.0,
+            phase1_negative_patience=0,  # would trigger CLOSE_PHASE1_NEG immediately
+        ),
+        ex,
+        dry_run=True,
+    )
+    # Pre-populate a position via rehydrate (min_hold=1 so close logic is active after 1h)
+    strat.rehydrate(
+        positions=[
+            OpenPositionSnapshot(
+                coin="BTC",
+                opened_at=T0,
+                spot_qty=10.0,
+                perp_qty=10.0,
+                entry_spot_price=100.0,
+                entry_perp_price=100.0,
+                funding_collected=0.0,
+                fees_paid=0.0,
+                position_min_hold_hours=1,
+                consec_negative_hours=0,
+            )
+        ]
+    )
+    assert "BTC" in strat._positions
+
+    t1 = T0 + HOUR
+    await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
+    # Strongly negative rate → CLOSE_PHASE1_NEG decision
+    report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -1.0 / 8760)})
+
+    assert report.closed == ()
+    assert "BTC" in strat._positions  # position must remain
+    ex.close_paired.assert_not_called()
+    ex.open_paired.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_open_paired_failure_records_failed_open_no_position_change(mocker):
     """open_paired returns status=failed → FailedOpen in report, no position, state unchanged."""
     strat = TwoPhaseDynamic(

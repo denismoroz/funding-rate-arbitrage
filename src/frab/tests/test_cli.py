@@ -193,7 +193,7 @@ def test_serve_invokes_uvicorn(tmp_path, monkeypatch, mocker):
     result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "9999", "--coins", "BTC,ETH"])
 
     assert result.exit_code == 0, result.output
-    build_spy.assert_called_once_with(("BTC", "ETH"))
+    build_spy.assert_called_once_with(("BTC", "ETH"), dry_run=False)
     run_spy.assert_called_once_with(fake_app, host="127.0.0.1", port=9999, log_level="info")
 
 

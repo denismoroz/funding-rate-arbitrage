@@ -70,3 +70,14 @@ def test_env_prefix_applied(monkeypatch):
     s = Settings(_env_file=None)
     assert s.hl_network == "testnet"
     assert s.hl_account_address == "0x" + "c" * 40
+
+
+def test_dry_run_default_false():
+    s = Settings(_env_file=None)
+    assert s.dry_run is False
+
+
+def test_dry_run_from_env(monkeypatch):
+    monkeypatch.setenv("FRAB_DRY_RUN", "true")
+    s = Settings(_env_file=None)
+    assert s.dry_run is True

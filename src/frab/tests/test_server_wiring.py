@@ -7,6 +7,7 @@ import pytest
 
 from frab.db.models import PositionMode
 from frab.engine.fee_reconciler import FeeReconciler
+from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.paper import PaperExecutor
 from frab.server import (
     MAINNET_SPOT_TOKEN_MAP,
@@ -20,6 +21,7 @@ from frab.server import (
     _validate_spot_pairs,
 )
 from frab.settings import Settings
+from frab.strategies.registry import _StrategyASpec, _TwoPhaseDynamicSpec
 
 
 @pytest.fixture(autouse=True)
@@ -419,3 +421,39 @@ async def test_validate_spot_pairs_missing_usdc_raises(mocker):
     md._post = mocker.AsyncMock(return_value={"tokens": [], "universe": []})
     with pytest.raises(RuntimeError, match="USDC token not found"):
         await _validate_spot_pairs(md, ("BTC",))
+
+
+# ---------------------------------------------------------------------------
+# dry_run wiring through spec.build
+# ---------------------------------------------------------------------------
+
+def test_strategy_a_spec_build_dry_run_true(mocker):
+    """_StrategyASpec.build with dry_run=True wires _dry_run=True on the strategy."""
+    executor = mocker.MagicMock(spec=AtomicExecutor)
+    spec = _StrategyASpec()
+    strategy, _ = spec.build(coins=("BTC",), params_override=None, executor=executor, dry_run=True)
+    assert strategy._dry_run is True
+
+
+def test_strategy_a_spec_build_dry_run_default_false(mocker):
+    """_StrategyASpec.build with no dry_run arg leaves _dry_run=False."""
+    executor = mocker.MagicMock(spec=AtomicExecutor)
+    spec = _StrategyASpec()
+    strategy, _ = spec.build(coins=("BTC",), params_override=None, executor=executor)
+    assert strategy._dry_run is False
+
+
+def test_two_phase_dynamic_spec_build_dry_run_true(mocker):
+    """_TwoPhaseDynamicSpec.build with dry_run=True wires _dry_run=True on the strategy."""
+    executor = mocker.MagicMock(spec=AtomicExecutor)
+    spec = _TwoPhaseDynamicSpec()
+    strategy, _ = spec.build(coins=("BTC",), params_override=None, executor=executor, dry_run=True)
+    assert strategy._dry_run is True
+
+
+def test_two_phase_dynamic_spec_build_dry_run_default_false(mocker):
+    """_TwoPhaseDynamicSpec.build with no dry_run arg leaves _dry_run=False."""
+    executor = mocker.MagicMock(spec=AtomicExecutor)
+    spec = _TwoPhaseDynamicSpec()
+    strategy, _ = spec.build(coins=("BTC",), params_override=None, executor=executor)
+    assert strategy._dry_run is False
