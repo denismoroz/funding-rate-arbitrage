@@ -8,7 +8,6 @@ import pytest
 from frab.db.models import PositionMode
 from frab.engine.fee_reconciler import FeeReconciler
 from frab.exchanges.atomic import AtomicExecutor
-from frab.exchanges.paper import PaperExecutor
 from frab.server import (
     MAINNET_SPOT_TOKEN_MAP,
     _build_executor,
@@ -35,14 +34,17 @@ def _clean_env(monkeypatch):
 # _select_coins
 # ---------------------------------------------------------------------------
 
+_CREDS = dict(hl_private_key="0x" + "a" * 64, hl_account_address="0x" + "b" * 40)
+
+
 def test_select_coins_returns_default_when_settings_empty():
-    s = Settings(_env_file=None)
+    s = Settings(_env_file=None, **_CREDS)
     result = _select_coins(s, ("BTC", "ETH"))
     assert result == ("BTC", "ETH")
 
 
 def test_select_coins_returns_settings_universe_when_set():
-    s = Settings(hl_universe="PURR,HYPE", _env_file=None)
+    s = Settings(hl_universe="PURR,HYPE", _env_file=None, **_CREDS)
     result = _select_coins(s, ("BTC", "ETH"))
     assert result == ("PURR", "HYPE")
 
@@ -66,18 +68,9 @@ def test_select_spot_token_map_testnet_empty():
     assert _select_spot_token_map("testnet") == {}
 
 
-def test_select_spot_token_map_paper_empty():
-    assert _select_spot_token_map("paper") == {}
-
-
 # ---------------------------------------------------------------------------
 # _position_mode
 # ---------------------------------------------------------------------------
-
-def test_position_mode_paper():
-    s = Settings(_env_file=None)
-    assert _position_mode(s) == PositionMode.PAPER
-
 
 def test_position_mode_testnet_returns_live():
     s = Settings(
@@ -103,13 +96,6 @@ def test_position_mode_mainnet_returns_live():
 # _hl_info_url
 # ---------------------------------------------------------------------------
 
-def test_hl_info_url_paper_uses_configured():
-    s = Settings(_env_file=None)
-    url = _hl_info_url(s)
-    assert url == s.hl_api_url
-    assert url.endswith("/info")
-
-
 def test_hl_info_url_testnet():
     s = Settings(
         hl_network="testnet",
@@ -134,15 +120,6 @@ def test_hl_info_url_mainnet():
 # _build_executor
 # ---------------------------------------------------------------------------
 
-def test_build_executor_paper_returns_paper_executor(mocker):
-    s = Settings(_env_file=None)
-    md = mocker.MagicMock()
-    result = _build_executor(s, market_data=md, spot_taker_bps=7.0, perp_taker_bps=2.5)
-    assert isinstance(result, PaperExecutor)
-    assert result._spot_taker_bps == 7.0
-    assert result._perp_taker_bps == 2.5
-
-
 def test_build_executor_testnet_returns_live_executor(mocker):
     mock_live = mocker.patch("frab.server.LiveHLExecutor")
     s = Settings(
@@ -151,7 +128,7 @@ def test_build_executor_testnet_returns_live_executor(mocker):
         hl_account_address="0x" + "b" * 40,
         _env_file=None,
     )
-    _build_executor(s, market_data=mocker.MagicMock(), spot_taker_bps=7.0, perp_taker_bps=2.5)
+    _build_executor(s, market_data=mocker.MagicMock())
     mock_live.assert_called_once_with(
         private_key="0x" + "a" * 64,
         account_address="0x" + "b" * 40,
@@ -169,7 +146,7 @@ def test_build_executor_mainnet_uses_spot_token_map(mocker):
         hl_account_address="0x" + "b" * 40,
         _env_file=None,
     )
-    _build_executor(s, market_data=mocker.MagicMock(), spot_taker_bps=7.0, perp_taker_bps=2.5)
+    _build_executor(s, market_data=mocker.MagicMock())
     mock_live.assert_called_once_with(
         private_key="0x" + "a" * 64,
         account_address="0x" + "b" * 40,
@@ -188,7 +165,7 @@ def test_build_executor_live_uses_hl_live_slippage_setting(mocker):
         hl_live_slippage=0.025,
         _env_file=None,
     )
-    _build_executor(s, market_data=mocker.MagicMock(), spot_taker_bps=7.0, perp_taker_bps=2.5)
+    _build_executor(s, market_data=mocker.MagicMock())
     _, kwargs = mock_live.call_args
     assert kwargs["slippage"] == 0.025
 
@@ -196,11 +173,6 @@ def test_build_executor_live_uses_hl_live_slippage_setting(mocker):
 # ---------------------------------------------------------------------------
 # _build_params_override — env-driven risk caps for live mode
 # ---------------------------------------------------------------------------
-
-def test_build_params_override_paper_returns_empty_dict():
-    s = Settings(hl_network="paper", _env_file=None)
-    assert _build_params_override(s) == {}
-
 
 def test_build_params_override_live_sets_position_size_and_cap():
     s = Settings(
@@ -234,34 +206,9 @@ def test_build_params_override_live_preserves_strategy_params_json():
     assert override["concurrency_cap"] == 2
 
 
-def test_build_params_override_paper_ignores_hl_caps():
-    """Paper mode should not stamp position_size_usdc / concurrency_cap from HL settings."""
-    s = Settings(
-        hl_network="paper",
-        hl_position_size_usd=99.0,
-        hl_max_open_positions=99,
-        _env_file=None,
-    )
-    override = _build_params_override(s)
-    assert "position_size_usdc" not in override
-    assert "concurrency_cap" not in override
-
-
 # ---------------------------------------------------------------------------
-# _build_fee_reconciler — live wires FeeReconciler, paper wires None
+# _build_fee_reconciler — always returns FeeReconciler
 # ---------------------------------------------------------------------------
-
-
-def test_build_fee_reconciler_paper_returns_none(mocker):
-    """Paper mode: _build_fee_reconciler returns None."""
-    s = Settings(hl_network="paper", _env_file=None)
-    result = _build_fee_reconciler(
-        s,
-        session_factory=mocker.MagicMock(),
-        market_data=mocker.MagicMock(),
-        bus=mocker.MagicMock(),
-    )
-    assert result is None
 
 
 def test_build_fee_reconciler_testnet_returns_reconciler(mocker):

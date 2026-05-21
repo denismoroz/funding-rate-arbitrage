@@ -35,7 +35,6 @@ from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.base import Executor, FundingTick
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.hyperliquid_live import LiveHLExecutor
-from frab.exchanges.paper import PaperExecutor
 from frab.settings import Settings, get_settings
 from frab.strategies.base import Strategy as StrategyBase
 from frab.strategies.registry import get_strategy_spec, parse_params_override
@@ -125,20 +124,19 @@ async def _validate_spot_pairs(market_data, coins: tuple[str, ...]) -> None:
 
 
 def _position_mode(settings: Settings) -> PositionMode:
-    return PositionMode.PAPER if settings.hl_network == "paper" else PositionMode.LIVE
+    return PositionMode.LIVE
 
 
 def _build_params_override(settings: Settings) -> dict:
     """Merge strategy_params_json env override with HL-driven risk caps.
 
-    In non-paper modes, position_size_usdc and concurrency_cap come from the
-    env-level risk knobs (FRAB_HL_POSITION_SIZE_USD, FRAB_HL_MAX_OPEN_POSITIONS)
-    rather than from strategy defaults — keeps live caps in one place.
+    position_size_usdc and concurrency_cap come from env-level risk knobs
+    (FRAB_HL_POSITION_SIZE_USD, FRAB_HL_MAX_OPEN_POSITIONS) — keeps live
+    caps in one place.
     """
     params_override = parse_params_override(settings.strategy_params_json) or {}
-    if settings.hl_network != "paper":
-        params_override["position_size_usdc"] = settings.hl_position_size_usd
-        params_override["concurrency_cap"] = settings.hl_max_open_positions
+    params_override["position_size_usdc"] = settings.hl_position_size_usd
+    params_override["concurrency_cap"] = settings.hl_max_open_positions
     return params_override
 
 
@@ -146,28 +144,15 @@ def _hl_info_url(settings: Settings) -> str:
     """Return the /info endpoint URL for HLMarketData based on network."""
     if settings.hl_network == "testnet":
         return f"{constants.TESTNET_API_URL}/info"
-    if settings.hl_network == "mainnet":
-        return f"{constants.MAINNET_API_URL}/info"
-    # paper — honour the configured hl_api_url so paper-mode users can point elsewhere
-    return settings.hl_api_url
+    return f"{constants.MAINNET_API_URL}/info"
 
 
 def _build_executor(
     settings: Settings,
     *,
     market_data,
-    spot_taker_bps: float,
-    perp_taker_bps: float,
 ) -> Executor:
-    """Return PaperExecutor for 'paper', LiveHLExecutor for testnet/mainnet."""
-    if settings.hl_network == "paper":
-        return PaperExecutor(
-            market_data=market_data,
-            spot_taker_bps=spot_taker_bps,
-            perp_taker_bps=perp_taker_bps,
-            extra_slip_bps=settings.paper_extra_slip_bps,
-        )
-    # testnet / mainnet — credentials presence is enforced by Settings validator
+    """Return a LiveHLExecutor for testnet/mainnet."""
     return LiveHLExecutor(
         private_key=settings.hl_private_key.get_secret_value(),
         account_address=settings.hl_account_address,
@@ -186,9 +171,7 @@ def _build_fee_reconciler(
     strategy: "StrategyBase | None" = None,
     strategy_id: int | None = None,
 ) -> "FeeReconciler | None":
-    """Return a FeeReconciler for live mode, None for paper mode."""
-    if settings.hl_network == "paper":
-        return None
+    """Return a FeeReconciler for live trading."""
     return FeeReconciler(
         session_factory=session_factory,
         market_data=market_data,
@@ -206,7 +189,7 @@ def _build_wallet_snapshotter(
     executor,
     recorder: "DbRecorder",
 ):
-    """Return an async callable that records a WalletSnapshot, or None for paper mode."""
+    """Return an async callable that records a WalletSnapshot, or None for testnet."""
     if settings.hl_network != "mainnet":
         return None
 
@@ -247,9 +230,7 @@ def _build_funding_reconciler(
     strategy: "StrategyBase | None" = None,
     strategy_id: int | None = None,
 ) -> "FundingReconciler | None":
-    """Return a FundingReconciler for live mode, None for paper mode."""
-    if settings.hl_network == "paper":
-        return None
+    """Return a FundingReconciler for live trading."""
     return FundingReconciler(
         session_factory=session_factory,
         market_data=market_data,
@@ -425,7 +406,7 @@ async def _rehydrate_strategy_from_db(
         )
 
 
-async def _resolve_exchange(session_factory) -> tuple[int, float, float]:
+async def _resolve_exchange(session_factory) -> int:
     async with session_scope(session_factory) as s:
         result = await s.execute(select(Exchange).where(Exchange.name == EXCHANGE_NAME))
         exc = result.scalar_one_or_none()
@@ -433,7 +414,7 @@ async def _resolve_exchange(session_factory) -> tuple[int, float, float]:
             raise RuntimeError(
                 f"Exchange {EXCHANGE_NAME!r} not seeded; run `frab seed` first."
             )
-        return exc.id, exc.spot_taker_bps, exc.perp_taker_bps
+        return exc.id
 
 
 def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) -> FastAPI:
@@ -447,7 +428,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         # settings-driven universe takes precedence over the explicit `coins` arg
         resolved_coins = _select_coins(settings, coins)
 
-        exchange_id, spot_bps, perp_bps = await _resolve_exchange(session_factory)
+        exchange_id = await _resolve_exchange(session_factory)
 
         market_data = HLMarketData(
             api_url=_hl_info_url(settings),
@@ -463,8 +444,6 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         executor = _build_executor(
             settings,
             market_data=market_data,
-            spot_taker_bps=spot_bps,
-            perp_taker_bps=perp_bps,
         )
         atomic = AtomicExecutor(
             executor,

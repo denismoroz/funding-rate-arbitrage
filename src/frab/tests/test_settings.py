@@ -14,20 +14,30 @@ def _clean_env(monkeypatch):
 
 
 def test_defaults():
-    s = Settings(hl_network="paper", _env_file=None)
-    assert s.hl_network == "paper"
-    assert s.hl_private_key is None
+    s = Settings(
+        hl_network="mainnet",
+        hl_private_key="0x" + "a" * 64,
+        hl_account_address="0x" + "b" * 40,
+        _env_file=None,
+    )
+    assert s.hl_network == "mainnet"
     assert s.universe_tuple() == ()
 
 
 def test_universe_tuple_parses_csv():
-    s = Settings(hl_universe="purr, hype , btc", _env_file=None)
+    s = Settings(
+        hl_universe="purr, hype , btc",
+        hl_private_key="0x" + "a" * 64,
+        hl_account_address="0x" + "b" * 40,
+        _env_file=None,
+    )
     assert s.universe_tuple() == ("PURR", "HYPE", "BTC")
 
 
 def test_universe_tuple_empty():
-    assert Settings(hl_universe="", _env_file=None).universe_tuple() == ()
-    assert Settings(hl_universe="   ", _env_file=None).universe_tuple() == ()
+    creds = dict(hl_private_key="0x" + "a" * 64, hl_account_address="0x" + "b" * 40)
+    assert Settings(hl_universe="", _env_file=None, **creds).universe_tuple() == ()
+    assert Settings(hl_universe="   ", _env_file=None, **creds).universe_tuple() == ()
 
 
 def test_testnet_requires_credentials():
@@ -73,11 +83,17 @@ def test_env_prefix_applied(monkeypatch):
 
 
 def test_dry_run_default_false():
-    s = Settings(_env_file=None)
+    s = Settings(
+        hl_private_key="0x" + "a" * 64,
+        hl_account_address="0x" + "b" * 40,
+        _env_file=None,
+    )
     assert s.dry_run is False
 
 
 def test_dry_run_from_env(monkeypatch):
     monkeypatch.setenv("FRAB_DRY_RUN", "true")
+    monkeypatch.setenv("FRAB_HL_PRIVATE_KEY", "0x" + "a" * 64)
+    monkeypatch.setenv("FRAB_HL_ACCOUNT_ADDRESS", "0x" + "b" * 40)
     s = Settings(_env_file=None)
     assert s.dry_run is True

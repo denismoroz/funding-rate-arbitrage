@@ -18,7 +18,6 @@ import pytest
 from frab.engine.loop import Engine
 from frab.events.bus import EventBus
 from frab.exchanges.atomic import AtomicExecutor
-from frab.exchanges.paper import PaperExecutor
 from frab.strategies.two_phase_dynamic import TwoPhaseDynamic, TwoPhaseDynamicParams
 
 # ---------------------------------------------------------------------------
@@ -27,6 +26,7 @@ from frab.strategies.two_phase_dynamic import TwoPhaseDynamic, TwoPhaseDynamicPa
 # ---------------------------------------------------------------------------
 from tests.integration.test_replay_strategy_a import (
     ReplayMarketData,
+    _ReplayExecutor,
     _common_timeline,
     _load_coin_data,
 )
@@ -145,13 +145,13 @@ async def test_replay_two_phase_dynamic_six_months_smoke():
     # 2. Build prod stack
     market = ReplayMarketData(data_by_coin)
     bus = EventBus()
-    paper_executor = PaperExecutor(
+    replay_executor = _ReplayExecutor(
         market_data=market,
         spot_taker_bps=7.0,   # matches research SPOT_TAKER = 0.00070
         perp_taker_bps=3.5,   # matches research PERP_TAKER = 0.00035
         extra_slip_bps=0.0,
     )
-    executor = AtomicExecutor(paper_executor, bus, max_attempts=1, sleep_between_attempts=())
+    executor = AtomicExecutor(replay_executor, bus, max_attempts=1, sleep_between_attempts=())
     params = TwoPhaseDynamicParams(**C_PARAMS)
     strategy = TwoPhaseDynamic(params=params, executor=executor)
     initial_cash = strategy.cash
@@ -238,13 +238,13 @@ async def test_replay_two_phase_dynamic_parity_with_research():
     # 2. Prod run
     market = ReplayMarketData(data_by_coin)
     bus = EventBus()
-    paper_executor = PaperExecutor(
+    replay_executor = _ReplayExecutor(
         market_data=market,
         spot_taker_bps=7.0,
         perp_taker_bps=3.5,
         extra_slip_bps=0.0,
     )
-    executor = AtomicExecutor(paper_executor, bus, max_attempts=1, sleep_between_attempts=())
+    executor = AtomicExecutor(replay_executor, bus, max_attempts=1, sleep_between_attempts=())
     params = TwoPhaseDynamicParams(**C_PARAMS)
     strategy = TwoPhaseDynamic(params=params, executor=executor)
     initial_cash = strategy.cash

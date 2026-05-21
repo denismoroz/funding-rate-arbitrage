@@ -248,10 +248,7 @@ def serve(
 # ---------------------------------------------------------------------------
 
 def _smoke_check_network(settings) -> None:
-    """Refuse to run smoke against paper mode."""
-    if settings.hl_network == "paper":
-        typer.echo("ERROR: live-smoke only works in testnet or mainnet mode (hl_network != 'paper')")
-        raise typer.Exit(code=2)
+    """Verify credentials are present before running smoke."""
     if settings.hl_private_key is None or settings.hl_account_address is None:
         typer.echo("ERROR: hl_private_key and hl_account_address are required for live-smoke")
         raise typer.Exit(code=2)

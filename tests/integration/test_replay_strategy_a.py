@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,9 +11,76 @@ import pytest
 from frab.engine.loop import Engine
 from frab.events.bus import EventBus
 from frab.exchanges.atomic import AtomicExecutor
-from frab.exchanges.base import FundingTick, MarketDataSource, Quote
-from frab.exchanges.paper import PaperExecutor
+from frab.exchanges.base import (
+    FillReport,
+    FundingTick,
+    Leg,
+    MarketDataSource,
+    OrderRequest,
+    PositionState,
+    Quote,
+    Side,
+)
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
+
+
+@dataclass
+class _PosEntry:
+    spot_units: float = 0.0
+    perp_units: float = 0.0
+    avg_spot: float | None = None
+    avg_perp: float | None = None
+
+
+class _ReplayExecutor:
+    """Minimal paper-mode executor used only by the integration replay test."""
+
+    name = "replay_paper"
+
+    def __init__(self, market_data: MarketDataSource, spot_taker_bps: float, perp_taker_bps: float, extra_slip_bps: float = 0.0) -> None:
+        self._md = market_data
+        self._spot_bps = spot_taker_bps
+        self._perp_bps = perp_taker_bps
+        self._slip = extra_slip_bps
+        self._positions: dict[str, _PosEntry] = {}
+
+    async def submit(self, req: OrderRequest) -> FillReport:
+        quote = await self._md.fetch_quote(req.coin)
+        slip = self._slip / 1e4
+        if req.leg == Leg.SPOT:
+            price = (quote.ask * (1 + slip)) if req.side == Side.BUY else (quote.bid * (1 - slip))
+            fee = req.qty * price * self._spot_bps / 1e4
+        else:
+            price = (quote.ask * (1 + slip)) if req.side == Side.BUY else (quote.bid * (1 - slip))
+            fee = req.qty * price * self._perp_bps / 1e4
+        entry = self._positions.setdefault(req.coin, _PosEntry())
+        delta = req.qty if req.side == Side.BUY else -req.qty
+        if req.leg == Leg.SPOT:
+            entry.spot_units += delta
+        else:
+            entry.perp_units += delta
+        return FillReport(
+            coin=req.coin, leg=req.leg, side=req.side,
+            ts=datetime.now(UTC), qty=req.qty, price=price,
+            fee=fee, slippage_bps=self._slip, is_paper=True,
+            client_ref=req.client_ref,
+        )
+
+    async def get_position(self, coin: str) -> PositionState | None:
+        e = self._positions.get(coin)
+        if e is None or (abs(e.spot_units) < 1e-12 and abs(e.perp_units) < 1e-12):
+            return None
+        return PositionState(coin=coin, spot_units=e.spot_units, perp_units=e.perp_units,
+                             avg_entry_spot=e.avg_spot, avg_entry_perp=e.avg_perp)
+
+    async def reconcile(self) -> None:
+        return None
+
+    async def round_qty(self, coin: str, qty: float) -> float:
+        return qty
+
+    async def round_qty_to_nearest(self, coin: str, qty: float) -> float:
+        return qty
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = REPO_ROOT / "research" / "data"
@@ -116,13 +184,13 @@ async def test_replay_strategy_a_one_month_smoke():
     # 2. Build production stack.
     market = ReplayMarketData(data_by_coin)
     bus = EventBus()
-    paper_executor = PaperExecutor(
+    replay_executor = _ReplayExecutor(
         market_data=market,
         spot_taker_bps=7.0,
         perp_taker_bps=3.5,
         extra_slip_bps=0.0,  # no extra slippage — for cleaner replay convergence with backtest
     )
-    executor = AtomicExecutor(paper_executor, bus, max_attempts=1, sleep_between_attempts=())
+    executor = AtomicExecutor(replay_executor, bus, max_attempts=1, sleep_between_attempts=())
     params = StrategyAParams(
         coins=COINS,
         entry_threshold=0.30,

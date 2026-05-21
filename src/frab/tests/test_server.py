@@ -193,7 +193,7 @@ async def test_resolve_exchange_raises_when_unseeded():
         await engine.dispose()
 
 
-async def test_resolve_exchange_returns_id_and_fees():
+async def test_resolve_exchange_returns_id():
     engine, factory = await _factory()
     try:
         async with session_scope(factory) as s:
@@ -205,10 +205,8 @@ async def test_resolve_exchange_returns_id_and_fees():
             ))
             await s.flush()
 
-        exc_id, spot_bps, perp_bps = await _resolve_exchange(factory)
+        exc_id = await _resolve_exchange(factory)
         assert exc_id > 0
-        assert spot_bps == 7.0
-        assert perp_bps == 3.5
     finally:
         await engine.dispose()
 

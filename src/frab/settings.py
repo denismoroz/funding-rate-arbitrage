@@ -27,8 +27,6 @@ class Settings(BaseSettings):
     hl_request_timeout_s: float = Field(default=10.0)
     hl_min_request_interval_ms: int = Field(default=200)
 
-    paper_extra_slip_bps: float = Field(default=2.0)
-
     strategy_name: str = Field(default="strategy_a")  # "strategy_a" | "two_phase_dynamic"
     strategy_params_json: str = Field(default="")     # optional JSON override of default params
 
@@ -36,13 +34,13 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO")
 
-    hl_network: Literal["paper", "testnet", "mainnet"] = Field(default="paper")
+    hl_network: Literal["testnet", "mainnet"] = Field(default="mainnet")
     hl_private_key: SecretStr | None = Field(default=None)
     hl_account_address: str | None = Field(default=None)
     # Comma-separated coin list in env (e.g. "PURR,HYPE" or "BTC,ETH,SOL,AVAX,LINK,AAVE")
-    # Empty default = use the server.py-side DEFAULT_COINS for paper mode.
+    # Empty default = use the server.py-side DEFAULT_COINS for the engine universe override.
     hl_universe: str = Field(default="")
-    # Risk caps applied when hl_network != "paper"
+    # Risk caps for live engine
     hl_max_open_positions: int = Field(default=5)
     hl_position_size_usd: float = Field(default=10.0)
     hl_live_slippage: float = Field(default=0.01)
@@ -60,11 +58,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_credentials_for_live(self) -> "Settings":
-        if self.hl_network in ("testnet", "mainnet"):
-            if self.hl_private_key is None or self.hl_account_address is None:
-                raise ValueError(
-                    f"hl_private_key and hl_account_address are required when hl_network={self.hl_network!r}"
-                )
+        if self.hl_private_key is None or self.hl_account_address is None:
+            raise ValueError(
+                f"hl_private_key and hl_account_address are required when hl_network={self.hl_network!r}"
+            )
         return self
 
     def universe_tuple(self) -> tuple[str, ...]:
