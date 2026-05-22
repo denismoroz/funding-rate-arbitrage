@@ -42,6 +42,10 @@ def _base_url(network: Literal["testnet", "mainnet"]) -> str:
     raise ValueError(f"unsupported network: {network!r}")
 
 
+class HLTransferError(RuntimeError):
+    """Raised when a usdClassTransfer action is rejected by Hyperliquid."""
+
+
 class PartialFillError(RuntimeError):
     """Raised when HL filled less than the requested qty beyond tolerance.
 
@@ -294,6 +298,26 @@ class LiveHLExecutor:
             asyncio.to_thread(self._info.spot_user_state, self._address),
         )
         return {"perp": perp_state, "spot": spot_state}
+
+    async def transfer_spot_to_perp(self, usdc_amount: float) -> dict:
+        """Перевести USDC из спот-кошелька в перп-аккаунт через usdClassTransfer."""
+        if usdc_amount <= 0:
+            raise ValueError(f"usdc_amount must be positive, got {usdc_amount!r}")
+        resp = await asyncio.to_thread(self._exchange.usd_class_transfer, usdc_amount, True)
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            raise HLTransferError(f"HL usdClassTransfer spot→perp rejected: {resp!r}")
+        logger.info("transfer_spot_to_perp amount=%.4f ok", usdc_amount)
+        return {"status": "ok", "amount": usdc_amount, "direction": "spot_to_perp", "response": resp}
+
+    async def transfer_perp_to_spot(self, usdc_amount: float) -> dict:
+        """Перевести USDC из перп-аккаунта в спот-кошелёк через usdClassTransfer."""
+        if usdc_amount <= 0:
+            raise ValueError(f"usdc_amount must be positive, got {usdc_amount!r}")
+        resp = await asyncio.to_thread(self._exchange.usd_class_transfer, usdc_amount, False)
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            raise HLTransferError(f"HL usdClassTransfer perp→spot rejected: {resp!r}")
+        logger.info("transfer_perp_to_spot amount=%.4f ok", usdc_amount)
+        return {"status": "ok", "amount": usdc_amount, "direction": "perp_to_spot", "response": resp}
 
     # Inverse of spot_token_map: HL spot coin name → canonical coin name.
     # e.g. {"UBTC": "BTC", "UETH": "ETH", ...}

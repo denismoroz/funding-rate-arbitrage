@@ -7,7 +7,7 @@ import pytest
 from hyperliquid.utils import constants
 
 from frab.exchanges.base import FillReport, Leg, OrderRequest, PositionState, Side
-from frab.exchanges.hyperliquid_live import LiveHLExecutor, PartialFillError
+from frab.exchanges.hyperliquid_live import HLTransferError, LiveHLExecutor, PartialFillError
 
 _FIXED_DT = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 _CLOCK = lambda: _FIXED_DT  # noqa: E731
@@ -611,3 +611,108 @@ async def test_fetch_wallet_state_without_address_raises(mocker):
     ex = LiveHLExecutor(info=info, exchange=exchange, account_address=None)
     with pytest.raises(RuntimeError, match="account_address required"):
         await ex.fetch_wallet_state()
+
+
+# ---------------------------------------------------------------------------
+# B2 — wallet transfer primitives
+# ---------------------------------------------------------------------------
+
+def _ok_transfer_resp():
+    return {"status": "ok", "response": {"type": "default"}}
+
+
+# 35. transfer_spot_to_perp happy path
+async def test_transfer_spot_to_perp_happy_path(mocker):
+    ex, _, exchange = _make_executor(mocker)
+    mock_to_thread = mocker.patch(
+        "asyncio.to_thread",
+        new=mocker.AsyncMock(return_value=_ok_transfer_resp()),
+    )
+
+    result = await ex.transfer_spot_to_perp(100.0)
+
+    # SDK called with correct args
+    mock_to_thread.assert_called_once()
+    call = mock_to_thread.call_args
+    assert call.args[0] is exchange.usd_class_transfer
+    assert call.args[1] == pytest.approx(100.0)
+    assert call.args[2] is True  # to_perp=True
+
+    # Return value shape
+    assert result["status"] == "ok"
+    assert result["amount"] == pytest.approx(100.0)
+    assert result["direction"] == "spot_to_perp"
+    assert result["response"] == _ok_transfer_resp()
+
+
+# 36. transfer_perp_to_spot happy path
+async def test_transfer_perp_to_spot_happy_path(mocker):
+    ex, _, exchange = _make_executor(mocker)
+    mock_to_thread = mocker.patch(
+        "asyncio.to_thread",
+        new=mocker.AsyncMock(return_value=_ok_transfer_resp()),
+    )
+
+    result = await ex.transfer_perp_to_spot(250.0)
+
+    mock_to_thread.assert_called_once()
+    call = mock_to_thread.call_args
+    assert call.args[0] is exchange.usd_class_transfer
+    assert call.args[1] == pytest.approx(250.0)
+    assert call.args[2] is False  # to_perp=False
+
+    assert result["status"] == "ok"
+    assert result["amount"] == pytest.approx(250.0)
+    assert result["direction"] == "perp_to_spot"
+    assert result["response"] == _ok_transfer_resp()
+
+
+# 37. SDK returns error response → HLTransferError
+async def test_transfer_spot_to_perp_hl_error_raises(mocker):
+    ex, _, exchange = _make_executor(mocker)
+    error_resp = {"status": "err", "response": "insufficient balance"}
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=error_resp))
+
+    with pytest.raises(HLTransferError, match="insufficient balance"):
+        await ex.transfer_spot_to_perp(50.0)
+
+
+async def test_transfer_perp_to_spot_hl_error_raises(mocker):
+    ex, _, exchange = _make_executor(mocker)
+    error_resp = {"status": "err", "response": "transfer limit"}
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=error_resp))
+
+    with pytest.raises(HLTransferError, match="transfer limit"):
+        await ex.transfer_perp_to_spot(50.0)
+
+
+# 38. usdc_amount <= 0 → ValueError (parametrized)
+@pytest.mark.parametrize("bad_amount", [0, -1.0, -100.0])
+async def test_transfer_spot_to_perp_non_positive_raises(mocker, bad_amount):
+    ex, _, _ = _make_executor(mocker)
+    with pytest.raises(ValueError):
+        await ex.transfer_spot_to_perp(bad_amount)
+
+
+@pytest.mark.parametrize("bad_amount", [0, -1.0, -100.0])
+async def test_transfer_perp_to_spot_non_positive_raises(mocker, bad_amount):
+    ex, _, _ = _make_executor(mocker)
+    with pytest.raises(ValueError):
+        await ex.transfer_perp_to_spot(bad_amount)
+
+
+# 39. SDK raises exception → propagates unchanged
+async def test_transfer_spot_to_perp_sdk_exception_propagates(mocker):
+    ex, _, _ = _make_executor(mocker)
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=ConnectionError("network down")))
+
+    with pytest.raises(ConnectionError, match="network down"):
+        await ex.transfer_spot_to_perp(10.0)
+
+
+async def test_transfer_perp_to_spot_sdk_exception_propagates(mocker):
+    ex, _, _ = _make_executor(mocker)
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=TimeoutError("timeout")))
+
+    with pytest.raises(TimeoutError, match="timeout"):
+        await ex.transfer_perp_to_spot(10.0)
