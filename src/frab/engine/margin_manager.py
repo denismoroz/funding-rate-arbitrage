@@ -107,6 +107,10 @@ class MarginManager:
         _, perp_margin = self.compute_pair_footprint(coin)
         return perp_margin
 
+    def position_size_for(self, coin: str) -> float:
+        """Spot leg notional size for opening this coin's pair."""
+        return self._params[coin].position_size_usd
+
     # ------------------------------------------------------------------
     # Mark-to-market helpers
     # ------------------------------------------------------------------

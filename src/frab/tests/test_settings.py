@@ -163,6 +163,32 @@ def test_b1_per_coin_params_missing_key_raises():
         s.per_coin_params()
 
 
+def test_e1_per_coin_params_position_size_optional():
+    """per_coin_params() accepts entries without position_size_usd (auto-derive mode)."""
+    payload = (
+        '{"BTC": {"leverage": 20, "maint_ratio": 0.01},'
+        ' "ETH": {"leverage": 20, "maint_ratio": 0.01}}'
+    )
+    s = Settings(per_coin_params_json=payload, **_CREDS)
+    parsed = s.per_coin_params()
+    assert parsed is not None
+    # position_size_usd absent in result → caller resolves via auto-sizing.
+    assert "position_size_usd" not in parsed["BTC"]
+    assert parsed["BTC"]["leverage"] == 20
+    assert parsed["ETH"]["maint_ratio"] == 0.01
+
+
+def test_e1_per_coin_params_mixed_sizes_raises():
+    """One coin with position_size_usd and one without must fail (ambiguous)."""
+    payload = (
+        '{"BTC": {"position_size_usd": 100, "leverage": 20, "maint_ratio": 0.01},'
+        ' "ETH": {"leverage": 20, "maint_ratio": 0.01}}'
+    )
+    s = Settings(per_coin_params_json=payload, **_CREDS)
+    with pytest.raises(ValueError, match="mixed mode"):
+        s.per_coin_params()
+
+
 def test_b1_top_up_trigger_ge_healthy_ratio_raises():
     """top_up_trigger >= healthy_ratio must fail at instantiation."""
     with pytest.raises(ValidationError):

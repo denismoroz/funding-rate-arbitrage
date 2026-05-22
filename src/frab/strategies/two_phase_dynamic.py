@@ -228,6 +228,14 @@ class TwoPhaseDynamic(Strategy):
                 applied += 1
         return applied
 
+    def _position_size_for(self, coin: str) -> float:
+        """Spot leg notional for opening `coin`. Defers to MarginManager
+        when configured (single source of truth), otherwise uses uniform
+        strategy params."""
+        if self._margin_manager is not None and coin in self._margin_manager._params:
+            return self._margin_manager.position_size_for(coin)
+        return self._params.position_size_usdc
+
     def _open_position_snapshots_for_manager(self) -> list[OpenPosition]:
         """Return list of OpenPosition snapshots for MarginManager.can_open."""
         from frab.engine.margin_manager import OpenPosition as MgrOpenPosition  # noqa: PLC0415
@@ -432,7 +440,7 @@ class TwoPhaseDynamic(Strategy):
         self, coin: str, now: datetime, min_hold: int,
     ) -> tuple[list[FillReport], FailedOpen | None]:
         quote = self._last_quotes[coin]
-        qty = self._params.position_size_usdc / quote.mark
+        qty = self._position_size_for(coin) / quote.mark
 
         perp_req = OrderRequest(
             coin=coin, leg=Leg.PERP, side=Side.SELL, qty=qty,

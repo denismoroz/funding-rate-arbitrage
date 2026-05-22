@@ -14,6 +14,7 @@ from frab.server import (
     _build_fee_reconciler,
     _build_margin_manager,
     _build_params_override,
+    _compute_auto_sizes,
     _hl_info_url,
     _position_mode,
     _select_coins,
@@ -240,6 +241,94 @@ def test_build_margin_manager_constructs_from_per_coin_params_json():
     spot, perp = mgr.compute_pair_footprint("BTC")
     assert spot == 100.0
     assert perp == pytest.approx(15.0)
+
+
+# ---------------------------------------------------------------------------
+# E1: auto-size derivation
+# ---------------------------------------------------------------------------
+
+def test_compute_auto_sizes_uniform_per_slot_dollar():
+    """Each slot consumes equal $ (size + locked_margin) regardless of coin leverage."""
+    per_coin = {
+        "BTC": {"leverage": 20, "maint_ratio": 0.01},
+        "ETH": {"leverage": 20, "maint_ratio": 0.01},
+        "SOL": {"leverage": 10, "maint_ratio": 0.025},
+    }
+    sizes = _compute_auto_sizes(
+        per_coin, budget_cap_usd=60.0, concurrency_cap=3, margin_buffer_x=3.0,
+    )
+    # per_slot = 60 / 3 = 20
+    # BTC/ETH multiplier = 1 + 3/20 = 1.15 → size = 20/1.15 ≈ 17.39
+    # SOL multiplier = 1 + 3/10 = 1.30 → size = 20/1.30 ≈ 15.38
+    assert sizes["BTC"] == pytest.approx(20.0 / 1.15)
+    assert sizes["ETH"] == pytest.approx(20.0 / 1.15)
+    assert sizes["SOL"] == pytest.approx(20.0 / 1.30)
+    # Total committed (spot + perp_margin) per coin sums to exactly $60
+    total = sum(s * (1.0 + 3.0 / per_coin[c]["leverage"]) for c, s in sizes.items())
+    assert total == pytest.approx(60.0)
+
+
+def test_compute_auto_sizes_zero_k_raises():
+    with pytest.raises(ValueError, match="concurrency_cap"):
+        _compute_auto_sizes(
+            {"BTC": {"leverage": 20, "maint_ratio": 0.01}},
+            budget_cap_usd=60.0, concurrency_cap=0, margin_buffer_x=3.0,
+        )
+
+
+def test_build_margin_manager_auto_sizes_when_position_size_omitted():
+    """When PER_COIN_PARAMS_JSON omits position_size_usd, sizes are auto-derived."""
+    per_coin = (
+        '{"BTC": {"leverage": 20, "maint_ratio": 0.01},'
+        ' "ETH": {"leverage": 20, "maint_ratio": 0.01},'
+        ' "SOL": {"leverage": 10, "maint_ratio": 0.025}}'
+    )
+    s = Settings(
+        per_coin_params_json=per_coin,
+        budget_cap_usd=60.0,
+        margin_buffer_x=3.0,
+        top_up_trigger=2.0,
+        healthy_ratio=3.0,
+        hl_max_open_positions=3,
+        _env_file=None,
+        **_CREDS,
+    )
+    mgr = _build_margin_manager(s)
+    assert mgr is not None
+    assert mgr.position_size_for("BTC") == pytest.approx(20.0 / 1.15)
+    assert mgr.position_size_for("SOL") == pytest.approx(20.0 / 1.30)
+    # Total committed = exactly budget_cap
+    total = sum(
+        s_ * (1.0 + 3.0 / lev)
+        for s_, lev in [
+            (mgr.position_size_for("BTC"), 20),
+            (mgr.position_size_for("ETH"), 20),
+            (mgr.position_size_for("SOL"), 10),
+        ]
+    )
+    assert total == pytest.approx(60.0)
+
+
+def test_build_margin_manager_explicit_sizes_take_precedence():
+    """When position_size_usd is set for all coins, it is used as-is (no auto)."""
+    per_coin = (
+        '{"BTC": {"position_size_usd": 25.0, "leverage": 20, "maint_ratio": 0.01},'
+        ' "ETH": {"position_size_usd": 25.0, "leverage": 20, "maint_ratio": 0.01}}'
+    )
+    s = Settings(
+        per_coin_params_json=per_coin,
+        budget_cap_usd=60.0,
+        margin_buffer_x=3.0,
+        top_up_trigger=2.0,
+        healthy_ratio=3.0,
+        hl_max_open_positions=2,
+        _env_file=None,
+        **_CREDS,
+    )
+    mgr = _build_margin_manager(s)
+    assert mgr is not None
+    assert mgr.position_size_for("BTC") == 25.0
+    assert mgr.position_size_for("ETH") == 25.0
 
 
 # ---------------------------------------------------------------------------

@@ -141,18 +141,66 @@ def _build_params_override(settings: Settings) -> dict:
     return params_override
 
 
+def _compute_auto_sizes(
+    per_coin: dict[str, dict],
+    *,
+    budget_cap_usd: float,
+    concurrency_cap: int,
+    margin_buffer_x: float,
+) -> dict[str, float]:
+    """Auto-derive position_size_usd per coin from budget/K/leverage/buffer.
+
+    Each open slot consumes `position_size * (1 + buffer/leverage)` of capital
+    (spot leg + locked perp margin). Allocating equal $-per-slot:
+
+        size_i = (budget_cap / K) / (1 + buffer / leverage_i)
+
+    Coins with lower leverage get smaller position_size because they need
+    a larger perp margin reserve per dollar of notional.
+    """
+    if concurrency_cap <= 0:
+        raise ValueError("concurrency_cap must be > 0 for auto-sizing")
+    per_slot = budget_cap_usd / concurrency_cap
+    return {
+        coin: per_slot / (1.0 + margin_buffer_x / p["leverage"])
+        for coin, p in per_coin.items()
+    }
+
+
 def _build_margin_manager(settings: Settings) -> MarginManager | None:
     """Construct MarginManager from settings, or None for legacy uniform mode.
 
     Returns None when FRAB_PER_COIN_PARAMS_JSON is empty — strategy then runs
     without margin pre-flight or watchdog (backwards compat).
+
+    When `position_size_usd` is omitted for ALL coins in the JSON, sizes are
+    auto-derived from budget_cap / K / footprint(leverage, buffer).
     """
     per_coin = settings.per_coin_params()
     if per_coin is None:
         return None
+
+    auto_sized = all("position_size_usd" not in p for p in per_coin.values())
+    if auto_sized:
+        sizes = _compute_auto_sizes(
+            per_coin,
+            budget_cap_usd=settings.budget_cap_usd,
+            concurrency_cap=settings.hl_max_open_positions,
+            margin_buffer_x=settings.margin_buffer_x,
+        )
+        logger.info(
+            "auto-sized per-coin position sizes from budget=$%.2f K=%d buf=%.2fx: %s",
+            settings.budget_cap_usd,
+            settings.hl_max_open_positions,
+            settings.margin_buffer_x,
+            {c: round(s, 2) for c, s in sizes.items()},
+        )
+    else:
+        sizes = {coin: p["position_size_usd"] for coin, p in per_coin.items()}
+
     specs = {
         coin: PerCoinSpec(
-            position_size_usd=p["position_size_usd"],
+            position_size_usd=sizes[coin],
             leverage=p["leverage"],
             maint_ratio=p["maint_ratio"],
         )

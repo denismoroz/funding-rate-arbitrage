@@ -144,6 +144,41 @@ async def test_strategy_a_margin_manager_can_open_true_calls_transfer(mocker):
 
 
 @pytest.mark.asyncio
+async def test_strategy_a_open_qty_uses_margin_manager_size(mocker):
+    """When MarginManager is set and has its own position_size_usd, the OPEN
+    qty is computed from MarginManager's size — not the strategy's uniform one.
+
+    StrategyParams has position_size_usdc=1000 but MarginManager has 250 →
+    spot leg qty should be 250 / mark, not 1000 / mark.
+    """
+    ex = make_mock_executor(mocker)
+    # MarginManager configured with explicit position_size=250 (overrides strategy 1000)
+    mgr = make_margin_manager(position_size_usd=250.0, leverage=5, margin_buffer_x=2.0)
+    # required_margin = 250 / 5 * 2 = 100
+    expected_margin = 100.0
+
+    strat = StrategyA(
+        StrategyAParams(
+            coins=("BTC",), concurrency_cap=1, signal_window_hours=1,
+            position_size_usdc=1000.0,
+        ),
+        ex,
+        margin_manager=mgr,
+    )
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0)})
+
+    assert report.opened == ("BTC",)
+    # The spot OrderRequest passed to open_paired should have qty = 250/100 = 2.5
+    # (not 1000/100 = 10 — the legacy strategy value)
+    open_call = ex.open_paired.await_args_list[0]
+    spot_req = open_call.args[1]  # open_paired(perp_req, spot_req)
+    assert spot_req.qty == pytest.approx(2.5)
+    ex.transfer_spot_to_perp.assert_called_once_with(pytest.approx(expected_margin))
+
+
+@pytest.mark.asyncio
 async def test_strategy_a_margin_manager_can_open_false_skips_open(mocker):
     """can_open=False — OPEN skipped, transfer NOT called, counter incremented."""
     ex = make_mock_executor(mocker)

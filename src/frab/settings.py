@@ -119,6 +119,7 @@ class Settings(BaseSettings):
             raise ValueError("per_coin_params_json must be a JSON object (dict)")
 
         result: dict[str, dict] = {}
+        sizes_present: list[bool] = []
         for ticker, params in data.items():
             if not isinstance(ticker, str) or not _TICKER_RE.match(ticker):
                 raise ValueError(
@@ -128,19 +129,15 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"per_coin_params_json[{ticker!r}] must be a dict, got {type(params).__name__}"
                 )
-            # Validate required keys
-            for required_key in ("position_size_usd", "leverage", "maint_ratio"):
+            # leverage + maint_ratio are required; position_size_usd is optional
+            # (auto-derived from budget_cap/K/buffer when omitted for all coins).
+            for required_key in ("leverage", "maint_ratio"):
                 if required_key not in params:
                     raise ValueError(
                         f"per_coin_params_json[{ticker!r}] missing required key {required_key!r}"
                     )
-            pos_size = params["position_size_usd"]
             leverage = params["leverage"]
             maint_ratio = params["maint_ratio"]
-            if not isinstance(pos_size, (int, float)) or pos_size <= 0:
-                raise ValueError(
-                    f"per_coin_params_json[{ticker!r}].position_size_usd must be float > 0, got {pos_size!r}"
-                )
             if not isinstance(leverage, int) or not (1 <= leverage <= 50):
                 raise ValueError(
                     f"per_coin_params_json[{ticker!r}].leverage must be int in [1, 50], got {leverage!r}"
@@ -149,11 +146,32 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"per_coin_params_json[{ticker!r}].maint_ratio must be float in (0, 0.5), got {maint_ratio!r}"
                 )
-            result[ticker] = {
-                "position_size_usd": float(pos_size),
+
+            entry: dict = {
                 "leverage": int(leverage),
                 "maint_ratio": float(maint_ratio),
             }
+            if "position_size_usd" in params:
+                pos_size = params["position_size_usd"]
+                if not isinstance(pos_size, (int, float)) or pos_size <= 0:
+                    raise ValueError(
+                        f"per_coin_params_json[{ticker!r}].position_size_usd must be float > 0, "
+                        f"got {pos_size!r}"
+                    )
+                entry["position_size_usd"] = float(pos_size)
+                sizes_present.append(True)
+            else:
+                sizes_present.append(False)
+            result[ticker] = entry
+
+        # Mixed mode (some coins with position_size_usd, some without) is ambiguous
+        # — fail loud so the user picks one mode.
+        if any(sizes_present) and not all(sizes_present):
+            missing = [t for t, p in result.items() if "position_size_usd" not in p]
+            raise ValueError(
+                "per_coin_params_json: position_size_usd must be set for all coins "
+                f"or none (mixed mode unsupported). Missing in: {missing}"
+            )
         return result
 
     def universe_tuple(self) -> tuple[str, ...]:
