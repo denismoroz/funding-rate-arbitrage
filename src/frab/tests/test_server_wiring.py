@@ -12,6 +12,7 @@ from frab.server import (
     MAINNET_SPOT_TOKEN_MAP,
     _build_executor,
     _build_fee_reconciler,
+    _build_margin_manager,
     _build_params_override,
     _hl_info_url,
     _position_mode,
@@ -204,6 +205,41 @@ def test_build_params_override_live_preserves_strategy_params_json():
     # …alongside HL-driven caps.
     assert override["position_size_usdc"] == 15.0
     assert override["concurrency_cap"] == 2
+
+
+# ---------------------------------------------------------------------------
+# _build_margin_manager — legacy returns None; configured returns MarginManager
+# ---------------------------------------------------------------------------
+
+def test_build_margin_manager_returns_none_when_per_coin_params_empty():
+    s = Settings(_env_file=None, **_CREDS)
+    assert _build_margin_manager(s) is None
+
+
+def test_build_margin_manager_constructs_from_per_coin_params_json():
+    per_coin = (
+        '{"BTC": {"position_size_usd": 100.0, "leverage": 20, "maint_ratio": 0.01},'
+        ' "DOGE": {"position_size_usd": 50.0, "leverage": 5, "maint_ratio": 0.05}}'
+    )
+    s = Settings(
+        per_coin_params_json=per_coin,
+        budget_cap_usd=500.0,
+        margin_buffer_x=3.0,
+        top_up_trigger=2.0,
+        healthy_ratio=3.0,
+        _env_file=None,
+        **_CREDS,
+    )
+    mgr = _build_margin_manager(s)
+    assert mgr is not None
+    assert mgr.margin_buffer_x == 3.0
+    assert mgr.top_up_trigger == 2.0
+    assert mgr.healthy_ratio == 3.0
+    assert mgr.budget_cap_usd == 500.0
+    # Footprint sanity for BTC: spot=100, perp = 100/20*3 = 15
+    spot, perp = mgr.compute_pair_footprint("BTC")
+    assert spot == 100.0
+    assert perp == pytest.approx(15.0)
 
 
 # ---------------------------------------------------------------------------

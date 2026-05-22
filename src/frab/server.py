@@ -29,6 +29,7 @@ from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.engine.fee_reconciler import FeeReconciler
 from frab.engine.funding_reconciler import FundingReconciler
 from frab.engine.loop import Engine
+from frab.engine.margin_manager import MarginManager, PerCoinSpec
 from frab.engine.reconcile import scan as reconcile_scan
 from frab.events.bus import EventBus, EventDbSink
 from frab.exchanges.atomic import AtomicExecutor
@@ -138,6 +139,32 @@ def _build_params_override(settings: Settings) -> dict:
     params_override["position_size_usdc"] = settings.hl_position_size_usd
     params_override["concurrency_cap"] = settings.hl_max_open_positions
     return params_override
+
+
+def _build_margin_manager(settings: Settings) -> MarginManager | None:
+    """Construct MarginManager from settings, or None for legacy uniform mode.
+
+    Returns None when FRAB_PER_COIN_PARAMS_JSON is empty — strategy then runs
+    without margin pre-flight or watchdog (backwards compat).
+    """
+    per_coin = settings.per_coin_params()
+    if per_coin is None:
+        return None
+    specs = {
+        coin: PerCoinSpec(
+            position_size_usd=p["position_size_usd"],
+            leverage=p["leverage"],
+            maint_ratio=p["maint_ratio"],
+        )
+        for coin, p in per_coin.items()
+    }
+    return MarginManager(
+        per_coin_params=specs,
+        margin_buffer_x=settings.margin_buffer_x,
+        top_up_trigger=settings.top_up_trigger,
+        healthy_ratio=settings.healthy_ratio,
+        budget_cap_usd=settings.budget_cap_usd,
+    )
 
 
 def _hl_info_url(settings: Settings) -> str:
@@ -454,11 +481,23 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
 
         spec = get_strategy_spec(settings.strategy_name)
         params_override = _build_params_override(settings)
+        margin_manager = _build_margin_manager(settings)
+        if margin_manager is not None:
+            logger.info(
+                "margin_manager enabled: %d coins, buffer=%.1fx, "
+                "trigger=%.2f, healthy=%.2f, budget=$%.0f",
+                len(margin_manager._params),
+                margin_manager.margin_buffer_x,
+                margin_manager.top_up_trigger,
+                margin_manager.healthy_ratio,
+                margin_manager.budget_cap_usd,
+            )
         strategy, params_json = spec.build(
             coins=resolved_coins,
             params_override=params_override,
             executor=atomic,
             dry_run=dry_run,
+            margin_manager=margin_manager,
         )
 
         instance_token = uuid.uuid4().hex
