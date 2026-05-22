@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 from typing import Literal
@@ -10,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 
 _ETH_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+_TICKER_RE = re.compile(r"^[A-Z]{3,5}$")
 
 
 class Settings(BaseSettings):
@@ -45,6 +47,20 @@ class Settings(BaseSettings):
     hl_position_size_usd: float = Field(default=10.0)
     hl_live_slippage: float = Field(default=0.01)
 
+    # --- Margin-policy settings (Phase B1) ---
+    # Per-coin params JSON. Empty string = use legacy hl_position_size_usd uniform sizing.
+    # When non-empty, expected shape:
+    #   {"BTC": {"position_size_usd": 100.0, "leverage": 20, "maint_ratio": 0.01}, ...}
+    per_coin_params_json: str = Field(default="")
+    # Total budget the strategy will manage.
+    budget_cap_usd: float = Field(default=1000.0, gt=0)
+    # Multiplier over initial margin kept as buffer.
+    margin_buffer_x: float = Field(default=3.0, ge=1.0, le=10.0)
+    # margin_ratio threshold below which a top-up triggers.
+    top_up_trigger: float = Field(default=2.0)
+    # Target margin_ratio after top-up.
+    healthy_ratio: float = Field(default=3.0)
+
     @field_validator("hl_account_address")
     @classmethod
     def _validate_eth_address(cls, v: str | None) -> str | None:
@@ -63,6 +79,82 @@ class Settings(BaseSettings):
                 f"hl_private_key and hl_account_address are required when hl_network={self.hl_network!r}"
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_margin_policy(self) -> "Settings":
+        """Проверка cross-field инвариантов маржинальной политики."""
+        if self.top_up_trigger <= 1.0:
+            raise ValueError(
+                f"top_up_trigger must be > 1.0, got {self.top_up_trigger}"
+            )
+        if self.top_up_trigger >= self.healthy_ratio:
+            raise ValueError(
+                f"top_up_trigger ({self.top_up_trigger}) must be < healthy_ratio ({self.healthy_ratio})"
+            )
+        return self
+
+    def per_coin_params(self) -> "dict[str, dict] | None":
+        """Parse per_coin_params_json into a validated dict, or None if empty.
+
+        Returns None when per_coin_params_json is empty (legacy uniform-sizing mode).
+        Raises ValueError on any parse or validation error.
+
+        Expected shape::
+
+            {
+                "BTC": {"position_size_usd": 100.0, "leverage": 20, "maint_ratio": 0.01},
+                ...
+            }
+        """
+        raw = self.per_coin_params_json.strip()
+        if not raw:
+            return None
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"per_coin_params_json is not valid JSON: {exc}") from exc
+
+        if not isinstance(data, dict):
+            raise ValueError("per_coin_params_json must be a JSON object (dict)")
+
+        result: dict[str, dict] = {}
+        for ticker, params in data.items():
+            if not isinstance(ticker, str) or not _TICKER_RE.match(ticker):
+                raise ValueError(
+                    f"per_coin_params_json key {ticker!r} must be an uppercase 3-5 letter ticker"
+                )
+            if not isinstance(params, dict):
+                raise ValueError(
+                    f"per_coin_params_json[{ticker!r}] must be a dict, got {type(params).__name__}"
+                )
+            # Validate required keys
+            for required_key in ("position_size_usd", "leverage", "maint_ratio"):
+                if required_key not in params:
+                    raise ValueError(
+                        f"per_coin_params_json[{ticker!r}] missing required key {required_key!r}"
+                    )
+            pos_size = params["position_size_usd"]
+            leverage = params["leverage"]
+            maint_ratio = params["maint_ratio"]
+            if not isinstance(pos_size, (int, float)) or pos_size <= 0:
+                raise ValueError(
+                    f"per_coin_params_json[{ticker!r}].position_size_usd must be float > 0, got {pos_size!r}"
+                )
+            if not isinstance(leverage, int) or not (1 <= leverage <= 50):
+                raise ValueError(
+                    f"per_coin_params_json[{ticker!r}].leverage must be int in [1, 50], got {leverage!r}"
+                )
+            if not isinstance(maint_ratio, (int, float)) or not (0 < maint_ratio < 0.5):
+                raise ValueError(
+                    f"per_coin_params_json[{ticker!r}].maint_ratio must be float in (0, 0.5), got {maint_ratio!r}"
+                )
+            result[ticker] = {
+                "position_size_usd": float(pos_size),
+                "leverage": int(leverage),
+                "maint_ratio": float(maint_ratio),
+            }
+        return result
 
     def universe_tuple(self) -> tuple[str, ...]:
         """Parse hl_universe env string into tuple of coin names. Empty → ()."""
