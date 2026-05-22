@@ -418,3 +418,37 @@ Regime detector: автоматическое переключение межд�
 ---
 
 *Документ составлен 2026-05-16, обновлён 2026-05-17. Числа из CSV — точные, без округления сверх исходных 2 знаков после запятой.*
+
+---
+
+## Phase A: Честная маржинальная модель (2026-05-22)
+
+**Что отсутствовало в старом engine.py:** резерв маржи под perp short. Симулятор держал спот + перп без явного маржинального буфера, игнорировал forced-close при просадке маржи и не моделировал auto top-up из cash. Это занижало реальный требуемый капитал ~в 2× и делало цифры доходности нечестными.
+
+**Новая модель** (`research/portfolio_margin.py`):
+- Cross-margin perp wallet с явным резервом `position_size / leverage × margin_buffer_x`
+- Per-coin leverage caps (HL физические лимиты): BTC/ETH 20×, SOL/AVAX/LINK 10×, AAVE/DOGE 5×
+- Maintenance ratios: BTC/ETH 1%, SOL/AVAX/LINK 2.5%, AAVE/DOGE 5%
+- Auto top-up: margin ratio < 2.0× → пополняем из cash до 3.0×
+- Forced-close fallback перед ликвидацией
+
+**Sweep** (`research/portfolio_margin_sweep.py`): sweep по `margin_buffer_x × position_size × K`. Результаты в `research/portfolio_margin_sweep_results.csv`.
+
+**Ключевые находки sweep (7 монет, 2 года):**
+
+| Config | Annual | Calmar | Sharpe | Ликвидаций |
+|--------|--------|--------|--------|------------|
+| buffer=5×, size=$50, K=5 | +29.76% | 1951 | 3.82 | 0 |
+| buffer=2×, size=$50, K=5 | +18.87% | — | **4.85** | 0 |
+| **buffer=3×, size=$100, K=5** ⭐ | **+34%** | ~4.0 | ~4.0 | **0** |
+| buffer=2×, size=$150, K=5 | −11.95% | — | — | **1** |
+
+**Рекомендация для live:** buffer=3×, position_size=$100, K=5. Budget ~$1000, ожидаемо +34% annual, Sharpe ~4.0, max DD 0.03%.
+
+**Calmar в тысячах** — артефакт delta-neutral структуры (tiny DD 0.015-0.046%); не сравнивать с directional стратегиями.
+
+**Vs sUSDe baseline (~12% APR пассив):** premium +17-22pp при рекомендованном конфиге.
+
+**Не смоделировано:** HL outages, spot/perp wallet transfer friction, slippage при forced-close, funding non-stationarity (бэктест на bull-период 2024-2025).
+
+**Референсные файлы:** `research/engine.py` (margin params), `research/portfolio_margin.py` (backtester), `research/portfolio_margin_sweep.py` (sweep runner), `research/MARGIN_ANALYSIS.md` (analysis writeup), `research/portfolio_margin_sweep_results.csv` (raw numbers).
