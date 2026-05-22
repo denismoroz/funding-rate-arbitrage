@@ -548,6 +548,9 @@ class TwoPhaseDynamic(Strategy):
 
         opens = self._open_position_snapshots_for_manager()
         total_maint = self._margin_manager.compute_total_maintenance(opens, marks)
+        unrealized = self._margin_manager.compute_perp_unrealized(opens, marks)
+        # HL semantics: perp_account_value = perp_cash + unrealized.
+        effective_equity = self._perp_cash + unrealized
         ratio = self._margin_manager.compute_margin_ratio(self._perp_cash, opens, marks)
 
         if ratio >= self._margin_manager.top_up_trigger:
@@ -563,7 +566,7 @@ class TwoPhaseDynamic(Strategy):
             reason = f"emergency close {coin}" if ok else f"emergency close FAILED {coin}"
             return WatchdogReport(now, action, ratio, coin if ok else None, 0.0, reason)
 
-        top_up = self._margin_manager.compute_top_up_amount(self._perp_cash, total_maint)
+        top_up = self._margin_manager.compute_top_up_amount(effective_equity, total_maint)
         if self._cash >= top_up and top_up > 0.0:
             try:
                 await self._executor.transfer_spot_to_perp(top_up)
