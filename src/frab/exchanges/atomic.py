@@ -629,3 +629,15 @@ class AtomicExecutor:
             spot_attempts=spot_attempts,
             errors=(),
         )
+
+    # ------------------------------------------------------------------
+    # Transfer helpers — forwarded to the underlying executor
+    # ------------------------------------------------------------------
+
+    async def transfer_spot_to_perp(self, usdc_amount: float) -> dict:
+        """Transfer USDC from spot wallet to perp margin wallet."""
+        return await self._underlying.transfer_spot_to_perp(usdc_amount)
+
+    async def transfer_perp_to_spot(self, usdc_amount: float) -> dict:
+        """Transfer USDC from perp margin wallet to spot wallet."""
+        return await self._underlying.transfer_perp_to_spot(usdc_amount)

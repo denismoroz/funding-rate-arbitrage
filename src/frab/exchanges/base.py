@@ -121,3 +121,5 @@ class Executor(Protocol):
     async def reconcile(self) -> None: ...  # pragma: no cover
     async def round_qty(self, coin: str, qty: float) -> float: ...  # pragma: no cover
     async def round_qty_to_nearest(self, coin: str, qty: float) -> float: ...  # pragma: no cover
+    async def transfer_spot_to_perp(self, usdc_amount: float) -> dict: ...  # pragma: no cover
+    async def transfer_perp_to_spot(self, usdc_amount: float) -> dict: ...  # pragma: no cover

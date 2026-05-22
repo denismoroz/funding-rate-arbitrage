@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from frab.engine.signals import Decision, decide
 from frab.engine.state import MarketState
@@ -17,6 +18,9 @@ from frab.exchanges.base import (
     Side,
 )
 from frab.strategies.base import EquitySnapshot, FailedOpen, SignalEvent, Strategy, TickReport
+
+if TYPE_CHECKING:
+    from frab.engine.margin_manager import MarginManager, OpenPosition
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +89,18 @@ class StrategyA(Strategy):
     name = "strategy_a"
     version = "v1"
 
-    def __init__(self, params: StrategyAParams, executor: AtomicExecutor, *, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        params: StrategyAParams,
+        executor: AtomicExecutor,
+        *,
+        dry_run: bool = False,
+        margin_manager: MarginManager | None = None,
+    ) -> None:
         self._params = params
         self._executor = executor
         self._dry_run = dry_run
+        self._margin_manager = margin_manager
         self._market_state = MarketState(params.coins, params.signal_window_hours, funding_interval_hours=1.0)
         self._positions: dict[str, _PositionRecord] = {}
         self._last_quotes: dict[str, Quote] = {}
@@ -96,6 +108,8 @@ class StrategyA(Strategy):
         self._funding_cum: float = 0.0
         self._fees_cum: float = 0.0
         self._cash: float = params.concurrency_cap * params.position_size_usdc * 2
+        self._perp_cash: float = 0.0
+        self._n_skipped_opens_capital: int = 0
 
     @property
     def cash(self) -> float:
@@ -112,6 +126,14 @@ class StrategyA(Strategy):
     @property
     def fees_cum(self) -> float:
         return self._fees_cum
+
+    @property
+    def perp_cash(self) -> float:
+        return self._perp_cash
+
+    @property
+    def n_skipped_opens_capital(self) -> int:
+        return self._n_skipped_opens_capital
 
     def set_fees_cum(self, value: float) -> None:
         """Replace the running fees counter with the DB-authoritative total."""
@@ -153,6 +175,8 @@ class StrategyA(Strategy):
             self._realized_pnl_cum = accumulators.realized_pnl_cum
             self._funding_cum = accumulators.funding_cum
             self._fees_cum = accumulators.fees_cum
+        # Reset perp_cash on rehydrate — it will be reconciled via live state
+        self._perp_cash = 0.0
 
     def update_hot_params(
         self,
@@ -193,6 +217,24 @@ class StrategyA(Strategy):
                 cs.add_funding(tick)
                 applied += 1
         return applied
+
+    def _open_position_snapshots_for_manager(self) -> list[OpenPosition]:
+        """Return list of OpenPosition snapshots for MarginManager.can_open."""
+        from frab.engine.margin_manager import OpenPosition as MgrOpenPosition  # noqa: PLC0415
+        result: list[MgrOpenPosition] = []
+        for coin, pos in self._positions.items():
+            if self._margin_manager is not None and coin in self._margin_manager._params:
+                required_margin = self._margin_manager.compute_required_margin_for_open(coin)
+            else:
+                required_margin = 0.0
+            result.append(MgrOpenPosition(
+                coin=coin,
+                spot_units=pos.spot_qty,
+                short_size=pos.perp_qty,
+                entry_perp_price=pos.entry_perp_price,
+                required_margin=required_margin,
+            ))
+        return result
 
     async def on_minute_tick(self, now: datetime, quotes: dict[str, Quote]) -> None:
         for coin, quote in quotes.items():
@@ -272,6 +314,26 @@ class StrategyA(Strategy):
                 if self._dry_run:
                     logger.warning("dry-run: skipped OPEN for %s", coin)
                     continue
+                if self._margin_manager is not None:
+                    ok, reason = self._margin_manager.can_open(
+                        coin,
+                        spot_cash=self._cash,
+                        opens=self._open_position_snapshots_for_manager(),
+                        perp_cash=self._perp_cash,
+                    )
+                    if not ok:
+                        logger.warning("margin pre-flight: skipping OPEN for %s — %s", coin, reason)
+                        self._n_skipped_opens_capital += 1
+                        continue
+                    required_margin = self._margin_manager.compute_required_margin_for_open(coin)
+                    try:
+                        await self._executor.transfer_spot_to_perp(required_margin)
+                        self._cash -= required_margin
+                        self._perp_cash += required_margin
+                    except Exception as exc:
+                        logger.error("margin transfer failed for %s: %r — skipping OPEN", coin, exc)
+                        self._n_skipped_opens_capital += 1
+                        continue
                 open_fills, failed = await self._open_position(coin, now)
                 if failed is None:
                     fills_log.extend(open_fills)

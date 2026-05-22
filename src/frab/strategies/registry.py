@@ -4,12 +4,15 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from frab.exchanges.atomic import AtomicExecutor
 from frab.strategies.base import Strategy
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
 from frab.strategies.two_phase_dynamic import TwoPhaseDynamic, TwoPhaseDynamicParams
+
+if TYPE_CHECKING:
+    from frab.engine.margin_manager import MarginManager
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,7 @@ class StrategySpec(Protocol):
         params_override: dict | None,
         executor: AtomicExecutor,
         dry_run: bool = False,
+        margin_manager: MarginManager | None = None,
     ) -> tuple[Strategy, dict]:
         """Returns (strategy_instance, params_json_dict_for_db)."""
 
@@ -84,7 +88,7 @@ class _StrategyASpec:
         ),
     }
 
-    def build(self, coins, params_override, executor, dry_run: bool = False):
+    def build(self, coins, params_override, executor, dry_run: bool = False, margin_manager: MarginManager | None = None):
         kwargs: dict = {"coins": tuple(coins)}
         if params_override:
             allowed = {
@@ -97,7 +101,7 @@ class _StrategyASpec:
                 else:
                     logger.warning("strategy_a: ignoring unknown param %r", k)
         params = StrategyAParams(**kwargs)
-        strategy = StrategyA(params=params, executor=executor, dry_run=dry_run)
+        strategy = StrategyA(params=params, executor=executor, dry_run=dry_run, margin_manager=margin_manager)
         params_json = {
             "coins": list(params.coins),
             "entry_threshold": params.entry_threshold,
@@ -202,7 +206,7 @@ class _TwoPhaseDynamicSpec:
         ),
     }
 
-    def build(self, coins, params_override, executor, dry_run: bool = False):
+    def build(self, coins, params_override, executor, dry_run: bool = False, margin_manager: MarginManager | None = None):
         kwargs: dict = {"coins": tuple(coins)}
         if params_override:
             allowed = {
@@ -218,7 +222,7 @@ class _TwoPhaseDynamicSpec:
                 else:
                     logger.warning("two_phase_dynamic: ignoring unknown param %r", k)
         params = TwoPhaseDynamicParams(**kwargs)
-        strategy = TwoPhaseDynamic(params=params, executor=executor, dry_run=dry_run)
+        strategy = TwoPhaseDynamic(params=params, executor=executor, dry_run=dry_run, margin_manager=margin_manager)
         params_json = {
             "coins": list(params.coins),
             "entry_threshold": params.entry_threshold,
