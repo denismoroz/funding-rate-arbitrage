@@ -21,9 +21,11 @@ import {
   fetchAlerts,
   fetchWallet,
   fetchWalletHistory,
+  fetchMarginStatus,
   type Alert,
   type Fill,
   type Position,
+  type MarginStatus,
 } from "../lib/api";
 import { formatCurrency, formatCurrencyPrecise, formatQty, formatRelative, formatNumber } from "../lib/format";
 import { useNow } from "../lib/useNow";
@@ -954,6 +956,199 @@ function AlertBanner() {
 
 export { Header };
 
+// ── Margin status card ────────────────────────────────────────────────────────
+
+function ratioColor(ratio: number | null, trigger: number | null, healthy: number | null) {
+  if (ratio == null) return "text-gray-400";
+  if (trigger == null || healthy == null) return "text-gray-700";
+  if (ratio >= healthy) return "text-green-600";
+  if (ratio >= trigger) return "text-yellow-600";
+  if (ratio >= 1.0) return "text-orange-500";
+  return "text-red-600";
+}
+
+function ratioBarColor(ratio: number | null, trigger: number | null, healthy: number | null) {
+  if (ratio == null || trigger == null || healthy == null) return "bg-gray-300";
+  if (ratio >= healthy) return "bg-green-500";
+  if (ratio >= trigger) return "bg-yellow-500";
+  if (ratio >= 1.0) return "bg-orange-500";
+  return "bg-red-500";
+}
+
+function MarginCard() {
+  const strategyId = useActiveStrategyId();
+  const now = useNow();
+  const [showRaw, setShowRaw] = useState(false);
+  const { data, isLoading, error } = useQuery<MarginStatus>({
+    queryKey: ["margin", strategyId],
+    queryFn: () => fetchMarginStatus(strategyId!),
+    enabled: !!strategyId,
+    refetchInterval: 15_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <Skeleton rows={3} />
+      </div>
+    );
+  }
+  if (error instanceof Error) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <ErrorMsg message={error.message} />
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  if (!data.margin_manager_enabled) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold text-gray-700">Margin</h2>
+          <span className="text-xs text-gray-400">
+            not configured ({data.n_open_positions}/{data.concurrency_cap} slots)
+          </span>
+        </div>
+        <p className="mt-2 text-xs text-gray-500">
+          Set <code className="rounded bg-gray-100 px-1">FRAB_PER_COIN_PARAMS_JSON</code> to
+          enable margin watchdog.
+        </p>
+      </div>
+    );
+  }
+
+  const ratio = data.margin_ratio;
+  const trigger = data.top_up_trigger;
+  const healthy = data.healthy_ratio;
+  const ratioText = ratio == null ? "—" : ratio.toFixed(2);
+  const ratioCls = ratioColor(ratio, trigger, healthy);
+  const barCls = ratioBarColor(ratio, trigger, healthy);
+  // Bar capped at 4.0x for visual scaling
+  const barPct = ratio == null ? 0 : Math.min(100, (ratio / 4.0) * 100);
+
+  const cap = data.budget_cap_usd ?? 0;
+  const committed = data.budget_committed;
+  const budgetPct = cap > 0 ? Math.min(100, (committed / cap) * 100) : 0;
+  const budgetCls =
+    budgetPct >= 95 ? "bg-red-500" : budgetPct >= 75 ? "bg-yellow-500" : "bg-indigo-500";
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-gray-700">Margin</h2>
+        <span className="text-xs text-gray-500">
+          {data.n_open_positions}/{data.concurrency_cap} slots ·
+          {" "}buf {trigger != null && healthy != null
+            ? `trigger ${trigger.toFixed(2)} · healthy ${healthy.toFixed(2)}`
+            : "—"}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {/* Margin ratio */}
+        <div>
+          <div className="flex items-baseline gap-2">
+            <span className={`text-2xl font-semibold ${ratioCls}`}>{ratioText}</span>
+            <span className="text-xs text-gray-500">margin ratio</span>
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded bg-gray-100">
+            <div className={`h-full ${barCls}`} style={{ width: `${barPct}%` }} />
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] text-gray-400">
+            <span>1.0</span>
+            {trigger != null && <span>trigger {trigger.toFixed(2)}</span>}
+            {healthy != null && <span>healthy {healthy.toFixed(2)}</span>}
+            <span>4.0+</span>
+          </div>
+        </div>
+
+        {/* Budget committed */}
+        <div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-semibold text-gray-900">
+              {formatCurrency(committed)}
+            </span>
+            <span className="text-xs text-gray-500">
+              / {formatCurrency(cap)} budget
+            </span>
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded bg-gray-100">
+            <div className={`h-full ${budgetCls}`} style={{ width: `${budgetPct}%` }} />
+          </div>
+          <div className="mt-1 text-[10px] text-gray-400">
+            {budgetPct.toFixed(1)}% committed
+          </div>
+        </div>
+
+        {/* Skipped + last event */}
+        <div className="text-xs">
+          <div>
+            <span className="text-gray-500">skipped opens (no capital):</span>{" "}
+            <span
+              className={`font-semibold ${
+                data.n_skipped_opens_capital > 0 ? "text-orange-600" : "text-gray-700"
+              }`}
+            >
+              {data.n_skipped_opens_capital}
+            </span>
+          </div>
+          <div className="mt-1">
+            <span className="text-gray-500">last watchdog:</span>{" "}
+            {data.last_event ? (
+              <span
+                className={
+                  data.last_event.level === "ERROR"
+                    ? "text-red-600"
+                    : "text-yellow-700"
+                }
+              >
+                {data.last_event.kind.replace("margin.", "")}
+                {data.last_event.coin ? ` ${data.last_event.coin}` : ""}
+                {" · "}
+                <span className="text-gray-500">
+                  {formatRelative(data.last_event.ts, now)}
+                </span>
+              </span>
+            ) : (
+              <span className="text-gray-400">none</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setShowRaw((v) => !v)}
+        className="mt-3 text-[11px] text-gray-400 hover:text-gray-700"
+      >
+        {showRaw ? "− hide raw" : "+ show raw"}
+      </button>
+      {showRaw && (
+        <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-600 md:grid-cols-4">
+          <div>
+            <span className="text-gray-400">perp_cash:</span>{" "}
+            {formatCurrencyPrecise(data.perp_cash)}
+          </div>
+          <div>
+            <span className="text-gray-400">unrealized:</span>{" "}
+            {formatCurrencyPrecise(data.perp_unrealized)}
+          </div>
+          <div>
+            <span className="text-gray-400">effective:</span>{" "}
+            {formatCurrencyPrecise(data.effective_equity)}
+          </div>
+          <div>
+            <span className="text-gray-400">maintenance:</span>{" "}
+            {formatCurrencyPrecise(data.total_maintenance)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const strategyId = useActiveStrategyId();
   const { status } = useLiveEvents(strategyId);
@@ -964,6 +1159,7 @@ export default function Dashboard() {
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <AlertBanner />
         <EquityCard />
+        <MarginCard />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="md:col-span-2">
             <OpenPositions />

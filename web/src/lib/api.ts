@@ -285,6 +285,37 @@ export function fetchWallet(strategyId: number): Promise<WalletBalance> {
   return apiFetch<WalletBalance>(`/equity/wallet?${params}`);
 }
 
+export type MarginEventBrief = {
+  ts: string;
+  kind: string;
+  level: string;
+  coin: string | null;
+  amount_transferred: number;
+  ratio: number;
+};
+
+export type MarginStatus = {
+  margin_manager_enabled: boolean;
+  perp_cash: number;
+  perp_unrealized: number;
+  effective_equity: number;
+  total_maintenance: number;
+  margin_ratio: number | null;
+  top_up_trigger: number | null;
+  healthy_ratio: number | null;
+  budget_committed: number;
+  budget_cap_usd: number | null;
+  n_open_positions: number;
+  concurrency_cap: number;
+  n_skipped_opens_capital: number;
+  last_event: MarginEventBrief | null;
+};
+
+export function fetchMarginStatus(strategyId: number): Promise<MarginStatus> {
+  const params = new URLSearchParams({ strategy_id: String(strategyId) });
+  return apiFetch<MarginStatus>(`/equity/margin?${params}`);
+}
+
 export function fetchStrategyParams(id: number): Promise<StrategyParamsResponse> {
   return apiFetch<StrategyParamsResponse>(`/strategies/${id}/params`);
 }
