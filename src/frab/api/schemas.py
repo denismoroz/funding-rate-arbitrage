@@ -200,3 +200,31 @@ class WalletBalance(BaseModel):
     spot_balances: list[SpotBalanceItem]
     usdc_spot: float
     total_usd: float
+
+
+class MarginEventBrief(_UtcAwareOut):
+    """Compact view of the most recent margin.* event."""
+    ts: datetime
+    kind: str           # margin.top_up | margin.forced_close | margin.emergency
+    level: str
+    coin: str | None
+    amount_transferred: float
+    ratio: float
+
+
+class MarginStatusOut(BaseModel):
+    """Margin watchdog state — null fields when no MarginManager is configured."""
+    margin_manager_enabled: bool
+    perp_cash: float
+    perp_unrealized: float
+    effective_equity: float
+    total_maintenance: float
+    margin_ratio: float | None         # None when no open positions
+    top_up_trigger: float | None       # None when disabled
+    healthy_ratio: float | None        # None when disabled
+    budget_committed: float
+    budget_cap_usd: float | None       # None when disabled
+    n_open_positions: int
+    concurrency_cap: int
+    n_skipped_opens_capital: int
+    last_event: MarginEventBrief | None
