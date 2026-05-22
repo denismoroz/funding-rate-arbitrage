@@ -492,6 +492,107 @@ def test_rehydrate_without_accumulators_keeps_defaults(mocker):
     assert strat.cash == initial_cash  # untouched
 
 
+def test_rehydrate_restores_perp_cash_when_margin_manager_set(mocker):
+    """E2: rehydrate retroactively reserves required_margin per existing
+    position so the watchdog doesn't trigger forced-close on first tick.
+    """
+    from frab.engine.margin_manager import MarginManager, PerCoinSpec
+    mgr = MarginManager(
+        per_coin_params={
+            "BTC": PerCoinSpec(position_size_usd=20.0, leverage=20, maint_ratio=0.01),
+            "ETH": PerCoinSpec(position_size_usd=20.0, leverage=20, maint_ratio=0.01),
+        },
+        margin_buffer_x=3.0,
+        top_up_trigger=2.0,
+        healthy_ratio=3.0,
+        budget_cap_usd=200.0,
+    )
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC", "ETH"), concurrency_cap=2),
+        make_executor(mocker),
+        margin_manager=mgr,
+    )
+
+    strat.rehydrate(
+        positions=[
+            OpenPositionSnapshot(
+                coin="BTC", opened_at=T0,
+                spot_qty=0.2, perp_qty=0.2,
+                entry_spot_price=100.0, entry_perp_price=100.0,
+                funding_collected=0.0, fees_paid=0.0,
+            ),
+            OpenPositionSnapshot(
+                coin="ETH", opened_at=T0,
+                spot_qty=0.2, perp_qty=0.2,
+                entry_spot_price=100.0, entry_perp_price=100.0,
+                funding_collected=0.0, fees_paid=0.0,
+            ),
+        ],
+        accumulators=None,
+    )
+
+    # Each coin: required = 20/20 * 3 = 3.0; total = 6.0
+    assert strat.perp_cash == pytest.approx(6.0)
+
+
+def test_rehydrate_perp_cash_zero_when_no_margin_manager(mocker):
+    """Legacy path: rehydrate without MarginManager → perp_cash stays 0."""
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=1),
+        make_executor(mocker),
+    )
+    strat.rehydrate(
+        positions=[
+            OpenPositionSnapshot(
+                coin="BTC", opened_at=T0,
+                spot_qty=0.1, perp_qty=0.1,
+                entry_spot_price=100.0, entry_perp_price=100.0,
+                funding_collected=0.0, fees_paid=0.0,
+            )
+        ],
+        accumulators=None,
+    )
+    assert strat.perp_cash == 0.0
+
+
+def test_rehydrate_skips_unknown_coin_in_margin_manager(mocker):
+    """Coin in DB but absent from PER_COIN_PARAMS_JSON contributes 0."""
+    from frab.engine.margin_manager import MarginManager, PerCoinSpec
+    mgr = MarginManager(
+        per_coin_params={
+            "BTC": PerCoinSpec(position_size_usd=20.0, leverage=20, maint_ratio=0.01),
+        },
+        margin_buffer_x=3.0,
+        top_up_trigger=2.0,
+        healthy_ratio=3.0,
+        budget_cap_usd=100.0,
+    )
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC", "FOO"), concurrency_cap=2),
+        make_executor(mocker),
+        margin_manager=mgr,
+    )
+    strat.rehydrate(
+        positions=[
+            OpenPositionSnapshot(
+                coin="BTC", opened_at=T0,
+                spot_qty=0.1, perp_qty=0.1,
+                entry_spot_price=100.0, entry_perp_price=100.0,
+                funding_collected=0.0, fees_paid=0.0,
+            ),
+            OpenPositionSnapshot(
+                coin="FOO", opened_at=T0,
+                spot_qty=0.5, perp_qty=0.5,
+                entry_spot_price=10.0, entry_perp_price=10.0,
+                funding_collected=0.0, fees_paid=0.0,
+            ),
+        ],
+        accumulators=None,
+    )
+    # Only BTC counts: 20/20 * 3 = 3.0
+    assert strat.perp_cash == pytest.approx(3.0)
+
+
 @pytest.mark.asyncio
 async def test_funding_accrued_empty_when_no_open_positions(mocker):
     """No open positions → funding_accrued is empty even with funding ticks."""

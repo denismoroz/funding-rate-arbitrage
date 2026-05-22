@@ -175,8 +175,18 @@ class TwoPhaseDynamic(Strategy):
             self._realized_pnl_cum = accumulators.realized_pnl_cum
             self._funding_cum = accumulators.funding_cum
             self._fees_cum = accumulators.fees_cum
-        # Reset perp_cash on rehydrate — it will be reconciled via live state
-        self._perp_cash = 0.0
+        # On rehydrate, retroactively reserve `required_margin` for each
+        # existing position. Without this the watchdog would think nothing
+        # is locked and trigger a forced-close on first tick. Coins absent
+        # from PER_COIN_PARAMS_JSON contribute 0.
+        if self._margin_manager is not None:
+            self._perp_cash = sum(
+                self._margin_manager.compute_required_margin_for_open(coin)
+                for coin in self._positions
+                if coin in self._margin_manager._params
+            )
+        else:
+            self._perp_cash = 0.0
 
     def update_hot_params(
         self,
