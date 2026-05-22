@@ -22,7 +22,15 @@ from frab.exchanges.base import (
     Quote,
     Side,
 )
-from frab.strategies.base import EquitySnapshot, FailedOpen, SignalEvent, Strategy, TickReport
+from frab.strategies.base import (
+    EquitySnapshot,
+    FailedOpen,
+    SignalEvent,
+    Strategy,
+    TickReport,
+    WatchdogAction,
+    WatchdogReport,
+)
 from frab.strategies.strategy_a import AccumulatorsSnapshot, OpenPositionSnapshot
 
 if TYPE_CHECKING:
@@ -501,6 +509,79 @@ class TwoPhaseDynamic(Strategy):
         self._realized_pnl_cum += realized_perp
         self._fees_cum += fill_spot.fee + fill_perp.fee
         return [fill_spot, fill_perp], True
+
+    def _select_weakest_open(self) -> str | None:
+        if self._margin_manager is None or not self._positions:
+            return None
+        signals = self._market_state.signals()
+        open_signals = {c: (signals.get(c) or 0.0) for c in self._positions}
+        return self._margin_manager.select_weakest_for_close(
+            self._open_position_snapshots_for_manager(),
+            open_signals,
+        )
+
+    async def _watchdog_force_close(self, coin: str, now: datetime) -> bool:
+        if self._margin_manager is None or coin not in self._positions:
+            return False
+        required_margin = self._margin_manager.compute_required_margin_for_open(coin)
+        _, ok = await self._close_position(coin, now)
+        if not ok:
+            return False
+        try:
+            await self._executor.transfer_perp_to_spot(required_margin)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("watchdog: transfer_perp_to_spot failed after close of %s: %r", coin, exc)
+        self._cash += required_margin
+        self._perp_cash -= required_margin
+        return True
+
+    async def margin_watchdog(self, now: datetime) -> WatchdogReport | None:
+        if self._margin_manager is None:
+            return None
+        if not self._positions:
+            return None
+        marks: dict[str, float] = {}
+        for coin in self._positions:
+            if coin not in self._last_quotes:
+                return None
+            marks[coin] = self._last_quotes[coin].mark
+
+        opens = self._open_position_snapshots_for_manager()
+        total_maint = self._margin_manager.compute_total_maintenance(opens, marks)
+        ratio = self._margin_manager.compute_margin_ratio(self._perp_cash, opens, marks)
+
+        if ratio >= self._margin_manager.top_up_trigger:
+            return WatchdogReport(now, WatchdogAction.NONE, ratio, None, 0.0, "margin healthy")
+
+        if ratio < 1.0:
+            coin = self._select_weakest_open()
+            if coin is None:
+                return WatchdogReport(now, WatchdogAction.NONE, ratio, None, 0.0,
+                                      "no opens to close on emergency")
+            ok = await self._watchdog_force_close(coin, now)
+            action = WatchdogAction.EMERGENCY if ok else WatchdogAction.NONE
+            reason = f"emergency close {coin}" if ok else f"emergency close FAILED {coin}"
+            return WatchdogReport(now, action, ratio, coin if ok else None, 0.0, reason)
+
+        top_up = self._margin_manager.compute_top_up_amount(self._perp_cash, total_maint)
+        if self._cash >= top_up and top_up > 0.0:
+            try:
+                await self._executor.transfer_spot_to_perp(top_up)
+                self._cash -= top_up
+                self._perp_cash += top_up
+                return WatchdogReport(now, WatchdogAction.TOP_UP, ratio, None, top_up,
+                                      f"topped up perp by ${top_up:.2f}")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("watchdog top_up failed: %r — falling through to forced close", exc)
+
+        coin = self._select_weakest_open()
+        if coin is None:
+            return WatchdogReport(now, WatchdogAction.NONE, ratio, None, 0.0, "no opens to close")
+        ok = await self._watchdog_force_close(coin, now)
+        action = WatchdogAction.FORCED_CLOSE if ok else WatchdogAction.NONE
+        reason = (f"forced close {coin} (spot cash insufficient)"
+                  if ok else f"forced close FAILED {coin}")
+        return WatchdogReport(now, action, ratio, coin if ok else None, 0.0, reason)
 
     def compute_equity(self, now: datetime) -> EquitySnapshot:
         spot_value = 0.0

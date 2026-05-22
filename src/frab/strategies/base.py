@@ -4,6 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 
 from frab.exchanges.base import FillReport, FundingTick, Quote
 
@@ -58,6 +59,23 @@ class EquitySnapshot:
     fees_cum: float
 
 
+class WatchdogAction(str, Enum):
+    NONE = "NONE"
+    TOP_UP = "TOP_UP"
+    FORCED_CLOSE = "FORCED_CLOSE"
+    EMERGENCY = "EMERGENCY"
+
+
+@dataclass(frozen=True, slots=True)
+class WatchdogReport:
+    ts: datetime
+    action: WatchdogAction
+    ratio: float
+    coin: str | None
+    amount_transferred: float
+    reason: str
+
+
 class Strategy(ABC):
     name: str
     version: str
@@ -73,6 +91,14 @@ class Strategy(ABC):
     @abstractmethod
     def compute_equity(self, now: datetime) -> EquitySnapshot:
         ...  # pragma: no cover
+
+    async def margin_watchdog(self, now: datetime) -> "WatchdogReport | None":
+        """Default: no-op. Strategies with margin management override.
+
+        Return None when no watchdog is configured (margin_manager is None)
+        OR when there are no open positions to monitor.
+        """
+        return None
 
     def set_fees_cum(self, value: float) -> None:
         """Replace the running fees counter with the DB-authoritative total."""

@@ -95,6 +95,8 @@ def strategy(mocker):
     s = mocker.AsyncMock(spec=Strategy)
     # compute_equity is sync; replace with MagicMock
     s.compute_equity = mocker.MagicMock(return_value=_equity())
+    # margin_watchdog default: None (no-op when no MarginManager configured)
+    s.margin_watchdog.return_value = None
     return s
 
 

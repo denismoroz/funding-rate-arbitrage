@@ -136,6 +136,29 @@ class Engine:
         # 3. Call minute tick
         await self._strategy.on_minute_tick(now, quotes)
 
+        # 3b. Margin watchdog (no-op when strategy has no MarginManager)
+        try:
+            watchdog_report = await self._strategy.margin_watchdog(now)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("margin_watchdog failed: %s", exc, exc_info=True)
+            watchdog_report = None
+
+        if watchdog_report is not None and watchdog_report.action.value != "NONE":
+            level = "WARNING" if watchdog_report.action.value == "TOP_UP" else "ERROR"
+            await self._publish(Event(
+                ts=now,
+                level=level,
+                source="margin_watchdog",
+                kind=f"margin.{watchdog_report.action.value.lower()}",
+                message=watchdog_report.reason,
+                payload_json={
+                    "ratio": watchdog_report.ratio,
+                    "coin": watchdog_report.coin,
+                    "amount_transferred": watchdog_report.amount_transferred,
+                    "action": watchdog_report.action.value,
+                },
+            ))
+
         # 4. Hour boundary check
         current_hour = now.replace(minute=0, second=0, microsecond=0)
         crossed_hour = self._last_hour is None or current_hour != self._last_hour
