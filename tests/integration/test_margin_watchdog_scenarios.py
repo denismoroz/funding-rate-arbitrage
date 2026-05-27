@@ -27,7 +27,7 @@ from frab.exchanges.base import (
     FillReport,
     FundingTick,
     Leg,
-    MarketDataSource,
+    ExchangeDataSource,
     OrderRequest,
     PositionState,
     Quote,
@@ -56,7 +56,7 @@ class StubPortfolioService:
 # Crafted market data — caller sets marks/funding per tick
 # ---------------------------------------------------------------------------
 
-class CraftedMarket(MarketDataSource):
+class CraftedMarket(ExchangeDataSource):
     name = "crafted"
 
     def __init__(self) -> None:

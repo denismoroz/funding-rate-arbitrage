@@ -1,4 +1,4 @@
-"""Tests for HLMarketData."""
+"""Tests for HLExchangeReader."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from tenacity import wait_none
 
 import frab.exchanges.hyperliquid as hl_mod
 from frab.exchanges.base import Leg, Side
-from frab.exchanges.hyperliquid import HLMarketData, _ms_to_dt
+from frab.exchanges.hyperliquid import HLExchangeReader, _ms_to_dt
 
 BASE_URL = "https://api.hyperliquid.xyz"
 INFO_URL = f"{BASE_URL}/info"
@@ -38,7 +38,7 @@ async def test_fetch_funding_happy_path():
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[record])
         client = _make_client()
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         tick = await md.fetch_funding("BTC")
 
     assert tick.coin == "BTC"
@@ -53,7 +53,7 @@ async def test_fetch_funding_empty_raises():
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[])
         client = _make_client()
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         with pytest.raises(ValueError, match="no recent funding"):
             await md.fetch_funding("BTC")
 
@@ -64,7 +64,7 @@ async def test_fetch_funding_parses_string_fields():
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[record])
         client = _make_client()
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         tick = await md.fetch_funding("BTC")
 
     assert isinstance(tick.rate, float)
@@ -101,7 +101,7 @@ async def test_fetch_funding_history_paginates(mocker):
 
         mock.post("/info").mock(side_effect=side_effect)
         client = _make_client()
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         ticks = await md.fetch_funding_history("BTC", since_ms=0)
 
     assert len(ticks) == 700
@@ -140,7 +140,7 @@ async def test_fetch_quote_combines_endpoints():
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").mock(side_effect=side_effect)
         client = _make_client()
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         quote = await md.fetch_quote("BTC")
 
     assert quote.coin == "BTC"
@@ -168,7 +168,7 @@ async def test_fetch_meta_parses_universe():
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=universe)
         client = _make_client()
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         specs = await md.fetch_meta()
 
     assert len(specs) == 2
@@ -205,7 +205,7 @@ async def test_retry_on_5xx(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").mock(side_effect=side_effect)
         client = _make_client()
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         tick = await md.fetch_funding("BTC")
 
     assert tick.coin == "BTC"
@@ -230,7 +230,7 @@ async def test_no_retry_on_4xx(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").mock(side_effect=side_effect)
         client = _make_client()
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         with pytest.raises(httpx.HTTPStatusError):
             await md.fetch_funding("BTC")
 
@@ -246,7 +246,7 @@ async def test_owned_client_closed_on_exit(mocker):
     record = _funding_record()
     async with respx.mock(base_url=BASE_URL):
         respx.post(INFO_URL).respond(200, json=[record])
-        md = HLMarketData(api_url=INFO_URL)
+        md = HLExchangeReader(api_url=INFO_URL)
         spy = mocker.spy(md._client, "aclose")
         async with md:
             pass
@@ -261,7 +261,7 @@ async def test_owned_client_closed_on_exit(mocker):
 @pytest.mark.asyncio
 async def test_injected_client_not_closed():
     ext_client = httpx.AsyncClient(base_url=BASE_URL)
-    md = HLMarketData(api_url=INFO_URL, client=ext_client)
+    md = HLExchangeReader(api_url=INFO_URL, client=ext_client)
     await md.aclose()
     assert not ext_client.is_closed
     await ext_client.aclose()
@@ -314,7 +314,7 @@ async def test_fetch_user_fills_parses_and_normalizes(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=fills_response)
         client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         result = await md.fetch_user_fills("0xABCD", since_ms=0)
 
     assert len(result) == 3
@@ -369,7 +369,7 @@ async def test_fetch_user_fills_retries_on_5xx(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").mock(side_effect=side_effect)
         client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         result = await md.fetch_user_fills("0xABCD", since_ms=0)
 
     assert call_count == 2
@@ -384,7 +384,7 @@ async def test_fetch_user_fills_empty_returns_empty_list(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[])
         client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         result = await md.fetch_user_fills("0xABCD", since_ms=0)
 
     assert result == []
@@ -400,7 +400,7 @@ async def test_fetch_user_fills_unknown_spot_coin_fallback(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[fill])
         client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         result = await md.fetch_user_fills("0xABCD", since_ms=0)
 
     assert len(result) == 1
@@ -439,7 +439,7 @@ async def test_fetch_user_fills_resolves_at_index_format(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").mock(side_effect=routed)
         client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         result = await md.fetch_user_fills("0xABCD", since_ms=0)
 
     assert len(result) == 1
@@ -485,7 +485,7 @@ async def test_fetch_user_funding_parses_and_sorts(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=payments_response)
         client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         result = await md.fetch_user_funding("0xABCD", since_ms=0)
 
     assert len(result) == 3
@@ -510,7 +510,7 @@ async def test_fetch_user_funding_retries_on_5xx(mocker):
             httpx.Response(200, json=payments_response),
         ]
         client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         result = await md.fetch_user_funding("0xABCD", since_ms=0)
 
     assert len(result) == 1
@@ -523,7 +523,7 @@ async def test_fetch_user_funding_empty_returns_empty_list(mocker):
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[])
         client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLMarketData(api_url=INFO_URL, client=client)
+        md = HLExchangeReader(api_url=INFO_URL, client=client)
         result = await md.fetch_user_funding("0xABCD", since_ms=0)
 
     assert result == []

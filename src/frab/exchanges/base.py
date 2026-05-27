@@ -105,7 +105,7 @@ class FundingPayment:
 
 
 @runtime_checkable
-class MarketDataSource(Protocol):
+class ExchangeDataSource(Protocol):
     name: str  # short identifier, e.g. "hyperliquid"
 
     async def fetch_funding(self, coin: str) -> FundingTick: ...  # pragma: no cover

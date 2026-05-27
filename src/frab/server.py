@@ -37,7 +37,7 @@ from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.dry_run import DryRunAdapterGuard
 from frab.exchanges.hyperliquid_adapter import HyperliquidAdapter
 from frab.exchanges.base import Executor, FundingTick
-from frab.exchanges.hyperliquid import HLMarketData
+from frab.exchanges.hyperliquid import HLExchangeReader
 from frab.exchanges.hyperliquid_live import LiveHLExecutor
 from frab.settings import Settings, get_settings
 from frab.strategies.base import Strategy as StrategyBase
@@ -175,7 +175,7 @@ def _build_margin_manager(settings: Settings) -> MarginManager | None:
 
 
 def _hl_info_url(settings: Settings) -> str:
-    """Return the /info endpoint URL for HLMarketData based on network."""
+    """Return the /info endpoint URL for HLExchangeReader based on network."""
     if settings.hl_network == "testnet":
         return f"{constants.TESTNET_API_URL}/info"
     return f"{constants.MAINNET_API_URL}/info"
@@ -464,7 +464,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
 
         exchange_id = await _resolve_exchange(session_factory)
 
-        market_data = HLMarketData(
+        market_data = HLExchangeReader(
             api_url=_hl_info_url(settings),
             timeout_s=settings.hl_request_timeout_s,
         )

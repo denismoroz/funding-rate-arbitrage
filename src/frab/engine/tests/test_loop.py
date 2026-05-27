@@ -15,7 +15,7 @@ from frab.engine.loop import (
     TickOutcome,
 )
 from frab.events.bus import Event, EventBus
-from frab.exchanges.base import FillReport, FundingTick, Leg, MarketDataSource, Quote, Side
+from frab.exchanges.base import FillReport, FundingTick, Leg, ExchangeDataSource, Quote, Side
 from frab.strategies.base import EquitySnapshot, SignalEvent, Strategy, TickReport
 
 # Reference datetime: 2023-11-14 22:13:20 UTC (a known epoch anchor)
@@ -100,7 +100,7 @@ def _domain_equity(ts: datetime = _T0, total=6000.0) -> Equity:
 
 @pytest.fixture
 def market_data(mocker):
-    md = mocker.AsyncMock(spec=MarketDataSource)
+    md = mocker.AsyncMock(spec=ExchangeDataSource)
     return md
 
 
@@ -130,7 +130,7 @@ def recorder(mocker):
 
 
 def test_init_validates_empty_coins(mocker):
-    md = mocker.AsyncMock(spec=MarketDataSource)
+    md = mocker.AsyncMock(spec=ExchangeDataSource)
     s = mocker.AsyncMock(spec=Strategy)
     ps = mocker.MagicMock()
     ps.equity = mocker.MagicMock(return_value=_domain_equity())
@@ -144,7 +144,7 @@ def test_init_validates_empty_coins(mocker):
 
 
 def test_init_defaults(mocker):
-    md = mocker.AsyncMock(spec=MarketDataSource)
+    md = mocker.AsyncMock(spec=ExchangeDataSource)
     s = mocker.AsyncMock(spec=Strategy)
     ps = mocker.MagicMock()
     ps.equity = mocker.MagicMock(return_value=_domain_equity())
@@ -458,7 +458,7 @@ async def test_recorder_receives_all_saves_in_order(market_data, strategy, recor
 
 
 def test_stop_idempotent(mocker):
-    md = mocker.AsyncMock(spec=MarketDataSource)
+    md = mocker.AsyncMock(spec=ExchangeDataSource)
     s = mocker.AsyncMock(spec=Strategy)
     ps = mocker.MagicMock()
     ps.equity = mocker.MagicMock(return_value=_domain_equity())
@@ -472,7 +472,7 @@ def test_stop_idempotent(mocker):
 
 def test_force_hour_tick_resets_last_hour(mocker):
     """force_hour_tick clears _last_hour so the next tick crosses the boundary."""
-    md = mocker.AsyncMock(spec=MarketDataSource)
+    md = mocker.AsyncMock(spec=ExchangeDataSource)
     s = mocker.AsyncMock(spec=Strategy)
     ps = mocker.MagicMock()
     ps.equity = mocker.MagicMock(return_value=_domain_equity())

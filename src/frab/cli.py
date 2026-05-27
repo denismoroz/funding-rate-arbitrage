@@ -17,8 +17,8 @@ from frab.db.models import Exchange, FundingRate, Market
 from frab.db.session import session_scope
 from frab.events.bus import EventBus
 from frab.exchanges.atomic import AtomicExecutor
-from frab.exchanges.base import Leg, MarketDataSource, OrderRequest, Side
-from frab.exchanges.hyperliquid import HLMarketData
+from frab.exchanges.base import Leg, ExchangeDataSource, OrderRequest, Side
+from frab.exchanges.hyperliquid import HLExchangeReader
 from frab.exchanges.hyperliquid_live import LiveHLExecutor
 from frab.server import _hl_info_url, _select_spot_token_map
 
@@ -129,7 +129,7 @@ def seed() -> None:
 
 async def _backfill_funding_async(
     session_factory: async_sessionmaker[AsyncSession],
-    market_data: MarketDataSource,
+    market_data: ExchangeDataSource,
     coins: tuple[str, ...],
     hours: int,
 ) -> dict[str, int]:
@@ -191,7 +191,7 @@ def backfill(
     async def _run() -> dict[str, int]:
         engine = create_async_engine(settings.db_url, future=True)
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        market_data = HLMarketData(
+        market_data = HLExchangeReader(
             api_url=settings.hl_api_url,
             timeout_s=settings.hl_request_timeout_s,
         )
@@ -256,7 +256,7 @@ def _smoke_check_network(settings) -> None:
 
 def _build_smoke_clients(settings):
     """Return (market_data, executor) from settings."""
-    market_data = HLMarketData(
+    market_data = HLExchangeReader(
         api_url=_hl_info_url(settings),
         timeout_s=settings.hl_request_timeout_s,
     )
@@ -272,7 +272,7 @@ def _build_smoke_clients(settings):
 
 def _build_smoke_clients_with_slippage(settings, slippage: float):
     """Return (market_data, executor) with a custom slippage override."""
-    market_data = HLMarketData(
+    market_data = HLExchangeReader(
         api_url=_hl_info_url(settings),
         timeout_s=settings.hl_request_timeout_s,
     )
@@ -302,7 +302,7 @@ async def _smoke_read_impl(settings) -> None:
         sample_names = [s.coin for s in meta[:5]]
         typer.echo(f"  first 5: {sample_names}")
 
-        # 2. spot_meta — via _info SDK directly (no HLMarketData method for this)
+        # 2. spot_meta — via _info SDK directly (no HLExchangeReader method for this)
         _hdr("=== spot_meta ===")
         spot_meta = await asyncio.to_thread(executor._info.spot_meta)
         tokens = spot_meta.get("tokens", [])

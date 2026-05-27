@@ -1,6 +1,6 @@
 """Tests for HyperliquidAdapter (F2.4).
 
-All underlying components (HLMarketData, LiveHLExecutor, AtomicExecutor)
+All underlying components (HLExchangeReader, LiveHLExecutor, AtomicExecutor)
 are replaced with MagicMock/AsyncMock — no network calls.
 """
 from __future__ import annotations

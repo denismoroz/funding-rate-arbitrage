@@ -16,7 +16,7 @@ from frab.exchanges.base import (
     FillReport,
     FundingTick,
     Leg,
-    MarketDataSource,
+    ExchangeDataSource,
     OrderRequest,
     PositionState,
     Quote,
@@ -63,7 +63,7 @@ class _ReplayExecutor:
 
     name = "replay_paper"
 
-    def __init__(self, market_data: MarketDataSource, spot_taker_bps: float, perp_taker_bps: float, extra_slip_bps: float = 0.0) -> None:
+    def __init__(self, market_data: ExchangeDataSource, spot_taker_bps: float, perp_taker_bps: float, extra_slip_bps: float = 0.0) -> None:
         self._md = market_data
         self._spot_bps = spot_taker_bps
         self._perp_bps = perp_taker_bps
@@ -149,7 +149,7 @@ def _load_coin_data(coin: str, start: datetime, end: datetime) -> list[tuple[dat
     return [(dt, funding[dt], prices[dt]) for dt in common]
 
 
-class ReplayMarketData(MarketDataSource):
+class ReplayMarketData(ExchangeDataSource):
     """Pre-indexed market data replayed by datetime. The driver loop calls set_now() before each tick."""
 
     name = "replay"

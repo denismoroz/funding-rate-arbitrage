@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 import frab.exchanges.registry as reg_mod
-from frab.exchanges.hyperliquid import HLMarketData
+from frab.exchanges.hyperliquid import HLExchangeReader
 from frab.exchanges.registry import available, make_market_data, register
 
 
@@ -17,14 +17,14 @@ def test_default_registry_has_hyperliquid():
 
 
 # ---------------------------------------------------------------------------
-# 2. make_market_data returns HLMarketData
+# 2. make_market_data returns HLExchangeReader
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_make_market_data_returns_hl_instance():
     adapter = make_market_data("hyperliquid")
     try:
-        assert isinstance(adapter, HLMarketData)
+        assert isinstance(adapter, HLExchangeReader)
     finally:
         await adapter.aclose()
 
@@ -87,7 +87,7 @@ class _AltAdapter:
 
 
 def test_register_overwrites_silently(mocker):
-    mocker.patch.dict(reg_mod._REGISTRY, {"hyperliquid": HLMarketData})
+    mocker.patch.dict(reg_mod._REGISTRY, {"hyperliquid": HLExchangeReader})
     register("hyperliquid", _AltAdapter)
     adapter = make_market_data("hyperliquid")
     assert isinstance(adapter, _AltAdapter)

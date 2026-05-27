@@ -43,7 +43,7 @@ _WAIT = wait_exponential(multiplier=0.3, min=0.3, max=4)
 _STOP = stop_after_attempt(4)
 
 
-class HLMarketData:
+class HLExchangeReader:
     name = "hyperliquid"
 
     def __init__(
@@ -68,7 +68,7 @@ class HLMarketData:
         if self._owns_client:
             await self._client.aclose()
 
-    async def __aenter__(self) -> "HLMarketData":
+    async def __aenter__(self) -> "HLExchangeReader":
         return self
 
     async def __aexit__(self, *_: Any) -> None:

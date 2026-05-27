@@ -1,4 +1,4 @@
-"""HyperliquidAdapter: composes HLMarketData + LiveHLExecutor + AtomicExecutor
+"""HyperliquidAdapter: composes HLExchangeReader + LiveHLExecutor + AtomicExecutor
 into a single ExchangeAdapter-conforming aggregate.
 
 This module is a transitional file for F2.4.  F2.6 will rename
@@ -28,14 +28,14 @@ from frab.exchanges.base import (
     Side,
     UserFill,
 )
-from frab.exchanges.hyperliquid import HLMarketData
+from frab.exchanges.hyperliquid import HLExchangeReader
 from frab.exchanges.hyperliquid_live import LiveHLExecutor
 
 
 class HyperliquidAdapter:
     """Universal adapter for Hyperliquid.
 
-    Composes HLMarketData (reads), LiveHLExecutor (wallet / transfers),
+    Composes HLExchangeReader (reads), LiveHLExecutor (wallet / transfers),
     and AtomicExecutor (spot-first paired open/close) into a single
     ExchangeAdapter-conforming object.
 
@@ -57,7 +57,7 @@ class HyperliquidAdapter:
     def __init__(
         self,
         *,
-        market_data: HLMarketData,
+        market_data: HLExchangeReader,
         live_executor: LiveHLExecutor,
         atomic: AtomicExecutor,
         network: Literal["testnet", "mainnet"],
@@ -97,7 +97,7 @@ class HyperliquidAdapter:
         return self._PROFILE
 
     # ------------------------------------------------------------------
-    # reads — market data (delegate to HLMarketData)
+    # reads — market data (delegate to HLExchangeReader)
     # ------------------------------------------------------------------
 
     async def fetch_quote(self, coin: str) -> Quote:

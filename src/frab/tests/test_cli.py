@@ -137,7 +137,7 @@ def test_backfill_fetches_and_writes(tmp_path, monkeypatch, mocker):
         FundingTick(coin=coin, ts=base, rate=0.0001, premium=None, annualized_pct=0.876),
     ])
     fake_hl.aclose = mocker.AsyncMock()
-    mocker.patch("frab.cli.HLMarketData", return_value=fake_hl)
+    mocker.patch("frab.cli.HLExchangeReader", return_value=fake_hl)
 
     result = runner.invoke(app, ["backfill", "--hours", "24", "--coins", "BTC,ETH"])
 
@@ -174,7 +174,7 @@ def test_backfill_is_idempotent(tmp_path, monkeypatch, mocker):
         FundingTick(coin=coin, ts=base, rate=0.0001, premium=None, annualized_pct=0.876),
     ])
     fake_hl.aclose = mocker.AsyncMock()
-    mocker.patch("frab.cli.HLMarketData", return_value=fake_hl)
+    mocker.patch("frab.cli.HLExchangeReader", return_value=fake_hl)
 
     runner.invoke(app, ["backfill", "--coins", "BTC"])
     result2 = runner.invoke(app, ["backfill", "--coins", "BTC"])

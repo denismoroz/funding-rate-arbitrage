@@ -13,7 +13,7 @@ import tenacity
 from frab.application.portfolio_service import PortfolioService
 from frab.domain.exchange import Exchange as DomainExchange
 from frab.events.bus import Event, EventBus
-from frab.exchanges.base import FundingTick, Leg, MarketDataSource, Quote, Side
+from frab.exchanges.base import FundingTick, Leg, ExchangeDataSource, Quote, Side
 from frab.strategies.base import EquitySnapshot, Strategy, TickReport
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ class Engine:
     def __init__(
         self,
         *,
-        market_data: MarketDataSource,
+        market_data: ExchangeDataSource,
         strategy: Strategy,
         portfolio_service: PortfolioService,
         coins: tuple[str, ...],

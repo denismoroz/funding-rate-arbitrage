@@ -8,7 +8,7 @@ import pytest
 from frab.domain.portfolio import Equity
 from frab.engine.loop import Engine
 from frab.events.bus import EventBus
-from frab.exchanges.base import FundingTick, MarketDataSource, Quote
+from frab.exchanges.base import FundingTick, ExchangeDataSource, Quote
 from frab.strategies.base import (
     EquitySnapshot,
     Strategy,
@@ -58,7 +58,7 @@ def _make_strategy(mocker, watchdog_return):
 
 
 def _make_market_data(mocker):
-    md = mocker.AsyncMock(spec=MarketDataSource)
+    md = mocker.AsyncMock(spec=ExchangeDataSource)
     md.fetch_quote.return_value = _quote()
     md.fetch_funding.return_value = _funding()
     return md

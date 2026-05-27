@@ -8,7 +8,7 @@ from frab.exchanges.base import (
     FillReport,
     FundingTick,
     Leg,
-    MarketDataSource,
+    ExchangeDataSource,
     MarketSpec,
     OrderRequest,
     OrderType,
@@ -75,10 +75,10 @@ def test_order_request_defaults():
 
 
 # ---------------------------------------------------------------------------
-# Protocol structural checks — MarketDataSource
+# Protocol structural checks — ExchangeDataSource
 # ---------------------------------------------------------------------------
 
-class GoodMarketDataSource:
+class GoodExchangeDataSource:
     name = "test_exchange"
 
     async def fetch_funding(self, coin: str) -> FundingTick: ...
@@ -88,7 +88,7 @@ class GoodMarketDataSource:
 
 
 def test_market_data_source_isinstance():
-    assert isinstance(GoodMarketDataSource(), MarketDataSource)
+    assert isinstance(GoodExchangeDataSource(), ExchangeDataSource)
 
 
 # ---------------------------------------------------------------------------
