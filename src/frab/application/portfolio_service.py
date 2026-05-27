@@ -207,9 +207,7 @@ class PortfolioService:
         key = (closed.exchange, closed.coin)
         self._positions.pop(key, None)
         if closed.exchange in self._cash_per_exchange:
-            self._cash_per_exchange[closed.exchange] += (
-                closed.released_margin_usd + closed.realized_pnl
-            )
+            self._cash_per_exchange[closed.exchange] += closed.released_margin_usd
         self._realized_pnl_cum += closed.realized_pnl
 
     async def apply_margin_adjustment(
@@ -307,8 +305,6 @@ class PortfolioService:
                 fees_paid=old.fees_paid + fees,
                 state=old.state,
             )
-        if exchange in self._cash_per_exchange:
-            self._cash_per_exchange[exchange] -= fees
         self._fees_cum += fees
 
     async def accrue_funding(
@@ -356,8 +352,6 @@ class PortfolioService:
                 fees_paid=old.fees_paid,
                 state=old.state,
             )
-        if exchange in self._cash_per_exchange:
-            self._cash_per_exchange[exchange] += amount
         self._funding_cum += amount
 
     async def set_fees_cum(self, value: float) -> None:
