@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from frab.api.deps import get_session
 from frab.api.schemas import SpotBalanceItem, WalletBalance
 from frab.db.models import Market, Position, PositionStatus, Price
+from frab.exchanges.dry_run import DryRunAdapterGuard
 
 router = APIRouter()
 
@@ -93,11 +94,18 @@ async def get_wallet(
     session: AsyncSession = Depends(get_session),
 ) -> WalletBalance:
     """Return live wallet balance from HL (live/testnet) or synthesized from DB (paper)."""
+    adapter = getattr(request.app.state, "adapter", None)
     executor = getattr(request.app.state, "executor", None)
 
-    # Paper mode: executor is None or not a LiveHLExecutor
-    # We detect this by checking for fetch_wallet_state method.
-    if executor is None or not callable(getattr(executor, "fetch_wallet_state", None)):
+    # Paper mode detection: adapter wrapped by DryRunAdapterGuard.
+    # Falls back to executor duck-typing only when the adapter is absent
+    # (e.g. older tests that don't wire it).
+    is_paper = (
+        isinstance(adapter, DryRunAdapterGuard)
+        if adapter is not None
+        else (executor is None or not callable(getattr(executor, "fetch_wallet_state", None)))
+    )
+    if is_paper:
         return await _synthesize_paper_wallet(strategy_id, request, session)
 
     # Live mode — pre-fetch latest mark per coin from DB so HL spot
