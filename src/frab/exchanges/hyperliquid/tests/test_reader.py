@@ -9,9 +9,9 @@ import pytest
 import respx
 from tenacity import wait_none
 
-import frab.exchanges.hyperliquid as hl_mod
+import frab.exchanges.hyperliquid.reader as hl_mod
 from frab.exchanges.base import Leg, Side
-from frab.exchanges.hyperliquid import HLExchangeReader, _ms_to_dt
+from frab.exchanges.hyperliquid.reader import HLExchangeReader, _ms_to_dt
 
 BASE_URL = "https://api.hyperliquid.xyz"
 INFO_URL = f"{BASE_URL}/info"
@@ -527,3 +527,21 @@ async def test_fetch_user_funding_empty_returns_empty_list(mocker):
         result = await md.fetch_user_funding("0xABCD", since_ms=0)
 
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Safety: HL EVM bridge tokens (LINK0/AAVE0/AVAX0) must NOT be aliased to the
+# canonical perp coin. They have independent price discovery. Prior incident
+# lost real money on a "supposedly hedged" LINK position.
+# ---------------------------------------------------------------------------
+
+
+def test_spot_token_inverse_does_not_alias_bridge_tokens():
+    """The reverse map must contain only wrapped tokens 1:1 with their perp.
+    AVAX0/LINK0/AAVE0 are EVM bridges with independent price discovery —
+    aliasing them to AVAX/LINK/AAVE would silently break delta-neutrality."""
+    from frab.exchanges.hyperliquid.reader import _SPOT_TOKEN_INVERSE
+
+    assert _SPOT_TOKEN_INVERSE == {"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL"}
+    for forbidden in ("LINK0", "AAVE0", "AVAX0"):
+        assert forbidden not in _SPOT_TOKEN_INVERSE

@@ -35,10 +35,10 @@ from frab.engine.reconcile import scan as reconcile_scan
 from frab.events.bus import EventBus, EventDbSink
 from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.dry_run import DryRunAdapterGuard
-from frab.exchanges.hyperliquid_adapter import HyperliquidAdapter
+from frab.exchanges.hyperliquid.adapter import HyperliquidAdapter
 from frab.exchanges.base import Executor, FundingTick
-from frab.exchanges.hyperliquid import HLExchangeReader
-from frab.exchanges.hyperliquid_live import LiveHLExecutor
+from frab.exchanges.hyperliquid.reader import HLExchangeReader
+from frab.exchanges.hyperliquid.live import LiveHLExecutor
 from frab.settings import Settings, get_settings
 from frab.strategies.base import Strategy as StrategyBase
 from frab.strategies.registry import get_strategy_spec, parse_params_override
@@ -68,9 +68,8 @@ EXCHANGE_NAME = "hyperliquid"
 #     break delta-neutrality (LINK0 incident: -$3 on supposedly hedged pos).
 #     EXCLUDED.
 #   DOGE, etc. — no spot pair on HL mainnet at all.
-# Moved to frab.exchanges._hl_tokens in F2.3; re-export until F2.6
-# moves the module under the hyperliquid/ package proper.
-from frab.exchanges._hl_tokens import (  # noqa: E402
+# Moved to frab.exchanges.hyperliquid.tokens in F2.6.
+from frab.exchanges.hyperliquid.tokens import (  # noqa: E402
     MAINNET_SPOT_TOKEN_MAP,
     select_spot_token_map as _select_spot_token_map,
     validate_spot_pairs as _validate_spot_pairs,

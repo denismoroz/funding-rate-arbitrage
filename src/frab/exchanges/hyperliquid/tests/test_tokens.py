@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from frab.exchanges._hl_tokens import (
+from frab.exchanges.hyperliquid.tokens import (
     MAINNET_SPOT_TOKEN_MAP,
     select_spot_token_map,
     validate_spot_pairs,

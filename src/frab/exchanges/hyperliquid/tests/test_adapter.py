@@ -20,7 +20,7 @@ from frab.exchanges.base import (
     PositionState,
     Side,
 )
-from frab.exchanges.hyperliquid_adapter import HyperliquidAdapter
+from frab.exchanges.hyperliquid.adapter import HyperliquidAdapter
 from frab.exchanges._paired_results import PairedCloseResult, PairedOpenResult
 
 

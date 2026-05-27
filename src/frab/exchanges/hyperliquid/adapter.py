@@ -1,10 +1,6 @@
 """HyperliquidAdapter: composes HLExchangeReader + LiveHLExecutor + AtomicExecutor
 into a single ExchangeAdapter-conforming aggregate.
 
-This module is a transitional file for F2.4.  F2.6 will rename
-hyperliquid.py → frab/exchanges/hyperliquid/_market.py and move this file
-to frab/exchanges/hyperliquid/adapter.py once the namespace is free.
-
 All HL-specific quirks (margin transfers, spot-first paired execution,
 token validation) are hidden behind the ExchangeAdapter interface.
 """
@@ -17,7 +13,7 @@ from frab.domain.exchange_profile import ExchangeProfile
 from frab.domain.market_spec import MarketSpec as DomainMarketSpec
 from frab.domain.position import ClosedPosition, Position
 from frab.domain.wallet import WalletInfo
-from frab.exchanges._hl_tokens import validate_spot_pairs
+from frab.exchanges.hyperliquid.tokens import validate_spot_pairs
 from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.base import (
     FundingPayment,
@@ -28,8 +24,8 @@ from frab.exchanges.base import (
     Side,
     UserFill,
 )
-from frab.exchanges.hyperliquid import HLExchangeReader
-from frab.exchanges.hyperliquid_live import LiveHLExecutor
+from frab.exchanges.hyperliquid.reader import HLExchangeReader
+from frab.exchanges.hyperliquid.live import LiveHLExecutor
 
 
 class HyperliquidAdapter:

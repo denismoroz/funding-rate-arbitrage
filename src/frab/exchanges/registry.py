@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 from frab.exchanges.base import ExchangeDataSource
-from frab.exchanges.hyperliquid import HLExchangeReader
+from frab.exchanges.hyperliquid.reader import HLExchangeReader
 
 _REGISTRY: dict[str, Callable[..., ExchangeDataSource]] = {
     "hyperliquid": HLExchangeReader,

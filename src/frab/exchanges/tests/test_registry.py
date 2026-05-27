@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 import frab.exchanges.registry as reg_mod
-from frab.exchanges.hyperliquid import HLExchangeReader
+from frab.exchanges.hyperliquid.reader import HLExchangeReader
 from frab.exchanges.registry import available, make_market_data, register
 
 

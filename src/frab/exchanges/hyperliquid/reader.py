@@ -16,15 +16,18 @@ from frab.exchanges.base import FundingPayment, FundingTick, Leg, MarketSpec, Qu
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
-# Inverse of MAINNET_SPOT_TOKEN_MAP in server.py:
+# Inverse of MAINNET_SPOT_TOKEN_MAP (frab.exchanges.hyperliquid.tokens):
 # HL spot coins like "UBTC/USDC" → underlying perp coin "BTC".
+#
+# DO NOT add AVAX0, LINK0, AAVE0 here. They are HL EVM bridge tokens with
+# independent price discovery (not 1:1 with the canonical perp). A prior
+# incident lost $3 on a "supposedly hedged" LINK position because the
+# inverse map silently normalized the bridge token to LINK and the
+# strategy assumed the legs were matched. Only UBTC/UETH/USOL are safe.
 _SPOT_TOKEN_INVERSE: dict[str, str] = {
     "UBTC": "BTC",
     "UETH": "ETH",
     "USOL": "SOL",
-    "AVAX0": "AVAX",
-    "LINK0": "LINK",
-    "AAVE0": "AAVE",
 }
 
 
