@@ -327,10 +327,12 @@ async def test_apply_close_credits_cash_and_bumps_pnl_cum(session_factory):
         fees_paid_total=2.0,
         funding_collected_total=5.0,
         released_margin_usd=100.0,
+        released_notional_usd=500.0,
     )
     await svc.apply_close(closed)
-    # cash += released_margin only = 400 + 100 = 500 (realized_pnl flows through _realized_pnl_cum)
-    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(500.0)
+    # cash += released_notional + released_margin = 400 + 500 + 100 = 1000
+    # realized_pnl flows through _realized_pnl_cum only
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(1000.0)
     assert svc._realized_pnl_cum == pytest.approx(25.0)
 
 
@@ -594,3 +596,103 @@ async def test_equity_matches_domain_formula_after_full_cycle(session_factory):
     # 450 + spot_value(500) + perp_unrealized(0) + margin_reserved(50)
     # + realized_pnl_cum(0) + funding_cum(3) - fees_cum(5) = 998
     assert eq.total_equity == pytest.approx(998.0)
+
+
+# ---------------------------------------------------------------------------
+# 20. round-trip at flat close returns equity to initial
+# ---------------------------------------------------------------------------
+
+async def test_full_cycle_returns_to_initial_at_flat_close(session_factory):
+    svc = PortfolioService(
+        session_factory,
+        strategy_id=1,
+        initial_cash_per_exchange={Exchange.HYPERLIQUID: 1000.0},
+    )
+    pos = Position(
+        exchange=Exchange.HYPERLIQUID,
+        coin="BTC",
+        spot_qty=1.0,
+        perp_qty=1.0,
+        notional_usd=500.0,
+        margin_reserve_usd=50.0,
+        entry_spot_price=500.0,
+        entry_perp_price=500.0,
+        opened_at=_now(),
+    )
+    await svc.apply_open(pos)
+    # cash = 1000 - 500 - 50 = 450
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(450.0)
+
+    marks = {(Exchange.HYPERLIQUID, "BTC"): 500.0}
+    eq_open = svc.equity(marks)
+    # 450 + spot_value(500) + perp_unrealized(0) + margin_reserved(50) = 1000
+    assert eq_open.total_equity == pytest.approx(1000.0)
+
+    closed = ClosedPosition(
+        exchange=Exchange.HYPERLIQUID,
+        coin="BTC",
+        closed_at=_now(),
+        realized_pnl=0.0,
+        fees_paid_total=0.0,
+        funding_collected_total=0.0,
+        released_margin_usd=50.0,
+        released_notional_usd=500.0,
+    )
+    await svc.apply_close(closed)
+
+    # cash = 450 + 500 + 50 = 1000
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(1000.0)
+    eq_closed = svc.equity(marks)
+    # 1000 + 0 + 0 + 0 + 0 + 0 - 0 = 1000
+    assert eq_closed.total_equity == pytest.approx(1000.0)
+
+
+# ---------------------------------------------------------------------------
+# 21. flat close does not change total equity (fees/funding already accounted)
+# ---------------------------------------------------------------------------
+
+async def test_equity_unchanged_by_flat_close(session_factory):
+    svc = PortfolioService(
+        session_factory,
+        strategy_id=1,
+        initial_cash_per_exchange={Exchange.HYPERLIQUID: 1000.0},
+    )
+    pos = Position(
+        exchange=Exchange.HYPERLIQUID,
+        coin="BTC",
+        spot_qty=0.01,
+        perp_qty=0.01,
+        notional_usd=500.0,
+        margin_reserve_usd=50.0,
+        entry_spot_price=50000.0,
+        entry_perp_price=50000.0,
+        opened_at=_now(),
+    )
+    await svc.apply_open(pos)
+    # cash = 1000 - 500 - 50 = 450
+
+    await svc.record_fill_fees(Exchange.HYPERLIQUID, "BTC", 5.0)
+    await svc.accrue_funding(Exchange.HYPERLIQUID, "BTC", 3.0)
+
+    marks = {(Exchange.HYPERLIQUID, "BTC"): 50000.0}
+    eq_before = svc.equity(marks)
+    assert eq_before.total_equity == pytest.approx(998.0)
+
+    closed = ClosedPosition(
+        exchange=Exchange.HYPERLIQUID,
+        coin="BTC",
+        closed_at=_now(),
+        realized_pnl=0.0,
+        fees_paid_total=5.0,
+        funding_collected_total=3.0,
+        released_margin_usd=50.0,
+        released_notional_usd=500.0,
+    )
+    await svc.apply_close(closed)
+
+    # cash = 450 + 500 + 50 = 1000
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(1000.0)
+
+    # equity = 1000 + 0(spot) + 0(perp_unreal) + 0(margin) + 0(realized) + 3(funding) - 5(fees) = 998
+    eq_after = svc.equity({})
+    assert eq_after.total_equity == pytest.approx(998.0)

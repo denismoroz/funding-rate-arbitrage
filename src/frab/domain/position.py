@@ -35,3 +35,4 @@ class ClosedPosition:
     fees_paid_total: float
     funding_collected_total: float
     released_margin_usd: float
+    released_notional_usd: float = 0.0

@@ -207,7 +207,9 @@ class PortfolioService:
         key = (closed.exchange, closed.coin)
         self._positions.pop(key, None)
         if closed.exchange in self._cash_per_exchange:
-            self._cash_per_exchange[closed.exchange] += closed.released_margin_usd
+            self._cash_per_exchange[closed.exchange] += (
+                closed.released_notional_usd + closed.released_margin_usd
+            )
         self._realized_pnl_cum += closed.realized_pnl
 
     async def apply_margin_adjustment(
