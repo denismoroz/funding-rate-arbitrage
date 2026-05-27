@@ -34,6 +34,7 @@ from frab.strategies.base import (
 from frab.strategies.strategy_a import AccumulatorsSnapshot, OpenPositionSnapshot
 
 if TYPE_CHECKING:
+    from frab.application.portfolio_service import PortfolioService
     from frab.engine.margin_manager import MarginManager, OpenPosition
 
 logger = logging.getLogger(__name__)
@@ -94,11 +95,13 @@ class TwoPhaseDynamic(Strategy):
         *,
         dry_run: bool = False,
         margin_manager: MarginManager | None = None,
+        portfolio_service: PortfolioService | None = None,
     ) -> None:
         self._params = params
         self._executor = executor
         self._dry_run = dry_run
         self._margin_manager = margin_manager
+        self._portfolio_service = portfolio_service
         self._market_state = MarketState(params.coins, params.signal_window_hours, funding_interval_hours=1.0)
         self._positions: dict[str, _PositionRecord] = {}
         self._last_quotes: dict[str, Quote] = {}
@@ -290,6 +293,9 @@ class TwoPhaseDynamic(Strategy):
             self._funding_cum += f
             funding_accrued.append((coin, f))
 
+        if self._portfolio_service is not None:
+            await self._portfolio_service.set_funding_cum(self._funding_cum)
+
         # Step 3: update consec_negative for every open position
         consec_updates: list[tuple[str, int]] = []
         for coin, pos in self._positions.items():
@@ -480,6 +486,8 @@ class TwoPhaseDynamic(Strategy):
         self._cash -= spot_cost
         self._cash -= fill_perp.fee
         self._fees_cum += fill_spot.fee + fill_perp.fee
+        if self._portfolio_service is not None:
+            await self._portfolio_service.set_fees_cum(self._fees_cum)
 
         self._positions[coin] = _PositionRecord(
             opened_at=now,
@@ -526,6 +534,8 @@ class TwoPhaseDynamic(Strategy):
 
         self._realized_pnl_cum += realized_perp
         self._fees_cum += fill_spot.fee + fill_perp.fee
+        if self._portfolio_service is not None:
+            await self._portfolio_service.set_fees_cum(self._fees_cum)
         return [fill_spot, fill_perp], True
 
     def _select_weakest_open(self) -> str | None:
