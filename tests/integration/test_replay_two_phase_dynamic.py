@@ -27,6 +27,7 @@ from frab.strategies.two_phase_dynamic import TwoPhaseDynamic, TwoPhaseDynamicPa
 from tests.integration.test_replay_strategy_a import (
     ReplayMarketData,
     _ReplayExecutor,
+    _StubPortfolioService,
     _common_timeline,
     _load_coin_data,
 )
@@ -156,7 +157,7 @@ async def test_replay_two_phase_dynamic_six_months_smoke():
     strategy = TwoPhaseDynamic(params=params, executor=executor)
     initial_cash = strategy.cash
 
-    engine = Engine(market_data=market, strategy=strategy, coins=COINS)
+    engine = Engine(market_data=market, strategy=strategy, portfolio_service=_StubPortfolioService(strategy), coins=COINS)
 
     # 3. Drive engine
     opens_per_coin: dict[str, int] = {c: 0 for c in COINS}
@@ -249,7 +250,7 @@ async def test_replay_two_phase_dynamic_parity_with_research():
     strategy = TwoPhaseDynamic(params=params, executor=executor)
     initial_cash = strategy.cash
 
-    engine = Engine(market_data=market, strategy=strategy, coins=COINS)
+    engine = Engine(market_data=market, strategy=strategy, portfolio_service=_StubPortfolioService(strategy), coins=COINS)
 
     total_opens = 0
     total_closes = 0

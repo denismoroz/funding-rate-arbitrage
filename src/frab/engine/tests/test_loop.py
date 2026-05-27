@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
+from frab.domain.portfolio import Equity
 from frab.engine.loop import (
     Engine,
     NullRecorder,
@@ -84,6 +85,19 @@ def _perp_buy_fill(coin="BTC", price=110.0, qty=10.0):
 # ---------------------------------------------------------------------------
 
 
+def _domain_equity(ts: datetime = _T0, total=6000.0) -> Equity:
+    return Equity(
+        ts=ts,
+        total_equity=total,
+        cash=total,
+        spot_value=0.0,
+        perp_unrealized=0.0,
+        perp_realized_cum=0.0,
+        funding_cum=0.0,
+        fees_cum=0.0,
+    )
+
+
 @pytest.fixture
 def market_data(mocker):
     md = mocker.AsyncMock(spec=MarketDataSource)
@@ -93,11 +107,16 @@ def market_data(mocker):
 @pytest.fixture
 def strategy(mocker):
     s = mocker.AsyncMock(spec=Strategy)
-    # compute_equity is sync; replace with MagicMock
-    s.compute_equity = mocker.MagicMock(return_value=_equity())
     # margin_watchdog default: None (no-op when no MarginManager configured)
     s.margin_watchdog.return_value = None
     return s
+
+
+@pytest.fixture
+def fake_portfolio_service(mocker):
+    ps = mocker.MagicMock()
+    ps.equity = mocker.MagicMock(return_value=_domain_equity())
+    return ps
 
 
 @pytest.fixture
@@ -113,8 +132,10 @@ def recorder(mocker):
 def test_init_validates_empty_coins(mocker):
     md = mocker.AsyncMock(spec=MarketDataSource)
     s = mocker.AsyncMock(spec=Strategy)
+    ps = mocker.MagicMock()
+    ps.equity = mocker.MagicMock(return_value=_domain_equity())
     with pytest.raises(ValueError, match="coins must be non-empty"):
-        Engine(market_data=md, strategy=s, coins=())
+        Engine(market_data=md, strategy=s, portfolio_service=ps, coins=())
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +146,9 @@ def test_init_validates_empty_coins(mocker):
 def test_init_defaults(mocker):
     md = mocker.AsyncMock(spec=MarketDataSource)
     s = mocker.AsyncMock(spec=Strategy)
-    engine = Engine(market_data=md, strategy=s, coins=("BTC",))
+    ps = mocker.MagicMock()
+    ps.equity = mocker.MagicMock(return_value=_domain_equity())
+    engine = Engine(market_data=md, strategy=s, portfolio_service=ps, coins=("BTC",))
     assert isinstance(engine._recorder, NullRecorder)
     assert callable(engine._clock_fn)
     assert engine._sleep is asyncio.sleep
@@ -149,7 +172,7 @@ async def test_null_recorder_methods_are_async_noops():
 # ---------------------------------------------------------------------------
 
 
-async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, recorder, mocker):
+async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, recorder, fake_portfolio_service, mocker):
     now = _T0
 
     market_data.fetch_quote.side_effect = [_quote("BTC", 100.0), _quote("ETH", 200.0)]
@@ -162,6 +185,7 @@ async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, 
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC", "ETH"),
         recorder=recorder,
     )
@@ -181,7 +205,7 @@ async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, 
     # Strategy calls
     strategy.on_minute_tick.assert_called_once_with(now, outcome.quotes)
     strategy.on_hour_tick.assert_called_once_with(now, outcome.funding)
-    strategy.compute_equity.assert_called_once_with(now)
+    fake_portfolio_service.equity.assert_called_once()
 
     # Market data calls
     assert market_data.fetch_quote.call_count == 2
@@ -200,7 +224,7 @@ async def test_tick_once_first_tick_does_hour_and_minute(market_data, strategy, 
 
 
 async def test_tick_once_subsequent_minute_within_same_hour_skips_funding(
-    market_data, strategy, recorder
+    market_data, strategy, recorder, fake_portfolio_service
 ):
     t0 = _T0  # on the hour
 
@@ -211,6 +235,7 @@ async def test_tick_once_subsequent_minute_within_same_hour_skips_funding(
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC", "ETH"),
         recorder=recorder,
     )
@@ -239,8 +264,8 @@ async def test_tick_once_subsequent_minute_within_same_hour_skips_funding(
     assert strategy.on_hour_tick.call_count == 1
     # on_minute_tick called twice total
     assert strategy.on_minute_tick.call_count == 2
-    # compute_equity called twice total
-    assert strategy.compute_equity.call_count == 2
+    # portfolio_service.equity called twice total
+    assert fake_portfolio_service.equity.call_count == 2
     # fetch_funding total = 2 (only from first tick, 2 coins)
     assert market_data.fetch_funding.call_count == 2
 
@@ -250,7 +275,7 @@ async def test_tick_once_subsequent_minute_within_same_hour_skips_funding(
 # ---------------------------------------------------------------------------
 
 
-async def test_tick_once_new_hour_triggers_funding_again(market_data, strategy, recorder):
+async def test_tick_once_new_hour_triggers_funding_again(market_data, strategy, recorder, fake_portfolio_service):
     t0 = _T0
 
     market_data.fetch_quote.return_value = _quote()
@@ -260,6 +285,7 @@ async def test_tick_once_new_hour_triggers_funding_again(market_data, strategy, 
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC", "ETH"),
         recorder=recorder,
     )
@@ -292,7 +318,7 @@ async def test_tick_once_new_hour_triggers_funding_again(market_data, strategy, 
 # ---------------------------------------------------------------------------
 
 
-async def test_tick_once_propagates_strategy_tick_report(market_data, strategy, recorder):
+async def test_tick_once_propagates_strategy_tick_report(market_data, strategy, recorder, fake_portfolio_service):
     now = _T0
 
     signal = SignalEvent(
@@ -317,6 +343,7 @@ async def test_tick_once_propagates_strategy_tick_report(market_data, strategy, 
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         recorder=recorder,
     )
@@ -334,7 +361,7 @@ async def test_tick_once_propagates_strategy_tick_report(market_data, strategy, 
 # ---------------------------------------------------------------------------
 
 
-async def test_concurrent_quote_fetch(market_data, strategy, recorder):
+async def test_concurrent_quote_fetch(market_data, strategy, recorder, fake_portfolio_service):
     now = _T0
     coins = ("BTC", "ETH", "SOL")
 
@@ -345,6 +372,7 @@ async def test_concurrent_quote_fetch(market_data, strategy, recorder):
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=coins,
         recorder=recorder,
     )
@@ -359,7 +387,7 @@ async def test_concurrent_quote_fetch(market_data, strategy, recorder):
 # ---------------------------------------------------------------------------
 
 
-async def test_quote_fetch_failure_propagates(market_data, strategy, recorder):
+async def test_quote_fetch_failure_propagates(market_data, strategy, recorder, fake_portfolio_service):
     now = _T0
 
     market_data.fetch_quote.side_effect = [_quote("BTC"), RuntimeError("boom")]
@@ -367,6 +395,7 @@ async def test_quote_fetch_failure_propagates(market_data, strategy, recorder):
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC", "ETH"),
         recorder=recorder,
     )
@@ -380,7 +409,7 @@ async def test_quote_fetch_failure_propagates(market_data, strategy, recorder):
 # ---------------------------------------------------------------------------
 
 
-async def test_recorder_receives_all_saves_in_order(market_data, strategy, recorder):
+async def test_recorder_receives_all_saves_in_order(market_data, strategy, recorder, fake_portfolio_service):
     now = _T0
 
     btc_quote = _quote("BTC", 100.0)
@@ -393,11 +422,11 @@ async def test_recorder_receives_all_saves_in_order(market_data, strategy, recor
     market_data.fetch_quote.side_effect = [btc_quote, eth_quote]
     market_data.fetch_funding.side_effect = [btc_funding, eth_funding]
     strategy.on_hour_tick.return_value = report
-    strategy.compute_equity.return_value = eq
 
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC", "ETH"),
         recorder=recorder,
     )
@@ -431,7 +460,9 @@ async def test_recorder_receives_all_saves_in_order(market_data, strategy, recor
 def test_stop_idempotent(mocker):
     md = mocker.AsyncMock(spec=MarketDataSource)
     s = mocker.AsyncMock(spec=Strategy)
-    engine = Engine(market_data=md, strategy=s, coins=("BTC",))
+    ps = mocker.MagicMock()
+    ps.equity = mocker.MagicMock(return_value=_domain_equity())
+    engine = Engine(market_data=md, strategy=s, portfolio_service=ps, coins=("BTC",))
 
     engine.stop()
     engine.stop()
@@ -443,7 +474,9 @@ def test_force_hour_tick_resets_last_hour(mocker):
     """force_hour_tick clears _last_hour so the next tick crosses the boundary."""
     md = mocker.AsyncMock(spec=MarketDataSource)
     s = mocker.AsyncMock(spec=Strategy)
-    engine = Engine(market_data=md, strategy=s, coins=("BTC",))
+    ps = mocker.MagicMock()
+    ps.equity = mocker.MagicMock(return_value=_domain_equity())
+    engine = Engine(market_data=md, strategy=s, portfolio_service=ps, coins=("BTC",))
 
     engine._last_hour = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
     engine.force_hour_tick()
@@ -458,14 +491,14 @@ def test_force_hour_tick_resets_last_hour(mocker):
 
 
 async def test_tick_once_hydrates_last_hour_suppresses_same_hour(
-    market_data, strategy, recorder
+    market_data, strategy, recorder, fake_portfolio_service
 ):
     """Recorder reports current hour already accrued → no hour branch fires."""
     now = datetime(2026, 5, 19, 13, 34, 0, tzinfo=UTC)
     recorder.latest_hour_ts.return_value = datetime(2026, 5, 19, 13, 0, 0, tzinfo=UTC)
 
     engine = Engine(
-        market_data=market_data, strategy=strategy, coins=("BTC",), recorder=recorder
+        market_data=market_data, strategy=strategy, portfolio_service=fake_portfolio_service, coins=("BTC",), recorder=recorder
     )
     outcome = await engine.tick_once(now)
 
@@ -480,14 +513,14 @@ async def test_tick_once_hydrates_last_hour_suppresses_same_hour(
 
 
 async def test_tick_once_hydrate_none_preserves_cold_start(
-    market_data, strategy, recorder
+    market_data, strategy, recorder, fake_portfolio_service
 ):
     """Cold DB (recorder returns None) → first tick fires hour branch (backwards-compat)."""
     now = datetime(2026, 5, 19, 13, 34, 0, tzinfo=UTC)
     recorder.latest_hour_ts.return_value = None
 
     engine = Engine(
-        market_data=market_data, strategy=strategy, coins=("BTC",), recorder=recorder
+        market_data=market_data, strategy=strategy, portfolio_service=fake_portfolio_service, coins=("BTC",), recorder=recorder
     )
     await engine.tick_once(now)
 
@@ -495,14 +528,14 @@ async def test_tick_once_hydrate_none_preserves_cold_start(
 
 
 async def test_tick_once_hydrate_previous_hour_fires_at_new_hour(
-    market_data, strategy, recorder
+    market_data, strategy, recorder, fake_portfolio_service
 ):
     """Recorder hydrates to previous hour; current tick is in new hour → fires."""
     now = datetime(2026, 5, 19, 14, 0, 0, tzinfo=UTC)
     recorder.latest_hour_ts.return_value = datetime(2026, 5, 19, 13, 0, 0, tzinfo=UTC)
 
     engine = Engine(
-        market_data=market_data, strategy=strategy, coins=("BTC",), recorder=recorder
+        market_data=market_data, strategy=strategy, portfolio_service=fake_portfolio_service, coins=("BTC",), recorder=recorder
     )
     await engine.tick_once(now)
 
@@ -515,7 +548,7 @@ async def test_tick_once_hydrate_previous_hour_fires_at_new_hour(
 # ---------------------------------------------------------------------------
 
 
-async def test_run_calls_tick_once_until_stop(market_data, strategy, mocker):
+async def test_run_calls_tick_once_until_stop(market_data, strategy, fake_portfolio_service, mocker):
     # Clock returns a sequence of datetimes
     t0 = _T0
     clock = mocker.MagicMock(
@@ -534,6 +567,7 @@ async def test_run_calls_tick_once_until_stop(market_data, strategy, mocker):
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         clock_fn=clock,
     )
@@ -553,7 +587,7 @@ async def test_run_calls_tick_once_until_stop(market_data, strategy, mocker):
 
     assert sleep_fn.call_count == 2
     # Only 1 tick fired: first sleep completes without stop → tick. Second sleep calls stop → break.
-    assert strategy.compute_equity.call_count == 1
+    assert fake_portfolio_service.equity.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -561,7 +595,7 @@ async def test_run_calls_tick_once_until_stop(market_data, strategy, mocker):
 # ---------------------------------------------------------------------------
 
 
-async def test_run_sleep_delay_computed_to_next_minute_boundary(market_data, strategy, mocker):
+async def test_run_sleep_delay_computed_to_next_minute_boundary(market_data, strategy, fake_portfolio_service, mocker):
     # Use a time that is NOT on the minute boundary so delay > 0
     now = datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)  # :13:20
     next_minute = (now + timedelta(minutes=1)).replace(second=0, microsecond=0)  # :14:00
@@ -576,6 +610,7 @@ async def test_run_sleep_delay_computed_to_next_minute_boundary(market_data, str
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         clock_fn=clock,
     )
@@ -599,13 +634,14 @@ async def test_run_sleep_delay_computed_to_next_minute_boundary(market_data, str
 # ---------------------------------------------------------------------------
 
 
-async def test_run_does_not_tick_after_stop_called_during_sleep(market_data, strategy, mocker):
+async def test_run_does_not_tick_after_stop_called_during_sleep(market_data, strategy, fake_portfolio_service, mocker):
     t0 = _T0
     clock = mocker.MagicMock(return_value=t0)
 
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         clock_fn=clock,
     )
@@ -618,7 +654,7 @@ async def test_run_does_not_tick_after_stop_called_during_sleep(market_data, str
     await engine.run()
 
     # stop was called during sleep → break before tick
-    assert strategy.compute_equity.call_count == 0
+    assert fake_portfolio_service.equity.call_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +662,7 @@ async def test_run_does_not_tick_after_stop_called_during_sleep(market_data, str
 # ---------------------------------------------------------------------------
 
 
-async def test_tick_once_without_event_bus_does_not_publish(market_data, strategy, recorder):
+async def test_tick_once_without_event_bus_does_not_publish(market_data, strategy, recorder, fake_portfolio_service):
     now = _T0
     market_data.fetch_quote.return_value = _quote()
     market_data.fetch_funding.return_value = _funding()
@@ -641,6 +677,7 @@ async def test_tick_once_without_event_bus_does_not_publish(market_data, strateg
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         recorder=recorder,
     )
@@ -656,7 +693,7 @@ async def test_tick_once_without_event_bus_does_not_publish(market_data, strateg
 # ---------------------------------------------------------------------------
 
 
-async def test_tick_once_publishes_position_opened(market_data, strategy, recorder, mocker):
+async def test_tick_once_publishes_position_opened(market_data, strategy, recorder, fake_portfolio_service, mocker):
     now = _T0
     bus = mocker.AsyncMock(spec=EventBus)
 
@@ -673,6 +710,7 @@ async def test_tick_once_publishes_position_opened(market_data, strategy, record
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         recorder=recorder,
         event_bus=bus,
@@ -699,7 +737,7 @@ async def test_tick_once_publishes_position_opened(market_data, strategy, record
 # ---------------------------------------------------------------------------
 
 
-async def test_tick_once_publishes_position_closed(market_data, strategy, recorder, mocker):
+async def test_tick_once_publishes_position_closed(market_data, strategy, recorder, fake_portfolio_service, mocker):
     now = _T0
     bus = mocker.AsyncMock(spec=EventBus)
 
@@ -716,6 +754,7 @@ async def test_tick_once_publishes_position_closed(market_data, strategy, record
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         recorder=recorder,
         event_bus=bus,
@@ -743,7 +782,7 @@ async def test_tick_once_publishes_position_closed(market_data, strategy, record
 
 
 async def test_tick_once_publishes_both_opened_and_closed_in_same_tick(
-    market_data, strategy, recorder, mocker
+    market_data, strategy, recorder, fake_portfolio_service, mocker
 ):
     now = _T0
     bus = mocker.AsyncMock(spec=EventBus)
@@ -766,6 +805,7 @@ async def test_tick_once_publishes_both_opened_and_closed_in_same_tick(
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC", "ETH"),
         recorder=recorder,
         event_bus=bus,
@@ -791,7 +831,7 @@ async def test_tick_once_publishes_both_opened_and_closed_in_same_tick(
 
 
 async def test_tick_once_skips_publish_when_open_fill_missing(
-    market_data, strategy, recorder, mocker
+    market_data, strategy, recorder, fake_portfolio_service, mocker
 ):
     now = _T0
     bus = mocker.AsyncMock(spec=EventBus)
@@ -809,6 +849,7 @@ async def test_tick_once_skips_publish_when_open_fill_missing(
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         recorder=recorder,
         event_bus=bus,
@@ -829,7 +870,7 @@ async def test_tick_once_skips_publish_when_open_fill_missing(
 # ---------------------------------------------------------------------------
 
 
-async def test_run_publishes_engine_started_and_stopping(market_data, strategy, mocker):
+async def test_run_publishes_engine_started_and_stopping(market_data, strategy, fake_portfolio_service, mocker):
     t0 = _T0
     clock = mocker.MagicMock(
         side_effect=[
@@ -849,6 +890,7 @@ async def test_run_publishes_engine_started_and_stopping(market_data, strategy, 
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         clock_fn=clock,
         event_bus=bus,
@@ -873,7 +915,7 @@ async def test_run_publishes_engine_started_and_stopping(market_data, strategy, 
 
 
 async def test_tick_once_skips_publish_when_close_fill_missing(
-    market_data, strategy, recorder, mocker
+    market_data, strategy, recorder, fake_portfolio_service, mocker
 ):
     now = _T0
     bus = mocker.AsyncMock(spec=EventBus)
@@ -891,6 +933,7 @@ async def test_tick_once_skips_publish_when_close_fill_missing(
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         recorder=recorder,
         event_bus=bus,
@@ -911,18 +954,18 @@ async def test_tick_once_skips_publish_when_close_fill_missing(
 # ---------------------------------------------------------------------------
 
 
-async def test_tick_completed_published_on_minute_tick(market_data, strategy, recorder, mocker):
+async def test_tick_completed_published_on_minute_tick(market_data, strategy, recorder, fake_portfolio_service, mocker):
     """Minute tick (not hour boundary): tick.completed with is_hour_tick=False,
     empty opened/closed, and correct total_equity."""
     bus = mocker.AsyncMock(spec=EventBus)
-    equity = _equity(total=7500.0)
-    strategy.compute_equity = mocker.MagicMock(return_value=equity)
+    fake_portfolio_service.equity.return_value = _domain_equity(total=7500.0)
 
     # Put engine in state where _last_hour is already set to _T0 so the next
     # minute tick does NOT cross an hour boundary.
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         recorder=recorder,
         event_bus=bus,
@@ -954,12 +997,11 @@ async def test_tick_completed_published_on_minute_tick(market_data, strategy, re
 # ---------------------------------------------------------------------------
 
 
-async def test_tick_completed_published_on_hour_tick(market_data, strategy, recorder, mocker):
+async def test_tick_completed_published_on_hour_tick(market_data, strategy, recorder, fake_portfolio_service, mocker):
     """Hour tick: tick.completed with is_hour_tick=True and correct opened/closed lists."""
     now = _T0  # on-the-hour → always crosses hour boundary on first tick
     bus = mocker.AsyncMock(spec=EventBus)
-    equity = _equity(total=9000.0)
-    strategy.compute_equity = mocker.MagicMock(return_value=equity)
+    fake_portfolio_service.equity.return_value = _domain_equity(total=9000.0)
 
     market_data.fetch_quote.return_value = _quote("BTC", ts=now)
     market_data.fetch_funding.return_value = _funding("BTC", ts=now)
@@ -977,6 +1019,7 @@ async def test_tick_completed_published_on_hour_tick(market_data, strategy, reco
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         recorder=recorder,
         event_bus=bus,
@@ -998,12 +1041,11 @@ async def test_tick_completed_published_on_hour_tick(market_data, strategy, reco
     assert evt.payload_json["total_equity"] == 9000.0
 
 
-async def test_tick_completed_hour_tick_with_closed_coins(market_data, strategy, recorder, mocker):
+async def test_tick_completed_hour_tick_with_closed_coins(market_data, strategy, recorder, fake_portfolio_service, mocker):
     """Hour tick with closed coins: tick.completed includes closed_coins."""
     now = _T0
     bus = mocker.AsyncMock(spec=EventBus)
-    equity = _equity(total=8000.0)
-    strategy.compute_equity = mocker.MagicMock(return_value=equity)
+    fake_portfolio_service.equity.return_value = _domain_equity(total=8000.0)
 
     market_data.fetch_quote.return_value = _quote("ETH", ts=now)
     market_data.fetch_funding.return_value = _funding("ETH", ts=now)
@@ -1021,6 +1063,7 @@ async def test_tick_completed_hour_tick_with_closed_coins(market_data, strategy,
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("ETH",),
         recorder=recorder,
         event_bus=bus,
@@ -1044,7 +1087,7 @@ async def test_tick_completed_hour_tick_with_closed_coins(market_data, strategy,
 # ---------------------------------------------------------------------------
 
 
-async def test_run_skips_tick_on_transient_error_and_continues(market_data, strategy, mocker):
+async def test_run_skips_tick_on_transient_error_and_continues(market_data, strategy, fake_portfolio_service, mocker):
     t0 = _T0
     clock = mocker.MagicMock(
         side_effect=[
@@ -1070,6 +1113,7 @@ async def test_run_skips_tick_on_transient_error_and_continues(market_data, stra
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         clock_fn=clock,
         event_bus=bus,
@@ -1104,7 +1148,7 @@ async def test_run_skips_tick_on_transient_error_and_continues(market_data, stra
 # ---------------------------------------------------------------------------
 
 
-async def test_run_does_not_swallow_non_transient_exceptions(market_data, strategy, mocker):
+async def test_run_does_not_swallow_non_transient_exceptions(market_data, strategy, fake_portfolio_service, mocker):
     t0 = _T0
     clock = mocker.MagicMock(
         side_effect=[
@@ -1118,6 +1162,7 @@ async def test_run_does_not_swallow_non_transient_exceptions(market_data, strate
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         clock_fn=clock,
     )
@@ -1136,7 +1181,7 @@ async def test_run_does_not_swallow_non_transient_exceptions(market_data, strate
 # ---------------------------------------------------------------------------
 
 
-async def test_fee_reconciler_called_every_n_ticks(market_data, strategy, mocker):
+async def test_fee_reconciler_called_every_n_ticks(market_data, strategy, fake_portfolio_service, mocker):
     """fee_reconciler.run_once should be called on ticks 5, 10, ... but not on 1-4."""
     from frab.engine.loop import FEE_RECONCILE_EVERY_N_MINUTES
 
@@ -1150,6 +1195,7 @@ async def test_fee_reconciler_called_every_n_ticks(market_data, strategy, mocker
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         event_bus=bus,
         fee_reconciler=fee_reconciler,
@@ -1177,7 +1223,7 @@ async def test_fee_reconciler_called_every_n_ticks(market_data, strategy, mocker
     assert fee_reconciler.run_once.call_count == 2
 
 
-async def test_fee_reconciler_not_called_on_non_multiple_ticks(market_data, strategy, mocker):
+async def test_fee_reconciler_not_called_on_non_multiple_ticks(market_data, strategy, fake_portfolio_service, mocker):
     """Ticks 1–4 should NOT call the reconciler when N=5."""
     from frab.engine.loop import FEE_RECONCILE_EVERY_N_MINUTES
 
@@ -1190,6 +1236,7 @@ async def test_fee_reconciler_not_called_on_non_multiple_ticks(market_data, stra
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         fee_reconciler=fee_reconciler,
     )
@@ -1205,7 +1252,7 @@ async def test_fee_reconciler_not_called_on_non_multiple_ticks(market_data, stra
 
 
 async def test_fee_reconciler_error_continues_loop_and_emits_error_event(
-    market_data, strategy, mocker
+    market_data, strategy, fake_portfolio_service, mocker
 ):
     """If fee_reconciler.run_once raises, loop continues and emits an ERROR event."""
     from frab.engine.loop import FEE_RECONCILE_EVERY_N_MINUTES
@@ -1221,6 +1268,7 @@ async def test_fee_reconciler_error_continues_loop_and_emits_error_event(
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
         event_bus=bus,
         fee_reconciler=fee_reconciler,
@@ -1234,8 +1282,8 @@ async def test_fee_reconciler_error_continues_loop_and_emits_error_event(
         strategy.on_hour_tick.return_value = _tick_report(ts=now)
         await engine.tick_once(now)  # must not raise
 
-    # Loop continued: compute_equity was called all N times
-    assert strategy.compute_equity.call_count == FEE_RECONCILE_EVERY_N_MINUTES
+    # Loop continued: portfolio_service.equity was called all N times
+    assert fake_portfolio_service.equity.call_count == FEE_RECONCILE_EVERY_N_MINUTES
 
     # ERROR event published
     all_events = [call.args[0] for call in bus.publish.call_args_list]
@@ -1244,7 +1292,7 @@ async def test_fee_reconciler_error_continues_loop_and_emits_error_event(
     assert error_events[0].source == "fee_reconcile"
 
 
-async def test_engine_no_fee_reconciler_runs_cleanly(market_data, strategy):
+async def test_engine_no_fee_reconciler_runs_cleanly(market_data, strategy, fake_portfolio_service):
     """Engine without fee_reconciler (None) still works correctly."""
     market_data.fetch_quote.return_value = _quote()
     market_data.fetch_funding.return_value = _funding()
@@ -1253,6 +1301,7 @@ async def test_engine_no_fee_reconciler_runs_cleanly(market_data, strategy):
     engine = Engine(
         market_data=market_data,
         strategy=strategy,
+        portfolio_service=fake_portfolio_service,
         coins=("BTC",),
     )
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from frab.domain.portfolio import Equity
 from frab.engine.loop import Engine
 from frab.events.bus import EventBus
 from frab.exchanges.atomic import AtomicExecutor
@@ -22,6 +23,31 @@ from frab.exchanges.base import (
     Side,
 )
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
+
+
+class _StubPortfolioService:
+    """Minimal stub satisfying Engine.portfolio_service for replay tests.
+
+    Delegates equity computation to the strategy so the existing equity
+    assertions still hold (strategy.compute_equity persists until F1.4f).
+    """
+
+    def __init__(self, strategy: object) -> None:
+        self._strategy = strategy
+
+    def equity(self, marks: dict) -> Equity:
+        from datetime import UTC, datetime
+        snap = self._strategy.compute_equity(datetime.now(UTC))  # type: ignore[attr-defined]
+        return Equity(
+            ts=snap.ts,
+            total_equity=snap.total_equity,
+            cash=snap.cash,
+            spot_value=snap.spot_value,
+            perp_unrealized=snap.perp_unrealized,
+            perp_realized_cum=snap.perp_realized_cum,
+            funding_cum=snap.funding_cum,
+            fees_cum=snap.fees_cum,
+        )
 
 
 @dataclass
@@ -203,7 +229,7 @@ async def test_replay_strategy_a_one_month_smoke():
     strategy = StrategyA(params=params, executor=executor)
     initial_cash = strategy.cash
 
-    engine = Engine(market_data=market, strategy=strategy, coins=COINS)
+    engine = Engine(market_data=market, strategy=strategy, portfolio_service=_StubPortfolioService(strategy), coins=COINS)
 
     # 3. Drive engine through every hour in the window.
     opens_per_coin: dict[str, int] = {c: 0 for c in COINS}

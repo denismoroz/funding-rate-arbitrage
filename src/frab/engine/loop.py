@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Protocol, runtime_checkab
 import httpx
 import tenacity
 
+from frab.application.portfolio_service import PortfolioService
+from frab.domain.exchange import Exchange as DomainExchange
 from frab.events.bus import Event, EventBus
 from frab.exchanges.base import FundingTick, Leg, MarketDataSource, Quote, Side
 from frab.strategies.base import EquitySnapshot, Strategy, TickReport
@@ -66,6 +68,7 @@ class Engine:
         *,
         market_data: MarketDataSource,
         strategy: Strategy,
+        portfolio_service: PortfolioService,
         coins: tuple[str, ...],
         recorder: Recorder | None = None,
         clock_fn: Callable[[], datetime] | None = None,
@@ -79,6 +82,7 @@ class Engine:
             raise ValueError("coins must be non-empty")
         self._market_data = market_data
         self._strategy = strategy
+        self._portfolio_service = portfolio_service
         self._coins = tuple(coins)
         self._recorder = recorder if recorder is not None else NullRecorder()
         self._clock_fn = clock_fn if clock_fn is not None else (lambda: datetime.now(UTC))
@@ -283,7 +287,18 @@ class Engine:
                 logger.warning("wallet_snapshot_failed: %s", exc, exc_info=True)
 
         # 6. Equity snapshot (every tick)
-        equity = self._strategy.compute_equity(now)
+        marks = {(DomainExchange.HYPERLIQUID, coin): q.mark for coin, q in quotes.items()}
+        equity_dom = self._portfolio_service.equity(marks)
+        equity = EquitySnapshot(
+            ts=now,
+            total_equity=equity_dom.total_equity,
+            cash=equity_dom.cash,
+            spot_value=equity_dom.spot_value,
+            perp_unrealized=equity_dom.perp_unrealized,
+            perp_realized_cum=equity_dom.perp_realized_cum,
+            funding_cum=equity_dom.funding_cum,
+            fees_cum=equity_dom.fees_cum,
+        )
         await self._recorder.save_equity(equity)
 
         # 7. Publish tick.completed (one per minute tick)

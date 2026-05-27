@@ -602,6 +602,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         engine = Engine(
             market_data=market_data,
             strategy=strategy,
+            portfolio_service=portfolio_service,
             coins=resolved_coins,
             recorder=recorder,
             event_bus=bus,

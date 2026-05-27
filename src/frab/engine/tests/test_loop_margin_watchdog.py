@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from frab.domain.portfolio import Equity
 from frab.engine.loop import Engine
 from frab.events.bus import EventBus
 from frab.exchanges.base import FundingTick, MarketDataSource, Quote
@@ -37,13 +38,20 @@ def _equity() -> EquitySnapshot:
     )
 
 
+def _domain_equity() -> Equity:
+    return Equity(
+        ts=T0, total_equity=1000.0, cash=1000.0,
+        spot_value=0.0, perp_unrealized=0.0,
+        perp_realized_cum=0.0, funding_cum=0.0, fees_cum=0.0,
+    )
+
+
 def _tick_report() -> TickReport:
     return TickReport(ts=T0, signals=(), fills=(), opened=(), closed=())
 
 
 def _make_strategy(mocker, watchdog_return):
     s = mocker.AsyncMock(spec=Strategy)
-    s.compute_equity = mocker.MagicMock(return_value=_equity())
     s.on_hour_tick.return_value = _tick_report()
     s.margin_watchdog.return_value = watchdog_return
     return s
@@ -56,11 +64,18 @@ def _make_market_data(mocker):
     return md
 
 
+def _make_portfolio_service(mocker):
+    ps = mocker.MagicMock()
+    ps.equity = mocker.MagicMock(return_value=_domain_equity())
+    return ps
+
+
 @pytest.mark.asyncio
 async def test_engine_awaits_margin_watchdog_every_minute(mocker):
     strat = _make_strategy(mocker, None)
     md = _make_market_data(mocker)
-    engine = Engine(market_data=md, strategy=strat, coins=("BTC",))
+    ps = _make_portfolio_service(mocker)
+    engine = Engine(market_data=md, strategy=strat, portfolio_service=ps, coins=("BTC",))
 
     await engine.tick_once(T0)
     strat.margin_watchdog.assert_awaited_once_with(T0)
@@ -74,8 +89,9 @@ async def test_engine_does_not_publish_event_when_action_is_none(mocker):
     )
     strat = _make_strategy(mocker, report)
     md = _make_market_data(mocker)
+    ps = _make_portfolio_service(mocker)
     bus = mocker.AsyncMock(spec=EventBus)
-    engine = Engine(market_data=md, strategy=strat, coins=("BTC",), event_bus=bus)
+    engine = Engine(market_data=md, strategy=strat, portfolio_service=ps, coins=("BTC",), event_bus=bus)
 
     await engine.tick_once(T0)
 
@@ -92,8 +108,9 @@ async def test_engine_publishes_warning_event_on_top_up(mocker):
     )
     strat = _make_strategy(mocker, report)
     md = _make_market_data(mocker)
+    ps = _make_portfolio_service(mocker)
     bus = mocker.AsyncMock(spec=EventBus)
-    engine = Engine(market_data=md, strategy=strat, coins=("BTC",), event_bus=bus)
+    engine = Engine(market_data=md, strategy=strat, portfolio_service=ps, coins=("BTC",), event_bus=bus)
 
     await engine.tick_once(T0)
 
@@ -116,8 +133,9 @@ async def test_engine_publishes_error_event_on_forced_close(mocker):
     )
     strat = _make_strategy(mocker, report)
     md = _make_market_data(mocker)
+    ps = _make_portfolio_service(mocker)
     bus = mocker.AsyncMock(spec=EventBus)
-    engine = Engine(market_data=md, strategy=strat, coins=("BTC",), event_bus=bus)
+    engine = Engine(market_data=md, strategy=strat, portfolio_service=ps, coins=("BTC",), event_bus=bus)
 
     await engine.tick_once(T0)
 
@@ -138,8 +156,9 @@ async def test_engine_publishes_error_event_on_emergency(mocker):
     )
     strat = _make_strategy(mocker, report)
     md = _make_market_data(mocker)
+    ps = _make_portfolio_service(mocker)
     bus = mocker.AsyncMock(spec=EventBus)
-    engine = Engine(market_data=md, strategy=strat, coins=("BTC",), event_bus=bus)
+    engine = Engine(market_data=md, strategy=strat, portfolio_service=ps, coins=("BTC",), event_bus=bus)
 
     await engine.tick_once(T0)
 
@@ -155,7 +174,8 @@ async def test_engine_swallows_watchdog_exception(mocker):
     strat = _make_strategy(mocker, None)
     strat.margin_watchdog.side_effect = RuntimeError("boom")
     md = _make_market_data(mocker)
-    engine = Engine(market_data=md, strategy=strat, coins=("BTC",))
+    ps = _make_portfolio_service(mocker)
+    engine = Engine(market_data=md, strategy=strat, portfolio_service=ps, coins=("BTC",))
 
     outcome = await engine.tick_once(T0)
     # Tick still completes normally despite watchdog raising

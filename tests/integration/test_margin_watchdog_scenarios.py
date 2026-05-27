@@ -33,11 +33,23 @@ from frab.exchanges.base import (
     Quote,
     Side,
 )
+from frab.domain.portfolio import Equity
 from frab.strategies.strategy_a import StrategyA, StrategyAParams
 
 T0 = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
 HOUR = timedelta(hours=1)
 MIN = timedelta(minutes=1)
+
+
+class StubPortfolioService:
+    """Minimal stub for Engine.portfolio_service in integration tests."""
+
+    def equity(self, marks: dict) -> Equity:
+        return Equity(
+            ts=T0, total_equity=1000.0, cash=1000.0,
+            spot_value=0.0, perp_unrealized=0.0,
+            perp_realized_cum=0.0, funding_cum=0.0, fees_cum=0.0,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +222,7 @@ async def test_top_up_under_adverse_move():
         margin_manager=mgr,
     )
     _drain_funding_history(strat, "BTC")
-    engine = Engine(market_data=market, strategy=strat, coins=("BTC",), event_bus=bus)
+    engine = Engine(market_data=market, strategy=strat, portfolio_service=StubPortfolioService(), coins=("BTC",), event_bus=bus)
 
     # 1. Open BTC. C2 pre-flight transfers $30 (required_margin = 100/5*1.5) into perp.
     await _open_btc(engine, market)
@@ -272,7 +284,7 @@ async def test_forced_close_when_spot_cash_insufficient():
         margin_manager=mgr,
     )
     _drain_funding_history(strat, "BTC")
-    engine = Engine(market_data=market, strategy=strat, coins=("BTC",), event_bus=bus)
+    engine = Engine(market_data=market, strategy=strat, portfolio_service=StubPortfolioService(), coins=("BTC",), event_bus=bus)
 
     # Open BTC. C2 pre-flight transfers $30 from spot → perp.
     await _open_btc(engine, market)
@@ -330,7 +342,7 @@ async def test_no_action_under_stable_marks():
         margin_manager=mgr,
     )
     _drain_funding_history(strat, "BTC")
-    engine = Engine(market_data=market, strategy=strat, coins=("BTC",), event_bus=bus)
+    engine = Engine(market_data=market, strategy=strat, portfolio_service=StubPortfolioService(), coins=("BTC",), event_bus=bus)
 
     # Open BTC. C2 pre-flight does one spot→perp transfer ($30).
     await _open_btc(engine, market)
