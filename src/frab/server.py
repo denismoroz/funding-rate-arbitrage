@@ -66,63 +66,19 @@ EXCHANGE_NAME = "hyperliquid"
 #     break delta-neutrality (LINK0 incident: -$3 on supposedly hedged pos).
 #     EXCLUDED.
 #   DOGE, etc. — no spot pair on HL mainnet at all.
-MAINNET_SPOT_TOKEN_MAP: dict[str, str] = {
-    "BTC": "UBTC",
-    "ETH": "UETH",
-    "SOL": "USOL",
-}
+# Moved to frab.exchanges._hl_tokens in F2.3; re-export until F2.6
+# moves the module under the hyperliquid/ package proper.
+from frab.exchanges._hl_tokens import (  # noqa: E402
+    MAINNET_SPOT_TOKEN_MAP,
+    select_spot_token_map as _select_spot_token_map,
+    validate_spot_pairs as _validate_spot_pairs,
+)
 
 
 def _select_coins(settings: Settings, default: tuple[str, ...]) -> tuple[str, ...]:
     """Universe from settings.hl_universe override, else `default`."""
     override = settings.universe_tuple()
     return override if override else default
-
-
-def _select_spot_token_map(network: str) -> dict[str, str]:
-    """Spot base-token map; only mainnet uses wrapped names."""
-    return MAINNET_SPOT_TOKEN_MAP if network == "mainnet" else {}
-
-
-async def _validate_spot_pairs(market_data, coins: tuple[str, ...]) -> None:
-    """Verify every coin's spot/USDC pair exists on HL with the expected base token.
-
-    Fail-fast at engine startup if MAINNET_SPOT_TOKEN_MAP entry doesn't resolve
-    to a real HL spot pair quoted in USDC. Prevents accidentally trading the
-    canonical perp against a non-1:1 wrapped token (breaks delta-neutrality).
-    """
-    meta = await market_data._post({"type": "spotMeta"})
-    tokens = {t["index"]: t.get("name", "") for t in meta.get("tokens", []) if isinstance(t.get("index"), int)}
-    usdc_idx: int | None = next((i for i, n in tokens.items() if n == "USDC"), None)
-    if usdc_idx is None:
-        raise RuntimeError("HL spotMeta: USDC token not found")
-
-    # Build {base_token_name: pair_universe_name} for USDC-quoted pairs.
-    base_to_pair: dict[str, str] = {}
-    for u in meta.get("universe", []):
-        toks = u.get("tokens") or []
-        if len(toks) != 2 or toks[1] != usdc_idx:
-            continue
-        base_name = tokens.get(toks[0])
-        if base_name:
-            base_to_pair[base_name] = u.get("name", "")
-
-    missing: list[str] = []
-    mismatched: list[str] = []
-    for coin in coins:
-        expected_base = MAINNET_SPOT_TOKEN_MAP.get(coin)
-        if expected_base is None:
-            missing.append(f"{coin} (no map entry)")
-            continue
-        if expected_base not in base_to_pair:
-            mismatched.append(f"{coin} → {expected_base}/USDC (not on HL)")
-
-    if missing or mismatched:
-        raise RuntimeError(
-            "Spot-pair validation failed for HL mainnet. "
-            f"missing_map: {missing}; not_on_hl: {mismatched}. "
-            "Either remove these coins from the universe or fix MAINNET_SPOT_TOKEN_MAP."
-        )
 
 
 def _position_mode(settings: Settings) -> PositionMode:
