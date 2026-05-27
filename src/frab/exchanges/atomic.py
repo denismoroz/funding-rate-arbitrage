@@ -32,7 +32,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Awaitable, Callable, Literal
+from typing import Awaitable, Callable
 
 from frab.events.bus import Event, EventBus
 from frab.exchanges.base import Executor, FillReport, Leg, OrderRequest, PositionState, Side
@@ -41,28 +41,10 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Result types
+# Result types: re-exported from _paired_results for back-compat (F2.1).
 # ---------------------------------------------------------------------------
 
-
-@dataclass(frozen=True, slots=True)
-class PairedOpenResult:
-    status: Literal["ok", "failed"]
-    perp_fill: FillReport | None      # None if perp leg failed before any fill
-    spot_fill: FillReport | None      # None if spot leg failed before any fill
-    perp_attempts: int                # 0 if not attempted, else 1..max_attempts
-    spot_attempts: int
-    errors: tuple[str, ...]           # repr() of exceptions, chronological order
-
-
-@dataclass(frozen=True, slots=True)
-class PairedCloseResult:
-    status: Literal["ok", "failed"]
-    perp_fill: FillReport | None
-    spot_fill: FillReport | None
-    perp_attempts: int
-    spot_attempts: int
-    errors: tuple[str, ...]
+from frab.exchanges._paired_results import PairedCloseResult, PairedOpenResult  # noqa: E402,F401
 
 
 # ---------------------------------------------------------------------------
