@@ -591,6 +591,11 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         )
         await portfolio_service.rehydrate_from_db()
         app.state.portfolio_service = portfolio_service
+        # Late-bind PortfolioService into the strategy so dual-track mirror calls
+        # (set_fees_cum / set_funding_cum) actually fire. F1.4 will move this
+        # into spec.build so the wiring is no longer a separate step.
+        if hasattr(strategy, "set_portfolio_service"):
+            strategy.set_portfolio_service(portfolio_service)
 
         # Wire fee reconciler for live mode; paper mode has no real fills to reconcile.
         fee_reconciler = _build_fee_reconciler(

@@ -146,6 +146,11 @@ class StrategyA(Strategy):
     def n_skipped_opens_capital(self) -> int:
         return self._n_skipped_opens_capital
 
+    def set_portfolio_service(self, portfolio_service: PortfolioService) -> None:
+        """Late binding: server.py wires PortfolioService after rehydrate.
+        F1.4 will remove this once spec.build accepts portfolio_service directly."""
+        self._portfolio_service = portfolio_service
+
     def set_fees_cum(self, value: float) -> None:
         """Replace the running fees counter with the DB-authoritative total."""
         self._fees_cum = value

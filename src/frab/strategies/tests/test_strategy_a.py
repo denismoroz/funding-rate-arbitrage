@@ -1128,3 +1128,28 @@ async def test_strategy_a_without_portfolio_service_works_as_before(mocker):
 
     assert report.opened == ("BTC",)
     assert strat.fees_cum == pytest.approx(0.105, abs=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_set_portfolio_service_attaches_late(mocker):
+    """Late binding via set_portfolio_service activates dual-track."""
+    ps = mocker.MagicMock()
+    ps.set_fees_cum = mocker.AsyncMock()
+    ps.set_funding_cum = mocker.AsyncMock()
+
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
+    executor = make_executor(mocker, open_results=[make_paired_open_ok(perp_fill, spot_fill)])
+
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=3, signal_window_hours=1),
+        executor,
+    )
+    assert strat._portfolio_service is None
+    strat.set_portfolio_service(ps)
+    assert strat._portfolio_service is ps
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    ps.set_fees_cum.assert_awaited()
