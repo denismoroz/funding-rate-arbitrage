@@ -1022,3 +1022,109 @@ async def test_close_paired_failure_keeps_position_open(mocker):
     assert strat._positions["BTC"].perp_qty == pos_before.perp_qty
     assert strat._positions["BTC"].entry_spot_price == pos_before.entry_spot_price
     assert strat._positions["BTC"].entry_perp_price == pos_before.entry_perp_price
+
+
+# ---------------------------------------------------------------------------
+# F1.3b: PortfolioService dual-track mirroring
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_open_position_mirrors_fees_to_portfolio_service(mocker):
+    """After _open_position succeeds, set_fees_cum is awaited with strategy's _fees_cum."""
+    ps = mocker.MagicMock()
+    ps.set_fees_cum = mocker.AsyncMock()
+    ps.set_funding_cum = mocker.AsyncMock()
+
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
+    executor = make_executor(
+        mocker,
+        open_results=[make_paired_open_ok(perp_fill, spot_fill)],
+    )
+
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=3, signal_window_hours=1),
+        executor,
+        portfolio_service=ps,
+    )
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    expected_fees = strat._fees_cum
+    ps.set_fees_cum.assert_awaited_with(pytest.approx(expected_fees))
+
+
+@pytest.mark.asyncio
+async def test_hour_tick_funding_accrual_mirrors_to_portfolio_service(mocker):
+    """After funding accrual loop, set_funding_cum is awaited once with post-loop value."""
+    ps = mocker.MagicMock()
+    ps.set_fees_cum = mocker.AsyncMock()
+    ps.set_funding_cum = mocker.AsyncMock()
+
+    strat = StrategyA(
+        StrategyAParams(
+            coins=("BTC",),
+            concurrency_cap=1,
+            signal_window_hours=1,
+            min_hold_hours=120,
+            position_size_usdc=1000.0,
+        ),
+        make_executor(mocker),
+        portfolio_service=ps,
+    )
+
+    # Open a position via rehydrate so funding accrues next tick
+    strat.rehydrate(
+        positions=[
+            OpenPositionSnapshot(
+                coin="BTC",
+                opened_at=T0,
+                spot_qty=10.0,
+                perp_qty=10.0,
+                entry_spot_price=100.0,
+                entry_perp_price=100.0,
+                funding_collected=0.0,
+                fees_paid=0.0,
+            )
+        ],
+        accumulators=AccumulatorsSnapshot(
+            cash=1000.0,
+            realized_pnl_cum=0.0,
+            funding_cum=0.0,
+            fees_cum=0.0,
+        ),
+    )
+
+    t1 = T0 + HOUR
+    await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
+    await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
+
+    # Funding delta = 10 * 100 * 0.0001 = 0.1
+    expected_funding = strat._funding_cum
+    assert expected_funding == pytest.approx(0.1, abs=1e-9)
+    ps.set_funding_cum.assert_awaited_with(pytest.approx(expected_funding))
+    # Called once per hour tick, not once per coin
+    assert ps.set_funding_cum.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_strategy_a_without_portfolio_service_works_as_before(mocker):
+    """Constructing without portfolio_service runs a full tick without errors."""
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
+    executor = make_executor(
+        mocker,
+        open_results=[make_paired_open_ok(perp_fill, spot_fill)],
+    )
+
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=3, signal_window_hours=1),
+        executor,
+    )
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    assert report.opened == ("BTC",)
+    assert strat.fees_cum == pytest.approx(0.105, abs=1e-6)
