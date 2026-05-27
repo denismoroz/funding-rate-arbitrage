@@ -137,6 +137,11 @@ class Position(Base):
     # TwoPhaseDynamic strategy fields:
     position_min_hold_hours: Mapped[int] = mapped_column(default=0)
     consec_negative_hours: Mapped[int] = mapped_column(default=0)
+    # F1.2 portfolio columns:
+    exchange: Mapped[str] = mapped_column(default="hyperliquid", nullable=False)
+    state: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    notional_usd: Mapped[float] = mapped_column(default=0.0)
+    margin_reserve_usd: Mapped[float] = mapped_column(default=0.0)
 
 
 class Fill(Base):
