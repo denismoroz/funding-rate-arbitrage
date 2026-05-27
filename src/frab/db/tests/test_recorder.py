@@ -478,6 +478,59 @@ async def test_save_tick_report_opens_position_with_fills(session_factory):
     assert "BTC" in rec._open_positions
 
 
+async def test_save_tick_report_open_reuses_existing_position_row(session_factory):
+    """F1.4a: if PortfolioService.apply_open inserted the OPEN Position row
+    earlier in the tick, save_tick_report must NOT insert a duplicate —
+    it reuses the existing row and only attaches Fill records."""
+    exc_id, coin_map = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
+    strat_id = await _seed_strategy(session_factory)
+
+    # Pre-seed an OPEN Position row as if PortfolioService.apply_open ran
+    async with session_scope(session_factory) as s:
+        pre = Position(
+            strategy_id=strat_id,
+            market_id=coin_map["BTC"],
+            mode=PositionMode.LIVE,
+            status=PositionStatus.OPEN,
+            opened_at=_TS,
+            spot_units=0.1,
+            perp_units=-0.1,
+            entry_spot_price=30_000.0,
+            entry_perp_price=30_010.0,
+            fees_paid=0.0,
+            realized_pnl=0.0,
+            funding_collected=0.0,
+        )
+        s.add(pre)
+        await s.flush()
+        pre_id = pre.id
+
+    rec = DbRecorder(session_factory, strategy_id=strat_id, exchange_id=exc_id)
+    await rec.prime()
+
+    spot_buy = _make_spot_buy("BTC")
+    perp_sell = _make_perp_sell("BTC")
+    report = TickReport(
+        ts=_TS,
+        signals=(),
+        fills=(spot_buy, perp_sell),
+        opened=("BTC",),
+        closed=(),
+    )
+    await rec.save_tick_report(report)
+
+    async with session_scope(session_factory) as s:
+        positions = (await s.execute(select(Position))).scalars().all()
+        assert len(positions) == 1, "must not insert a second Position row"
+        assert positions[0].id == pre_id
+
+        fills = (await s.execute(select(Fill))).scalars().all()
+        assert len(fills) == 2, "fill records still written against the pre-existing row"
+        assert all(f.position_id == pre_id for f in fills)
+
+    assert rec._open_positions["BTC"] == pre_id
+
+
 async def test_save_tick_report_unknown_open_coin_skipped(session_factory, caplog):
     exc_id, _ = await _seed_exchange_and_markets(session_factory, coins=["BTC"])
     strat_id = await _seed_strategy(session_factory)

@@ -206,22 +206,36 @@ class DbRecorder:
                     )
                     continue
 
-                pos = Position(
-                    strategy_id=self._strategy_id,
-                    market_id=market_id,
-                    mode=self._mode,
-                    status=PositionStatus.OPEN,
-                    opened_at=report.ts,
-                    spot_units=spot_fill.qty,
-                    perp_units=-perp_fill.qty,
-                    entry_spot_price=spot_fill.price,
-                    entry_perp_price=perp_fill.price,
-                    fees_paid=spot_fill.fee + perp_fill.fee,
-                    realized_pnl=0.0,
-                    funding_collected=0.0,
+                # F1.4a: PortfolioService.apply_open may have inserted the
+                # Position row already this tick. Reuse it if present;
+                # otherwise insert (legacy path for tests + transitional
+                # configurations where the strategy doesn't wire
+                # portfolio_service).
+                existing_q = await session.execute(
+                    select(Position).where(
+                        Position.strategy_id == self._strategy_id,
+                        Position.market_id == market_id,
+                        Position.status == PositionStatus.OPEN,
+                    )
                 )
-                session.add(pos)
-                await session.flush()
+                pos = existing_q.scalar_one_or_none()
+                if pos is None:
+                    pos = Position(
+                        strategy_id=self._strategy_id,
+                        market_id=market_id,
+                        mode=self._mode,
+                        status=PositionStatus.OPEN,
+                        opened_at=report.ts,
+                        spot_units=spot_fill.qty,
+                        perp_units=-perp_fill.qty,
+                        entry_spot_price=spot_fill.price,
+                        entry_perp_price=perp_fill.price,
+                        fees_paid=spot_fill.fee + perp_fill.fee,
+                        realized_pnl=0.0,
+                        funding_collected=0.0,
+                    )
+                    session.add(pos)
+                    await session.flush()
 
                 self._open_positions[coin] = pos.id
 
