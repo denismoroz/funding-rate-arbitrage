@@ -101,7 +101,7 @@ def _payment(coin: str, ts: datetime, usdc: float, hash_: str = "0xH") -> Fundin
     return FundingPayment(coin=coin, ts=ts, usdc=usdc, szi=-0.00015, rate=1.25e-5, hash=hash_)
 
 
-def _make(session_factory, market_data, bus, *, strategy=None, strategy_id=None) -> FundingReconciler:
+def _make(session_factory, market_data, bus, *, portfolio_service=None, strategy_id=None) -> FundingReconciler:
     return FundingReconciler(
         session_factory=session_factory,
         market_data=market_data,
@@ -109,7 +109,7 @@ def _make(session_factory, market_data, bus, *, strategy=None, strategy_id=None)
         bus=bus,
         lookback_hours=24,
         clock_fn=lambda: _NOW,
-        strategy=strategy,
+        portfolio_service=portfolio_service,
         strategy_id=strategy_id,
     )
 
@@ -240,12 +240,13 @@ async def test_strategy_funding_cum_synced(session_factory, mocker):
         _payment("BTC", _T0 + timedelta(hours=1), 0.0009),
     ])
 
-    strat = mocker.MagicMock()
-    rec = _make(session_factory, md, bus, strategy=strat, strategy_id=strategy_id)
+    mock_portfolio_service = mocker.MagicMock()
+    mock_portfolio_service.set_funding_cum = mocker.AsyncMock()
+    rec = _make(session_factory, md, bus, portfolio_service=mock_portfolio_service, strategy_id=strategy_id)
     await rec.run_once()
 
-    strat.set_funding_cum.assert_called_once()
-    arg = strat.set_funding_cum.call_args.args[0]
+    mock_portfolio_service.set_funding_cum.assert_awaited_once()
+    arg = mock_portfolio_service.set_funding_cum.call_args.args[0]
     assert arg == pytest.approx(0.0009)
 
 

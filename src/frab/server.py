@@ -13,6 +13,7 @@ from hyperliquid.utils import constants
 from sqlalchemy import select
 
 from frab.api.app import create_app
+from frab.application.portfolio_service import PortfolioService
 from frab.db.models import (
     EquitySnapshot,
     Exchange,
@@ -243,7 +244,7 @@ def _build_fee_reconciler(
     session_factory,
     market_data,
     bus: EventBus,
-    strategy: "StrategyBase | None" = None,
+    portfolio_service: "PortfolioService | None" = None,
     strategy_id: int | None = None,
 ) -> "FeeReconciler | None":
     """Return a FeeReconciler for live trading."""
@@ -252,7 +253,7 @@ def _build_fee_reconciler(
         market_data=market_data,
         user_address=settings.hl_account_address,
         bus=bus,
-        strategy=strategy,
+        portfolio_service=portfolio_service,
         strategy_id=strategy_id,
     )
 
@@ -302,7 +303,7 @@ def _build_funding_reconciler(
     session_factory,
     market_data,
     bus: EventBus,
-    strategy: "StrategyBase | None" = None,
+    portfolio_service: "PortfolioService | None" = None,
     strategy_id: int | None = None,
 ) -> "FundingReconciler | None":
     """Return a FundingReconciler for live trading."""
@@ -311,7 +312,7 @@ def _build_funding_reconciler(
         market_data=market_data,
         user_address=settings.hl_account_address,
         bus=bus,
-        strategy=strategy,
+        portfolio_service=portfolio_service,
         strategy_id=strategy_id,
     )
 
@@ -568,13 +569,36 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         await _rehydrate_strategy_from_db(session_factory, strategy, strategy_id)
         await reconcile_scan(session_factory, strategy_id, bus)   # ← new
 
+        # Build PortfolioService — seeded from current strategy state so that
+        # the initial cash is consistent with what strategy already tracks.
+        from frab.domain.exchange import Exchange as DomainExchange
+        from sqlalchemy import func
+        strat_cash = float(getattr(strategy, "cash", 0.0))
+        strat_perp_cash = float(getattr(strategy, "perp_cash", 0.0))
+        async with session_scope(session_factory) as _ps_session:
+            committed = (await _ps_session.execute(
+                select(func.coalesce(
+                    func.sum(Position.notional_usd + Position.margin_reserve_usd), 0.0
+                ))
+                .where(Position.strategy_id == strategy_id)
+                .where(Position.status == PositionStatus.OPEN)
+            )).scalar() or 0.0
+        initial_cash = strat_cash + strat_perp_cash + float(committed)
+        portfolio_service = PortfolioService(
+            session_factory=session_factory,
+            strategy_id=strategy_id,
+            initial_cash_per_exchange={DomainExchange.HYPERLIQUID: initial_cash},
+        )
+        await portfolio_service.rehydrate_from_db()
+        app.state.portfolio_service = portfolio_service
+
         # Wire fee reconciler for live mode; paper mode has no real fills to reconcile.
         fee_reconciler = _build_fee_reconciler(
             settings,
             session_factory=session_factory,
             market_data=market_data,
             bus=bus,
-            strategy=strategy,
+            portfolio_service=portfolio_service,
             strategy_id=strategy_id,
         )
 
@@ -584,7 +608,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             session_factory=session_factory,
             market_data=market_data,
             bus=bus,
-            strategy=strategy,
+            portfolio_service=portfolio_service,
             strategy_id=strategy_id,
         )
 
@@ -646,6 +670,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             app.state.strategy = None
             app.state.strategy_id = None
             app.state.engine = None
+            app.state.portfolio_service = None
             engine.stop()
             await asyncio.gather(engine_task, return_exceptions=True)
             await sink.stop()

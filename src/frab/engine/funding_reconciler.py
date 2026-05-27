@@ -15,11 +15,11 @@ from typing import Callable
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from frab.application.portfolio_service import PortfolioService
 from frab.db.models import Market, Position, PositionStatus
 from frab.db.session import session_scope
 from frab.events.bus import Event, EventBus
 from frab.exchanges.base import FundingPayment
-from frab.strategies.base import Strategy
 
 logger = structlog.get_logger(__name__)
 
@@ -54,7 +54,7 @@ class FundingReconciler:
         bus: EventBus,
         lookback_hours: int = LOOKBACK_HOURS_DEFAULT,
         clock_fn: Callable[[], datetime] | None = None,
-        strategy: Strategy | None = None,
+        portfolio_service: PortfolioService | None = None,
         strategy_id: int | None = None,
     ) -> None:
         self._session_factory = session_factory
@@ -63,7 +63,7 @@ class FundingReconciler:
         self._bus = bus
         self._lookback_hours = lookback_hours
         self._clock_fn = clock_fn if clock_fn is not None else (lambda: datetime.now(UTC))
-        self._strategy = strategy
+        self._portfolio_service = portfolio_service
         self._strategy_id = strategy_id
 
     async def run_once(self) -> FundingReconcileReport:
@@ -139,14 +139,14 @@ class FundingReconciler:
                 pos.funding_collected = matched_sum
                 positions_updated += 1
 
-            # Sync strategy's running funding counter from DB authoritative SUM.
-            if self._strategy is not None and self._strategy_id is not None:
+            # Sync portfolio_service's running funding counter from DB authoritative SUM.
+            if self._portfolio_service is not None and self._strategy_id is not None:
                 sum_stmt = (
                     select(func.sum(Position.funding_collected))
                     .where(Position.strategy_id == self._strategy_id)
                 )
                 total = (await session.execute(sum_stmt)).scalar() or 0.0
-                self._strategy.set_funding_cum(float(total))
+                await self._portfolio_service.set_funding_cum(float(total))
 
         # Count unmatched: payments with no position match at all.
         # Exclude pre-history: payments whose ts predates our earliest tracked

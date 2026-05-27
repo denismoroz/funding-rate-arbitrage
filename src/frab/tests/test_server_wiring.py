@@ -390,29 +390,29 @@ def test_build_fee_reconciler_uses_account_address(mocker):
 
 
 def test_build_fee_reconciler_forwards_strategy_and_id(mocker):
-    """strategy and strategy_id are stored on the returned FeeReconciler."""
+    """portfolio_service and strategy_id are stored on the returned FeeReconciler."""
     s = Settings(
         hl_network="mainnet",
         hl_private_key="0x" + "a" * 64,
         hl_account_address="0x" + "b" * 40,
         _env_file=None,
     )
-    mock_strategy = mocker.MagicMock()
+    mock_ps = mocker.MagicMock()
     result = _build_fee_reconciler(
         s,
         session_factory=mocker.MagicMock(),
         market_data=mocker.MagicMock(),
         bus=mocker.MagicMock(),
-        strategy=mock_strategy,
+        portfolio_service=mock_ps,
         strategy_id=42,
     )
     assert isinstance(result, FeeReconciler)
-    assert result._strategy is mock_strategy
+    assert result._portfolio_service is mock_ps
     assert result._strategy_id == 42
 
 
 def test_build_fee_reconciler_strategy_defaults_to_none(mocker):
-    """Omitting strategy/strategy_id leaves them as None (backwards-compat)."""
+    """Omitting portfolio_service/strategy_id leaves them as None (backwards-compat)."""
     s = Settings(
         hl_network="testnet",
         hl_private_key="0x" + "a" * 64,
@@ -426,7 +426,7 @@ def test_build_fee_reconciler_strategy_defaults_to_none(mocker):
         bus=mocker.MagicMock(),
     )
     assert isinstance(result, FeeReconciler)
-    assert result._strategy is None
+    assert result._portfolio_service is None
     assert result._strategy_id is None
 
 

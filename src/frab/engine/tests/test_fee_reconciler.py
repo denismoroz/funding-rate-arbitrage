@@ -514,7 +514,8 @@ async def test_strategy_fees_cum_updated_after_reconcile(session_factory, mocker
     md = mocker.AsyncMock()
     md.fetch_user_fills.return_value = hl_fills
 
-    mock_strategy = mocker.MagicMock()
+    mock_portfolio_service = mocker.MagicMock()
+    mock_portfolio_service.set_fees_cum = mocker.AsyncMock()
     reconciler = FeeReconciler(
         session_factory=session_factory,
         market_data=md,
@@ -522,23 +523,23 @@ async def test_strategy_fees_cum_updated_after_reconcile(session_factory, mocker
         bus=bus,
         lookback_hours=24,
         clock_fn=lambda: _NOW,
-        strategy=mock_strategy,
+        portfolio_service=mock_portfolio_service,
         strategy_id=strat_id,
     )
 
     report = await reconciler.run_once()
 
     assert report.matched == 1
-    mock_strategy.set_fees_cum.assert_called_once_with(5.0)
+    mock_portfolio_service.set_fees_cum.assert_awaited_once_with(5.0)
 
 
 # ---------------------------------------------------------------------------
-# Test 9: backwards-compat — no strategy/strategy_id, no error, no setter call
+# Test 9: backwards-compat — no portfolio_service/strategy_id, no error, no setter call
 # ---------------------------------------------------------------------------
 
 
 async def test_no_strategy_no_setter_call(session_factory, mocker):
-    """FeeReconciler without strategy/strategy_id still works; set_fees_cum never called."""
+    """FeeReconciler without portfolio_service/strategy_id still works; set_fees_cum never called."""
     bus = EventBus()
 
     _, btc_market_id, strat_id = await _seed_base(session_factory, coin="BTC")
@@ -568,6 +569,6 @@ async def test_no_strategy_no_setter_call(session_factory, mocker):
     report = await reconciler.run_once()
 
     assert report.matched == 1
-    # No AttributeError — reconciler has no strategy to call
-    assert reconciler._strategy is None
+    # No AttributeError — reconciler has no portfolio_service to call
+    assert reconciler._portfolio_service is None
     assert reconciler._strategy_id is None
