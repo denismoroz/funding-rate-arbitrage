@@ -43,10 +43,12 @@ async def api_client_with_executor(session_factory):
     """Return a factory: api_client_with_executor(executor, strategy, strategy_id)."""
     created: list[AsyncClient] = []
 
-    async def _make(executor, strategy=None, strategy_id=None):
+    async def _make(executor, strategy=None, strategy_id=None, portfolio_service=None):
         app = create_app(session_factory, executor=executor)
         app.state.strategy = strategy
         app.state.strategy_id = strategy_id
+        if portfolio_service is not None:
+            app.state.portfolio_service = portfolio_service
         client = AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test", follow_redirects=True
         )

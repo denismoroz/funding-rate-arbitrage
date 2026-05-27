@@ -72,7 +72,17 @@ async def _synthesize_paper_wallet(
         if abs(pos.perp_units) > 0:
             perp_unrealized += abs(pos.perp_units) * (pos.entry_perp_price - mark)
 
-    usdc_spot = strategy.cash
+    # Read free cash from portfolio_service (canonical post-F1.4).
+    # Falls back to strategy.cash for older test wirings that don't set
+    # app.state.portfolio_service.
+    ps = getattr(request.app.state, "portfolio_service", None)
+    if ps is not None:
+        from frab.domain.exchange import Exchange  # local import to avoid module reorg
+        portfolio = await ps.current()
+        wallet = portfolio.wallet_per_exchange.get(Exchange.HYPERLIQUID)
+        usdc_spot = wallet.available_usdc if wallet is not None else float(strategy.cash)
+    else:
+        usdc_spot = strategy.cash
     spot_tokens_usd = sum(b.usd_value for b in spot_balances)
     # perp_account_value for paper: cash + perp unrealized (mirrors how HL accounts work)
     perp_account_value = usdc_spot + perp_unrealized

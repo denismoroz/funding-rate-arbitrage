@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from frab.db.models import Event as DbEvent, Strategy
 from frab.db.session import session_scope
+from frab.domain.exchange import Exchange as DomainExchange
+from frab.domain.portfolio import Portfolio
+from frab.domain.position import Position as DomainPosition
+from frab.domain.wallet import WalletInfo
 from frab.engine.margin_manager import MarginManager, PerCoinSpec
 
 
@@ -69,15 +73,56 @@ def _fake_position(spot_qty: float, perp_qty: float, entry_spot: float, entry_pe
     )
 
 
+def _make_portfolio_service(
+    *,
+    perp_cash: float = 0.0,
+    positions: tuple[DomainPosition, ...] = (),
+) -> MagicMock:
+    """Build a MagicMock portfolio_service whose current() returns a Portfolio."""
+    wallet = WalletInfo(
+        exchange=DomainExchange.HYPERLIQUID,
+        available_usdc=0.0,
+        reserved_usdc=perp_cash,
+        total_value_usd=perp_cash,
+    )
+    portfolio = Portfolio(
+        ts=_utc(),
+        positions=positions,
+        wallet_per_exchange={DomainExchange.HYPERLIQUID: wallet},
+        fees_cum=0.0,
+        funding_cum=0.0,
+        realized_pnl_cum=0.0,
+    )
+    ps = MagicMock()
+    ps.current = AsyncMock(return_value=portfolio)
+    return ps
+
+
+def _make_domain_position(
+    coin: str = "BTC",
+    notional_usd: float = 100.0,
+    margin_reserve_usd: float = 30.0,
+) -> DomainPosition:
+    return DomainPosition(
+        exchange=DomainExchange.HYPERLIQUID,
+        coin=coin,
+        spot_qty=1.0,
+        perp_qty=1.0,
+        notional_usd=notional_usd,
+        margin_reserve_usd=margin_reserve_usd,
+        entry_spot_price=100.0,
+        entry_perp_price=100.0,
+        opened_at=_utc(),
+    )
+
+
 def _fake_strategy_with_position(mgr: MarginManager, mark: float = 100.0):
     from frab.engine.margin_manager import OpenPosition
 
     strat = MagicMock()
     strat._margin_manager = mgr
     strat._last_quotes = {"BTC": _fake_quote(mark)}
-    strat._positions = {"BTC": _fake_position(1.0, 1.0, 100.0, 100.0)}
     strat._params = SimpleNamespace(concurrency_cap=3)
-    strat.perp_cash = 30.0
     strat.n_skipped_opens_capital = 0
     # _open_position_snapshots_for_manager returns OpenPosition list
     strat._open_position_snapshots_for_manager = MagicMock(return_value=[
@@ -98,9 +143,11 @@ async def test_margin_status_returns_disabled_when_no_manager(
     strategy_id = await _seed_strategy(session_factory, name="no_mgr")
     strat = MagicMock()
     strat._margin_manager = None
-    strat._positions = {}
     strat._params = SimpleNamespace(concurrency_cap=3)
-    client = await api_client_with_executor(None, strategy=strat, strategy_id=strategy_id)
+    ps = _make_portfolio_service(perp_cash=0.0, positions=())
+    client = await api_client_with_executor(
+        None, strategy=strat, strategy_id=strategy_id, portfolio_service=ps,
+    )
 
     resp = await client.get(f"/api/equity/margin?strategy_id={strategy_id}")
     assert resp.status_code == 200
@@ -134,8 +181,14 @@ async def test_margin_status_enabled_and_healthy(
     mgr = _build_manager()
     strat = _fake_strategy_with_position(mgr, mark=100.0)
     strategy_id = await _seed_strategy(session_factory, name="healthy")
+    ps = _make_portfolio_service(
+        perp_cash=30.0,
+        positions=(_make_domain_position(notional_usd=100.0, margin_reserve_usd=30.0),),
+    )
 
-    client = await api_client_with_executor(None, strategy=strat, strategy_id=strategy_id)
+    client = await api_client_with_executor(
+        None, strategy=strat, strategy_id=strategy_id, portfolio_service=ps,
+    )
     resp = await client.get(f"/api/equity/margin?strategy_id={strategy_id}")
 
     assert resp.status_code == 200
@@ -166,8 +219,14 @@ async def test_margin_status_enabled_adverse_move(
     mgr = _build_manager()
     strat = _fake_strategy_with_position(mgr, mark=122.0)
     strategy_id = await _seed_strategy(session_factory, name="adverse")
+    ps = _make_portfolio_service(
+        perp_cash=30.0,
+        positions=(_make_domain_position(notional_usd=100.0, margin_reserve_usd=30.0),),
+    )
 
-    client = await api_client_with_executor(None, strategy=strat, strategy_id=strategy_id)
+    client = await api_client_with_executor(
+        None, strategy=strat, strategy_id=strategy_id, portfolio_service=ps,
+    )
     resp = await client.get(f"/api/equity/margin?strategy_id={strategy_id}")
 
     assert resp.status_code == 200
@@ -192,8 +251,14 @@ async def test_margin_status_last_event_present(
         session_factory, kind="margin.top_up", level="WARNING",
         coin="BTC", amount=4.2, ratio=1.31,
     )
+    ps = _make_portfolio_service(
+        perp_cash=30.0,
+        positions=(_make_domain_position(notional_usd=100.0, margin_reserve_usd=30.0),),
+    )
 
-    client = await api_client_with_executor(None, strategy=strat, strategy_id=strategy_id)
+    client = await api_client_with_executor(
+        None, strategy=strat, strategy_id=strategy_id, portfolio_service=ps,
+    )
     resp = await client.get(f"/api/equity/margin?strategy_id={strategy_id}")
 
     assert resp.status_code == 200

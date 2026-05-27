@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from frab.api.deps import get_session
 from frab.api.schemas import MarginEventBrief, MarginStatusOut
 from frab.db.models import Event as DbEvent
+from frab.domain.exchange import Exchange
 
 router = APIRouter()
 
@@ -69,13 +70,21 @@ async def get_margin_status(
 
     last_event = await _fetch_last_margin_event(session)
 
+    # Read portfolio state from canonical source.
+    portfolio = await request.app.state.portfolio_service.current()
+    hl_wallet = portfolio.wallet_per_exchange.get(Exchange.HYPERLIQUID)
+    n_open_positions = len(portfolio.open_coins(Exchange.HYPERLIQUID))
+    perp_cash = float(hl_wallet.reserved_usdc) if hl_wallet is not None else 0.0
+    budget_committed = portfolio.total_committed(Exchange.HYPERLIQUID)
+
     mgr = getattr(strategy, "_margin_manager", None)
     if mgr is None:
-        n_open = len(getattr(strategy, "_positions", {}))
         params = getattr(strategy, "_params", None)
         return MarginStatusOut(
             **{**_DEFAULTS_WHEN_DISABLED,
-               "n_open_positions": n_open,
+               "n_open_positions": n_open_positions,
+               "perp_cash": perp_cash,
+               "budget_committed": budget_committed,
                "concurrency_cap": int(getattr(params, "concurrency_cap", 0)),
                "last_event": last_event},
         )
@@ -83,7 +92,6 @@ async def get_margin_status(
     # Pull live marks from in-memory _last_quotes; positions without a quote
     # are skipped from the maintenance/unrealized totals.
     last_quotes = getattr(strategy, "_last_quotes", {})
-    positions = getattr(strategy, "_positions", {})
     opens = strategy._open_position_snapshots_for_manager()
     opens_with_marks = [p for p in opens if p.coin in last_quotes]
     marks = {p.coin: last_quotes[p.coin].mark for p in opens_with_marks}
@@ -95,17 +103,11 @@ async def get_margin_status(
         total_maint = 0.0
         unrealized = 0.0
 
-    perp_cash = float(strategy.perp_cash)
     effective_equity = perp_cash + unrealized
     if total_maint > 0:
         ratio: float | None = effective_equity / total_maint
     else:
         ratio = None
-
-    # Budget committed: spot legs (entry price) + locked perp margin.
-    budget_committed = sum(
-        p.spot_qty * p.entry_spot_price for p in positions.values()
-    ) + perp_cash
 
     params = strategy._params
     return MarginStatusOut(
@@ -119,7 +121,7 @@ async def get_margin_status(
         healthy_ratio=mgr.healthy_ratio,
         budget_committed=budget_committed,
         budget_cap_usd=mgr.budget_cap_usd,
-        n_open_positions=len(positions),
+        n_open_positions=n_open_positions,
         concurrency_cap=int(params.concurrency_cap),
         n_skipped_opens_capital=int(strategy.n_skipped_opens_capital),
         last_event=last_event,
