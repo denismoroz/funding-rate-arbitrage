@@ -34,6 +34,8 @@ from frab.engine.margin_manager import MarginManager, PerCoinSpec
 from frab.engine.reconcile import scan as reconcile_scan
 from frab.events.bus import EventBus, EventDbSink
 from frab.exchanges.atomic import AtomicExecutor
+from frab.exchanges.dry_run import DryRunAdapterGuard
+from frab.exchanges.hyperliquid_adapter import HyperliquidAdapter
 from frab.exchanges.base import Executor, FundingTick
 from frab.exchanges.hyperliquid import HLMarketData
 from frab.exchanges.hyperliquid_live import LiveHLExecutor
@@ -484,6 +486,22 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             sleep_between_attempts=(2.0, 5.0),
         )
 
+        # F2.5: build HyperliquidAdapter by composing the primitives we just
+        # built. In dry-run, wrap with DryRunAdapterGuard so write methods
+        # are intercepted at the infrastructure level (defence in depth).
+        # F2.7 wires consumers (wallet route, future strategy migration)
+        # to read from app.state.adapter; F2.8 retires _build_executor.
+        adapter = HyperliquidAdapter(
+            market_data=market_data,
+            live_executor=executor,
+            atomic=atomic,
+            network=settings.hl_network,
+            user_address=settings.hl_account_address,
+        )
+        if dry_run:
+            adapter = DryRunAdapterGuard(adapter)
+        app.state.adapter = adapter
+
         spec = get_strategy_spec(settings.strategy_name)
         params_override = _build_params_override(settings)
         margin_manager = _build_margin_manager(settings)
@@ -632,6 +650,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             app.state.strategy_id = None
             app.state.engine = None
             app.state.portfolio_service = None
+            app.state.adapter = None
             engine.stop()
             await asyncio.gather(engine_task, return_exceptions=True)
             await sink.stop()
