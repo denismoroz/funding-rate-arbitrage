@@ -1034,6 +1034,8 @@ async def test_open_position_mirrors_fees_to_portfolio_service(mocker):
     ps = mocker.MagicMock()
     ps.set_fees_cum = mocker.AsyncMock()
     ps.set_funding_cum = mocker.AsyncMock()
+    ps.apply_open = mocker.AsyncMock()
+    ps.apply_close = mocker.AsyncMock()
 
     perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
     spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
@@ -1136,6 +1138,8 @@ async def test_set_portfolio_service_attaches_late(mocker):
     ps = mocker.MagicMock()
     ps.set_fees_cum = mocker.AsyncMock()
     ps.set_funding_cum = mocker.AsyncMock()
+    ps.apply_open = mocker.AsyncMock()
+    ps.apply_close = mocker.AsyncMock()
 
     perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
     spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
@@ -1153,3 +1157,127 @@ async def test_set_portfolio_service_attaches_late(mocker):
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
 
     ps.set_fees_cum.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# F1.4b: apply_open / apply_close wired to PortfolioService
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_open_position_calls_portfolio_service_apply_open(mocker):
+    """After _open_position succeeds, apply_open is awaited with correct notional and margin."""
+    from frab.engine.margin_manager import MarginManager, PerCoinSpec
+
+    mgr = MarginManager(
+        per_coin_params={
+            "BTC": PerCoinSpec(position_size_usd=1000.0, leverage=10, maint_ratio=0.01),
+        },
+        margin_buffer_x=3.0,
+        top_up_trigger=2.0,
+        healthy_ratio=3.0,
+        budget_cap_usd=10000.0,
+    )
+    ps = mocker.MagicMock()
+    ps.set_fees_cum = mocker.AsyncMock()
+    ps.set_funding_cum = mocker.AsyncMock()
+    ps.apply_open = mocker.AsyncMock()
+    ps.apply_close = mocker.AsyncMock()
+
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
+    executor = make_executor(mocker, open_results=[make_paired_open_ok(perp_fill, spot_fill)])
+
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=3, signal_window_hours=1),
+        executor,
+        portfolio_service=ps,
+        margin_manager=mgr,
+    )
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    ps.apply_open.assert_awaited_once()
+    call_arg = ps.apply_open.call_args.args[0]
+    assert call_arg.coin == "BTC"
+    assert call_arg.notional_usd == pytest.approx(10.0 * 100.0)
+    expected_margin = mgr.compute_required_margin_for_open("BTC")
+    assert call_arg.margin_reserve_usd == pytest.approx(expected_margin)
+    assert call_arg.fees_paid == pytest.approx(0.035 + 0.07)
+
+
+@pytest.mark.asyncio
+async def test_open_position_without_margin_manager_zero_margin(mocker):
+    """Without a margin_manager, apply_open is called with margin_reserve_usd=0."""
+    ps = mocker.MagicMock()
+    ps.set_fees_cum = mocker.AsyncMock()
+    ps.set_funding_cum = mocker.AsyncMock()
+    ps.apply_open = mocker.AsyncMock()
+    ps.apply_close = mocker.AsyncMock()
+
+    perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
+    spot_fill = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
+    executor = make_executor(mocker, open_results=[make_paired_open_ok(perp_fill, spot_fill)])
+
+    strat = StrategyA(
+        StrategyAParams(coins=("BTC",), concurrency_cap=3, signal_window_hours=1),
+        executor,
+        portfolio_service=ps,
+    )
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    ps.apply_open.assert_awaited_once()
+    call_arg = ps.apply_open.call_args.args[0]
+    assert call_arg.margin_reserve_usd == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_close_position_calls_portfolio_service_apply_close(mocker):
+    """After _close_position succeeds, apply_close is awaited with released_notional = qty * exit_price."""
+    ps = mocker.MagicMock()
+    ps.set_fees_cum = mocker.AsyncMock()
+    ps.set_funding_cum = mocker.AsyncMock()
+    ps.apply_open = mocker.AsyncMock()
+    ps.apply_close = mocker.AsyncMock()
+
+    perp_open = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.035)
+    spot_open = _fill("BTC", Leg.SPOT, Side.BUY, qty=10.0, price=100.0, fee=0.07)
+    executor = make_executor(mocker, open_results=[make_paired_open_ok(perp_open, spot_open)])
+
+    strat = StrategyA(
+        StrategyAParams(
+            coins=("BTC",),
+            concurrency_cap=1,
+            signal_window_hours=1,
+            min_hold_hours=120,
+            position_size_usdc=1000.0,
+        ),
+        executor,
+        portfolio_service=ps,
+    )
+
+    await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
+    await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
+
+    assert "BTC" in strat.open_positions()
+
+    close_ts = T0 + 121 * HOUR
+    await strat.on_minute_tick(close_ts, {"BTC": _quote("BTC", mark=110.0)})
+
+    perp_close = _fill("BTC", Leg.PERP, Side.BUY, qty=10.0, price=110.0, fee=0.0385)
+    spot_close = _fill("BTC", Leg.SPOT, Side.SELL, qty=10.0, price=110.0, fee=0.077)
+    strat._executor.close_paired = mocker.AsyncMock(
+        return_value=make_paired_close_ok(perp_close, spot_close)
+    )
+
+    report = await strat.on_hour_tick(close_ts, {"BTC": _funding("BTC", close_ts, -0.0001)})
+
+    assert report.closed == ("BTC",)
+    ps.apply_close.assert_awaited_once()
+    call_arg = ps.apply_close.call_args.args[0]
+    assert call_arg.coin == "BTC"
+    # released_notional = spot_qty * exit_price = 10 * 110 = 1100
+    assert call_arg.released_notional_usd == pytest.approx(10.0 * 110.0)
+    assert call_arg.released_margin_usd == pytest.approx(0.0)

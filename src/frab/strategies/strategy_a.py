@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from frab.domain.exchange import Exchange as DomainExchange
+from frab.domain.position import ClosedPosition as DomainClosedPosition, Position as DomainPosition
 from frab.engine.signals import Decision, decide
 from frab.engine.state import MarketState
 from frab.exchanges.atomic import AtomicExecutor
@@ -435,6 +437,25 @@ class StrategyA(Strategy):
             entry_perp_price=fill_perp.price,
             fees_paid=fill_spot.fee + fill_perp.fee,
         )
+        if self._portfolio_service is not None:
+            margin_reserve = 0.0
+            if self._margin_manager is not None and coin in self._margin_manager._params:
+                margin_reserve = self._margin_manager.compute_required_margin_for_open(coin)
+            domain_pos = DomainPosition(
+                exchange=DomainExchange.HYPERLIQUID,
+                coin=coin,
+                spot_qty=fill_spot.qty,
+                perp_qty=fill_perp.qty,
+                notional_usd=fill_spot.qty * fill_spot.price,
+                margin_reserve_usd=margin_reserve,
+                entry_spot_price=fill_spot.price,
+                entry_perp_price=fill_perp.price,
+                opened_at=now,
+                funding_collected=0.0,
+                fees_paid=fill_spot.fee + fill_perp.fee,
+                state={},
+            )
+            await self._portfolio_service.apply_open(domain_pos)
         # Preserve existing fill order in the returned list (spot first, then perp)
         # so callers/recorder iteration order is stable.
         return [fill_spot, fill_perp], None
@@ -474,6 +495,23 @@ class StrategyA(Strategy):
         self._fees_cum += fill_spot.fee + fill_perp.fee
         if self._portfolio_service is not None:
             await self._portfolio_service.set_fees_cum(self._fees_cum)
+        if self._portfolio_service is not None:
+            margin_release = 0.0
+            if self._margin_manager is not None and coin in self._margin_manager._params:
+                margin_release = self._margin_manager.compute_required_margin_for_open(coin)
+            realized_spot = (fill_spot.price - pos.entry_spot_price) * pos.spot_qty
+            full_realized = realized_perp + realized_spot
+            closed = DomainClosedPosition(
+                exchange=DomainExchange.HYPERLIQUID,
+                coin=coin,
+                closed_at=now,
+                realized_pnl=full_realized,
+                fees_paid_total=pos.fees_paid + fill_spot.fee + fill_perp.fee,
+                funding_collected_total=pos.funding_collected,
+                released_margin_usd=margin_release,
+                released_notional_usd=pos.spot_qty * fill_spot.price,
+            )
+            await self._portfolio_service.apply_close(closed)
         return [fill_spot, fill_perp], True
 
     def _select_weakest_open(self) -> str | None:
