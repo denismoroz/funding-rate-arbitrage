@@ -119,26 +119,62 @@ class TwoPhaseStrategy:
 
     # ── State machine ─────────────────────────────────────────────────────────
 
+    _STEADY_STATES = frozenset({FarbState.OPEN, FarbState.CLOSED, FarbState.FAILED})
+    _ADVANCE_MAX_ITERS = 20
+
     async def _advance_one(self, fp: FarbPosition) -> None:
-        """Dispatch on fp.state and take one step. Errors are caught and logged."""
-        try:
-            await self._dispatch(fp)
-        except StateConflict as exc:
-            logger.warning(
-                "state_conflict farb_position_id=%s: %s — skipping tick",
-                fp.id,
-                exc,
-            )
-        except Exception as exc:  # noqa: BLE001
+        """Drive the state machine in a tight loop until a steady/terminal state.
+
+        Each iteration dispatches the current state, then refetches the FarbPosition
+        from DB (because each handler does its own atomic transition).  Stops when:
+          - current.state is OPEN / CLOSED / FAILED (steady/terminal)
+          - StateConflict — another process is touching this FP; log + break
+          - generic Exception — rollback + mark_failed + break
+          - farb_repo.get returns None (defensive; log error + break)
+          - 20 iterations reached without a terminal state (safety cap; log error)
+        """
+        current = fp
+        for iteration in range(self._ADVANCE_MAX_ITERS):
+            if current.state in self._STEADY_STATES:
+                break
+
+            try:
+                await self._dispatch(current)
+            except StateConflict as exc:
+                logger.warning(
+                    "state_conflict farb_position_id=%s: %s — skipping tick",
+                    current.id,
+                    exc,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "advance_one error farb_position_id=%s state=%s: %s — rolling back",
+                    current.id,
+                    current.state.value,
+                    exc,
+                    exc_info=True,
+                )
+                await self._rollback(current, partial_state=current.state, error=exc)
+                await self.farb_repo.mark_failed(current.id, reason=str(exc))
+                break
+
+            # Refetch to see the new state written by the handler
+            refreshed = await self.farb_repo.get(current.id)
+            if refreshed is None:
+                logger.error(
+                    "advance_one: farb_repo.get returned None for farb_position_id=%s after dispatch — aborting",
+                    current.id,
+                )
+                break
+            current = refreshed
+        else:
+            # Safety cap: loop exhausted without reaching a terminal state
             logger.error(
-                "advance_one error farb_position_id=%s state=%s: %s — rolling back",
-                fp.id,
-                fp.state.value,
-                exc,
-                exc_info=True,
+                "advance_one safety cap hit farb_position_id=%s state=%s — aborting burst",
+                current.id,
+                current.state.value,
             )
-            await self._rollback(fp, partial_state=fp.state, error=exc)
-            await self.farb_repo.mark_failed(fp.id, reason=str(exc))
 
     async def _dispatch(self, fp: FarbPosition) -> None:
         """Route to the correct handler based on fp.state."""

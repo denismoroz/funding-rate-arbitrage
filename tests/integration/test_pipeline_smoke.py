@@ -246,12 +246,9 @@ async def test_pipeline_smoke(session_factory, seeded):
     assert fps[0].coin == "BTC"
     fp_id = fps[0].id
 
-    # ── Advance CHECK_MARGIN → OPEN (6 steps) ────────────────────────────────
-    for _ in range(7):  # extra step to ensure we reach OPEN
-        fp = await farb_repo.get(fp_id)
-        if fp is None or fp.state in (FarbState.OPEN, FarbState.CLOSED, FarbState.FAILED):
-            break
-        await strategy._advance_one(fp)
+    # ── Advance CHECK_MARGIN → OPEN (single burst call) ──────────────────────
+    fp = await farb_repo.get(fp_id)
+    await strategy._advance_one(fp)
 
     fp = await farb_repo.get(fp_id)
     assert fp is not None
@@ -291,12 +288,9 @@ async def test_pipeline_smoke(session_factory, seeded):
     fp = await farb_repo.get(fp_id)
     assert fp.state == FarbState.CLOSING_SHORT, f"Expected CLOSING_SHORT, got {fp.state}"
 
-    # ── Advance CLOSING_SHORT → CLOSED (5 steps) ──────────────────────────────
-    for _ in range(6):
-        fp = await farb_repo.get(fp_id)
-        if fp is None or fp.state in (FarbState.CLOSED, FarbState.FAILED):
-            break
-        await strategy._advance_one(fp)
+    # ── Advance CLOSING_SHORT → CLOSED (single burst call) ───────────────────
+    fp = await farb_repo.get(fp_id)
+    await strategy._advance_one(fp)
 
     fp = await farb_repo.get(fp_id)
     assert fp is not None

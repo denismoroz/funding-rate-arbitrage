@@ -155,9 +155,9 @@ async def _seed_funding_rates(session_factory, exchange_id: int, coin: str,
 # ─── State-machine tests ──────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_01_check_margin_happy(session_factory, farb_repo, strategy_id):
-    """CHECK_MARGIN → OPENING_MARGIN when wallet has funds."""
-    exchange = _make_exchange()
+async def test_01_check_margin_happy(session_factory, farb_repo, strategy_id, exchange_id):
+    """CHECK_MARGIN → bursts to OPEN in a single _advance_one call when wallet has funds."""
+    exchange = _make_exchange(session_factory=session_factory, exchange_id=exchange_id)
     exchange.get_wallet.return_value = 10000.0
 
     strat = _make_strategy(exchange, farb_repo, session_factory)
@@ -168,7 +168,9 @@ async def test_01_check_margin_happy(session_factory, farb_repo, strategy_id):
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.OPENING_MARGIN
+    # Burst walks all the way to OPEN in one call
+    assert updated.state == FarbState.OPEN
+    # required_margin should be carried through state_data
     assert "required_margin" in updated.state_data
 
 
@@ -192,7 +194,7 @@ async def test_02_check_margin_insufficient(session_factory, farb_repo, strategy
 
 @pytest.mark.asyncio
 async def test_03_opening_margin(session_factory, farb_repo, strategy_id, exchange_id):
-    """OPENING_MARGIN → MARGIN_RESERVED: open_position(COLLATERAL) called; set_leg recorded."""
+    """OPENING_MARGIN: open_position(COLLATERAL) called, set_leg recorded; bursts to OPEN."""
     exchange = _make_exchange(session_factory=session_factory, exchange_id=exchange_id)
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.strategy_id = strategy_id
@@ -207,19 +209,19 @@ async def test_03_opening_margin(session_factory, farb_repo, strategy_id, exchan
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.MARGIN_RESERVED
+    # Burst walks from OPENING_MARGIN all the way to OPEN
+    assert updated.state == FarbState.OPEN
     assert updated.margin_position_id is not None
 
-    # Verify exchange was called with COLLATERAL
-    call_args = exchange.open_position.call_args
-    req = call_args[0][0]
-    assert req.instrument == Instrument.COLLATERAL
-    assert req.qty == pytest.approx(required)
+    # Verify exchange was called with COLLATERAL as first open_position call
+    first_call_req = exchange.open_position.call_args_list[0][0][0]
+    assert first_call_req.instrument == Instrument.COLLATERAL
+    assert first_call_req.qty == pytest.approx(required)
 
 
 @pytest.mark.asyncio
 async def test_04_opening_long(session_factory, farb_repo, strategy_id, exchange_id):
-    """OPENING_LONG → LONG_OPENED: exchange called with SPOT/LONG; spot_qty computed correctly."""
+    """OPENING_LONG: exchange called with SPOT/LONG, spot_qty correct; bursts to OPEN."""
     exchange = _make_exchange(session_factory=session_factory, exchange_id=exchange_id)
     price = 50000.0
     strat = _make_strategy(exchange, farb_repo, session_factory)
@@ -234,14 +236,16 @@ async def test_04_opening_long(session_factory, farb_repo, strategy_id, exchange
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.LONG_OPENED
+    # Burst walks from OPENING_LONG through LONG_OPENED → OPENING_SHORT → OPEN
+    assert updated.state == FarbState.OPEN
     assert updated.spot_position_id is not None
 
-    req = exchange.open_position.call_args[0][0]
-    assert req.instrument == Instrument.SPOT
-    assert req.side == Side.LONG
+    # Verify SPOT/LONG was the first open_position call from OPENING_LONG
+    spot_call = exchange.open_position.call_args_list[0][0][0]
+    assert spot_call.instrument == Instrument.SPOT
+    assert spot_call.side == Side.LONG
     expected_qty = strat.params.position_size_usdc / price
-    assert req.qty == pytest.approx(expected_qty)
+    assert spot_call.qty == pytest.approx(expected_qty)
 
 
 @pytest.mark.asyncio
@@ -295,7 +299,7 @@ async def test_06_open_is_noop(session_factory, farb_repo, strategy_id):
 
 @pytest.mark.asyncio
 async def test_07_closing_short(session_factory, farb_repo, strategy_id, exchange_id):
-    """CLOSING_SHORT → SHORT_CLOSED: close_position called on perp_position_id."""
+    """CLOSING_SHORT: close_position called on perp leg; bursts to CLOSED (spot leg also closed)."""
     exchange = _make_exchange()
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.strategy_id = strategy_id
@@ -304,25 +308,36 @@ async def test_07_closing_short(session_factory, farb_repo, strategy_id, exchang
         session_factory, exchange_id=exchange_id, coin="BTC",
         instrument=Instrument.PERP, side=Side.SHORT,
     )
+    spot_pos_id = await make_position(
+        session_factory, exchange_id=exchange_id, coin="BTC",
+        instrument=Instrument.SPOT, side=Side.LONG,
+    )
+    required = strat.params.required_margin()
     fp = await farb_repo.create(
         strategy_id=strategy_id, coin="BTC",
         initial_state=FarbState.CLOSING_SHORT,
+        state_data={"required_margin": required},
     )
     await farb_repo.set_leg(fp.id, instrument=Instrument.PERP, position_id=perp_pos_id)
+    await farb_repo.set_leg(fp.id, instrument=Instrument.SPOT, position_id=spot_pos_id)
     fp = await farb_repo.get(fp.id)
 
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.SHORT_CLOSED
-    exchange.close_position.assert_called_once()
-    closed_pos = exchange.close_position.call_args[0][0]
-    assert closed_pos.id == perp_pos_id
+    # Burst walks CLOSING_SHORT → SHORT_CLOSED → CLOSING_LONG → LONG_CLOSED
+    # → RELEASING_MARGIN → CLOSED
+    assert updated.state == FarbState.CLOSED
+    # close_position called at least once for perp, at least once for spot
+    assert exchange.close_position.call_count >= 2
+    closed_ids = [c[0][0].id for c in exchange.close_position.call_args_list]
+    assert perp_pos_id in closed_ids
+    assert spot_pos_id in closed_ids
 
 
 @pytest.mark.asyncio
 async def test_08_closing_long(session_factory, farb_repo, strategy_id, exchange_id):
-    """CLOSING_LONG → LONG_CLOSED: close_position called on spot_position_id."""
+    """CLOSING_LONG: close_position called on spot leg; bursts to CLOSED."""
     exchange = _make_exchange()
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.strategy_id = strategy_id
@@ -331,9 +346,11 @@ async def test_08_closing_long(session_factory, farb_repo, strategy_id, exchange
         session_factory, exchange_id=exchange_id, coin="BTC",
         instrument=Instrument.SPOT, side=Side.LONG,
     )
+    required = strat.params.required_margin()
     fp = await farb_repo.create(
         strategy_id=strategy_id, coin="BTC",
         initial_state=FarbState.CLOSING_LONG,
+        state_data={"required_margin": required},
     )
     await farb_repo.set_leg(fp.id, instrument=Instrument.SPOT, position_id=spot_pos_id)
     fp = await farb_repo.get(fp.id)
@@ -341,7 +358,9 @@ async def test_08_closing_long(session_factory, farb_repo, strategy_id, exchange
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.LONG_CLOSED
+    # Burst walks CLOSING_LONG → LONG_CLOSED → RELEASING_MARGIN → CLOSED
+    assert updated.state == FarbState.CLOSED
+    # close_position called once for the spot leg (no margin_position_id)
     exchange.close_position.assert_called_once()
     closed_pos = exchange.close_position.call_args[0][0]
     assert closed_pos.id == spot_pos_id
@@ -814,15 +833,9 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
     assert fp_row.state == FarbState.CHECK_MARGIN.value
     fp_id = fp_row.id
 
-    # Advance through all entry states: CHECK_MARGIN → OPENING_MARGIN → MARGIN_RESERVED
-    # → OPENING_LONG → LONG_OPENED → OPENING_SHORT → OPEN (6 advances)
-    for _ in range(6):
-        fps = await farb_repo.list_active(strategy_id)
-        open_fps = await farb_repo.list_open(strategy_id)
-        all_fps = fps + open_fps
-        for fp in all_fps:
-            if fp.id == fp_id and fp.state not in (FarbState.OPEN, FarbState.CLOSED, FarbState.FAILED):
-                await strat._advance_one(fp)
+    # Single _advance_one call bursts CHECK_MARGIN → OPEN in one shot
+    fp = await farb_repo.get(fp_id)
+    await strat._advance_one(fp)
 
     fp = await farb_repo.get(fp_id)
     assert fp.state == FarbState.OPEN
@@ -872,12 +885,9 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
     assert fp.perp_position_id is not None
     assert fp.spot_position_id is not None
 
-    # Advance through close states: CLOSING_SHORT → SHORT_CLOSED → CLOSING_LONG
-    # → LONG_CLOSED → RELEASING_MARGIN → CLOSED (5 advances)
-    for _ in range(5):
-        fp = await farb_repo.get(fp_id)
-        if fp.state not in (FarbState.CLOSED, FarbState.FAILED):
-            await strat._advance_one(fp)
+    # Single _advance_one call bursts CLOSING_SHORT → CLOSED in one shot
+    fp = await farb_repo.get(fp_id)
+    await strat._advance_one(fp)
 
     fp = await farb_repo.get(fp_id)
     assert fp.state == FarbState.CLOSED
@@ -891,6 +901,123 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
     transfer_call = exchange.transfer.call_args
     assert transfer_call[0][2] == WalletKind.PERP
     assert transfer_call[0][3] == WalletKind.SPOT
+
+
+# ─── Burst-loop tests ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_advance_one_bursts_full_open(session_factory, farb_repo, strategy_id, exchange_id):
+    """Single _advance_one from CHECK_MARGIN bursts to OPEN; all 3 leg positions created in DB."""
+    exchange = _make_exchange(session_factory=session_factory, exchange_id=exchange_id)
+    exchange.get_wallet.return_value = 10000.0
+
+    strat = _make_strategy(exchange, farb_repo, session_factory)
+    strat.strategy_id = strategy_id
+
+    fp = await farb_repo.create(
+        strategy_id=strategy_id,
+        coin="BTC",
+        initial_state=FarbState.CHECK_MARGIN,
+    )
+    await strat._advance_one(fp)
+
+    updated = await farb_repo.get(fp.id)
+    assert updated.state == FarbState.OPEN
+
+    # All 3 leg position IDs must be set
+    assert updated.margin_position_id is not None
+    assert updated.spot_position_id is not None
+    assert updated.perp_position_id is not None
+
+    # exchange.open_position called exactly 3 times (COLLATERAL, SPOT, PERP)
+    assert exchange.open_position.call_count == 3
+    instruments = [c[0][0].instrument for c in exchange.open_position.call_args_list]
+    assert Instrument.COLLATERAL in instruments
+    assert Instrument.SPOT in instruments
+    assert Instrument.PERP in instruments
+
+
+@pytest.mark.asyncio
+async def test_advance_one_stops_on_state_conflict(session_factory, farb_repo, strategy_id, mocker):
+    """StateConflict mid-burst: loop breaks immediately, no rollback triggered."""
+    exchange = _make_exchange()
+    strat = _make_strategy(exchange, farb_repo, session_factory)
+    strat.strategy_id = strategy_id
+
+    fp = await farb_repo.create(
+        strategy_id=strategy_id,
+        coin="BTC",
+        initial_state=FarbState.CHECK_MARGIN,
+    )
+
+    # Patch transition so it raises StateConflict on the very first call
+    conflict_exc = StateConflict(fp.id, FarbState.CHECK_MARGIN, FarbState.OPENING_MARGIN)
+    mocker.patch.object(
+        strat.farb_repo, "transition", side_effect=conflict_exc
+    )
+    mock_rollback = mocker.patch.object(strat, "_rollback")
+    mock_mark_failed = mocker.patch.object(strat.farb_repo, "mark_failed")
+
+    await strat._advance_one(fp)
+
+    # StateConflict must NOT trigger rollback or mark_failed
+    mock_rollback.assert_not_called()
+    mock_mark_failed.assert_not_called()
+
+    # FP state remains CHECK_MARGIN (transition was stubbed out)
+    updated = await farb_repo.get(fp.id)
+    assert updated.state == FarbState.CHECK_MARGIN
+
+
+@pytest.mark.asyncio
+async def test_advance_one_safety_cap(session_factory, farb_repo, strategy_id, mocker):
+    """Safety cap: if handlers never change state, loop bails after 20 iterations."""
+    import frab.strategy.two_phase as two_phase_mod
+
+    exchange = _make_exchange()
+    strat = _make_strategy(exchange, farb_repo, session_factory)
+    strat.strategy_id = strategy_id
+
+    fp = await farb_repo.create(
+        strategy_id=strategy_id,
+        coin="BTC",
+        initial_state=FarbState.CHECK_MARGIN,
+    )
+
+    # Stub get_wallet so _step_check_margin passes the balance check...
+    exchange.get_wallet.return_value = 10000.0
+
+    # ...but make farb_repo.transition a no-op so state never changes
+    async def _noop_transition(*args, **kwargs):
+        pass
+
+    mocker.patch.object(strat.farb_repo, "transition", side_effect=_noop_transition)
+
+    # Patch farb_repo.get to always return the same CHECK_MARGIN FP
+    original_get = strat.farb_repo.get
+
+    async def _always_check_margin(fp_id):
+        result = await original_get(fp_id)
+        if result is not None:
+            from dataclasses import replace
+            return replace(result, state=FarbState.CHECK_MARGIN)
+        return result
+
+    mocker.patch.object(strat.farb_repo, "get", side_effect=_always_check_margin)
+
+    # Patch the module-level logger to capture error calls
+    mock_logger = mocker.patch.object(two_phase_mod, "logger")
+
+    await strat._advance_one(fp)
+
+    # The safety cap error message must have been logged
+    error_msgs = [call.args[0] for call in mock_logger.error.call_args_list]
+    assert any("safety cap" in m for m in error_msgs), (
+        f"Expected 'safety cap' in error logs, got: {error_msgs}"
+    )
+
+    # Loop must have run exactly 20 iterations (transition called 20 times)
+    assert strat.farb_repo.transition.call_count == strat._ADVANCE_MAX_ITERS
 
 
 # ─── TwoPhaseParams tests ─────────────────────────────────────────────────────
