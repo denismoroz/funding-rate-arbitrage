@@ -227,7 +227,7 @@ async def test_transition_state_conflict_wrong_from_state(session_factory, strat
         await repo.transition(
             fp.id,
             from_state=FarbState.OPENING_LONG,   # wrong — actual is CHECK_MARGIN
-            to_state=FarbState.LONG_OPENED,
+            to_state=FarbState.OPENING_SHORT,
         )
 
     err = exc_info.value

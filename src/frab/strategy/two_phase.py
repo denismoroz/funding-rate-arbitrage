@@ -183,24 +183,16 @@ class TwoPhaseStrategy:
                 await self._step_check_margin(fp)
             case FarbState.OPENING_MARGIN:
                 await self._step_opening_margin(fp)
-            case FarbState.MARGIN_RESERVED:
-                await self._step_margin_reserved(fp)
             case FarbState.OPENING_LONG:
                 await self._step_opening_long(fp)
-            case FarbState.LONG_OPENED:
-                await self._step_long_opened(fp)
             case FarbState.OPENING_SHORT:
                 await self._step_opening_short(fp)
             case FarbState.OPEN:
                 pass  # steady state — no-op
             case FarbState.CLOSING_SHORT:
                 await self._step_closing_short(fp)
-            case FarbState.SHORT_CLOSED:
-                await self._step_short_closed(fp)
             case FarbState.CLOSING_LONG:
                 await self._step_closing_long(fp)
-            case FarbState.LONG_CLOSED:
-                await self._step_long_closed(fp)
             case FarbState.RELEASING_MARGIN:
                 await self._step_releasing_margin(fp)
             case FarbState.CLOSED | FarbState.FAILED:
@@ -238,13 +230,6 @@ class TwoPhaseStrategy:
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_MARGIN,
-            to_state=FarbState.MARGIN_RESERVED,
-        )
-
-    async def _step_margin_reserved(self, fp: FarbPosition) -> None:
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.MARGIN_RESERVED,
             to_state=FarbState.OPENING_LONG,
         )
 
@@ -264,15 +249,8 @@ class TwoPhaseStrategy:
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_LONG,
-            to_state=FarbState.LONG_OPENED,
-            state_data={**fp.state_data, "spot_qty": spot_qty, "spot_entry_price": price},
-        )
-
-    async def _step_long_opened(self, fp: FarbPosition) -> None:
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.LONG_OPENED,
             to_state=FarbState.OPENING_SHORT,
+            state_data={**fp.state_data, "spot_qty": spot_qty, "spot_entry_price": price},
         )
 
     async def _step_opening_short(self, fp: FarbPosition) -> None:
@@ -327,13 +305,6 @@ class TwoPhaseStrategy:
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.CLOSING_SHORT,
-            to_state=FarbState.SHORT_CLOSED,
-        )
-
-    async def _step_short_closed(self, fp: FarbPosition) -> None:
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.SHORT_CLOSED,
             to_state=FarbState.CLOSING_LONG,
         )
 
@@ -345,13 +316,6 @@ class TwoPhaseStrategy:
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.CLOSING_LONG,
-            to_state=FarbState.LONG_CLOSED,
-        )
-
-    async def _step_long_closed(self, fp: FarbPosition) -> None:
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.LONG_CLOSED,
             to_state=FarbState.RELEASING_MARGIN,
         )
 

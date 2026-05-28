@@ -236,7 +236,7 @@ async def test_04_opening_long(session_factory, farb_repo, strategy_id, exchange
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    # Burst walks from OPENING_LONG through LONG_OPENED → OPENING_SHORT → OPEN
+    # Burst walks from OPENING_LONG → OPENING_SHORT → OPEN
     assert updated.state == FarbState.OPEN
     assert updated.spot_position_id is not None
 
@@ -325,8 +325,7 @@ async def test_07_closing_short(session_factory, farb_repo, strategy_id, exchang
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    # Burst walks CLOSING_SHORT → SHORT_CLOSED → CLOSING_LONG → LONG_CLOSED
-    # → RELEASING_MARGIN → CLOSED
+    # Burst walks CLOSING_SHORT → CLOSING_LONG → RELEASING_MARGIN → CLOSED
     assert updated.state == FarbState.CLOSED
     # close_position called at least once for perp, at least once for spot
     assert exchange.close_position.call_count >= 2
@@ -358,7 +357,7 @@ async def test_08_closing_long(session_factory, farb_repo, strategy_id, exchange
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    # Burst walks CLOSING_LONG → LONG_CLOSED → RELEASING_MARGIN → CLOSED
+    # Burst walks CLOSING_LONG → RELEASING_MARGIN → CLOSED
     assert updated.state == FarbState.CLOSED
     # close_position called once for the spot leg (no margin_position_id)
     exchange.close_position.assert_called_once()

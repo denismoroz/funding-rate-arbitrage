@@ -77,7 +77,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('strategy_id', sa.Integer(), nullable=False),
     sa.Column('coin', sa.String(), nullable=False),
-    sa.Column('state', sa.Enum('CHECK_MARGIN', 'OPENING_MARGIN', 'MARGIN_RESERVED', 'OPENING_LONG', 'LONG_OPENED', 'OPENING_SHORT', 'OPEN', 'CLOSING_SHORT', 'SHORT_CLOSED', 'CLOSING_LONG', 'LONG_CLOSED', 'RELEASING_MARGIN', 'CLOSED', 'FAILED', name='farbstate', native_enum=False, length=20), nullable=False),
+    sa.Column('state', sa.Enum('CHECK_MARGIN', 'OPENING_MARGIN', 'OPENING_LONG', 'OPENING_SHORT', 'OPEN', 'CLOSING_SHORT', 'CLOSING_LONG', 'RELEASING_MARGIN', 'CLOSED', 'FAILED', name='farbstate', native_enum=False, length=20), nullable=False),
     sa.Column('state_data', sa.JSON(), nullable=False),
     sa.Column('spot_position_id', sa.Integer(), nullable=True),
     sa.Column('perp_position_id', sa.Integer(), nullable=True),
