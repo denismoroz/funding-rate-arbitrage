@@ -7,6 +7,7 @@ from frab.api.routes import (
     alerts as alerts_routes,
     equity as equity_routes,
     events as events_routes,
+    farb_positions as farb_positions_routes,
     funding as funding_routes,
     positions as positions_routes,
     signals as signals_routes,
@@ -30,6 +31,7 @@ def create_app(
     app.include_router(equity_routes.router, prefix="/api/equity", tags=["equity"])
     app.include_router(wallet_routes.router, prefix="/api/equity", tags=["equity"])
     app.include_router(positions_routes.router, prefix="/api/positions", tags=["positions"])
+    app.include_router(farb_positions_routes.router, prefix="/api/farb-positions", tags=["farb-positions"])
     app.include_router(signals_routes.router, prefix="/api/signals", tags=["signals"])
     app.include_router(funding_routes.router, prefix="/api/funding", tags=["funding"])
     app.include_router(events_routes.router, prefix="/api/events", tags=["events"])

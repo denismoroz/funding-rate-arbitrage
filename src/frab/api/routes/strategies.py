@@ -1,12 +1,20 @@
 """Strategy routes — updated for new schema."""
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
 from frab.db.models import Strategy
+from frab.strategy.two_phase import TwoPhaseParams
 
 router = APIRouter()
+
+_VALID_PARAM_KEYS: frozenset[str] = frozenset(TwoPhaseParams.__dataclass_fields__.keys())
+
+
+class PatchParamsBody(BaseModel):
+    params: dict
 
 
 @router.get("")
@@ -64,14 +72,40 @@ async def get_strategy_params(
     }
 
 
-@router.post("/{strategy_id}/deploy")
-async def deploy_strategy_params(
+@router.patch("/{strategy_id}/params")
+async def patch_strategy_params(
     strategy_id: int,
-    body: dict,
-    request: Request,
+    body: PatchParamsBody,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    raise HTTPException(status_code=503, detail="Engine not configured")
+    """Merge partial params dict onto the strategy's params_json.
+
+    Keys must be valid TwoPhaseParams field names. Unknown keys → 422.
+    Returns the updated params_json plus restart_required=true.
+    """
+    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    unknown_keys = sorted(set(body.params.keys()) - _VALID_PARAM_KEYS)
+    if unknown_keys:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown param keys: {unknown_keys}. Valid keys: {sorted(_VALID_PARAM_KEYS)}",
+        )
+
+    current = dict(strategy.params_json) if strategy.params_json else {}
+    new_params = {**current, **body.params}
+    strategy.params_json = new_params
+    session.add(strategy)
+
+    return {
+        "id": strategy.id,
+        "params_json": new_params,
+        "restart_required": True,
+        "note": "params_json updated; engine must be restarted to pick up changes",
+    }
 
 
 @router.post("/{strategy_id}/force-tick")

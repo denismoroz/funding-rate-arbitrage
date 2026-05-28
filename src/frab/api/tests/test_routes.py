@@ -164,6 +164,7 @@ async def test_get_funding_history_by_coin(api_client, session_factory):
         exc = Exchange(name="HL_fr", funding_interval_h=1, spot_taker_bps=2.5, perp_taker_bps=2.5)
         s.add(exc)
         await s.flush()
+        exc_id = exc.id
 
         for i in range(3):
             s.add(FundingRate(
@@ -173,7 +174,8 @@ async def test_get_funding_history_by_coin(api_client, session_factory):
                 annualized_pct=8.76 * (i + 1),
             ))
 
-    resp = await api_client.get("/api/funding/BTC")
+    # Pass exchange_id explicitly — the default resolver only knows "hyperliquid"
+    resp = await api_client.get(f"/api/funding/BTC?exchange_id={exc_id}")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 3
