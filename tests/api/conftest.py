@@ -30,7 +30,7 @@ async def session_factory(engine):
 
 @pytest_asyncio.fixture
 async def api_client(session_factory):
-    """API client with no executor (paper-mode without engine running)."""
+    """API client with no executor (no engine running)."""
     app = create_app(session_factory)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test", follow_redirects=True

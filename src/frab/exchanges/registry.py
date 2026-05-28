@@ -23,11 +23,7 @@ def available() -> list[str]:
 
 
 def get_exchange(name: str, *, session_factory=None, **kwargs) -> Exchange:
-    """Return an Exchange instance by name.
-
-    For 'paper', an upstream exchange must be provided via kwargs:
-        get_exchange('paper', upstream=hl_exchange, session_factory=sf, ...)
-    """
+    """Return an Exchange instance by name."""
     if name not in _REGISTRY:
         raise KeyError(f"unknown exchange: {name!r}. available: {available()}")
     if session_factory is not None:

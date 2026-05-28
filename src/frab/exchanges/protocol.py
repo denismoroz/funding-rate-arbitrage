@@ -2,7 +2,7 @@
 
 Every Exchange implementation must satisfy this Protocol. No instance-level
 caches of positions, wallet balances, or fills. Each method touches either
-the upstream API / paper sim or the DB.
+the upstream API or the DB.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ class MarketSpec:
     has_perp: bool
     min_size: float
     tick_size: float
-    sz_decimals: int     # HL-style; PaperExchange echoes the upstream's value
+    sz_decimals: int     # HL-style sz_decimals
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,6 @@ import pytest
 
 from frab.exchanges.protocol import Exchange, Quote, FundingTick, MarketSpec, OpenRequest, WalletKind
 from frab.exchanges.hyperliquid.exchange import HLExchange
-from frab.exchanges.paper import PaperExchange
 from frab.domain import Instrument, Side
 
 
@@ -22,23 +21,7 @@ def test_hl_exchange_satisfies_exchange_protocol():
 
 
 # ---------------------------------------------------------------------------
-# 2. PaperExchange satisfies Exchange Protocol (runtime_checkable)
-# ---------------------------------------------------------------------------
-
-def test_paper_exchange_satisfies_exchange_protocol():
-    upstream = MagicMock(spec=Exchange)
-    session_factory = MagicMock()
-    paper = PaperExchange(
-        upstream=upstream,
-        session_factory=session_factory,
-        fee_bps_spot=7.0,
-        fee_bps_perp=3.5,
-    )
-    assert isinstance(paper, Exchange)
-
-
-# ---------------------------------------------------------------------------
-# 3. Protocol DTOs are importable and usable
+# 2. Protocol DTOs are importable and usable
 # ---------------------------------------------------------------------------
 
 def test_protocol_dtos_importable():
@@ -56,7 +39,7 @@ def test_protocol_dtos_importable():
 
 
 # ---------------------------------------------------------------------------
-# 4. WalletKind enum values
+# 3. WalletKind enum values
 # ---------------------------------------------------------------------------
 
 def test_wallet_kind_values():
@@ -65,26 +48,10 @@ def test_wallet_kind_values():
 
 
 # ---------------------------------------------------------------------------
-# 5. HLExchange has name attribute
+# 4. HLExchange has name attribute
 # ---------------------------------------------------------------------------
 
 def test_hl_exchange_has_name():
     info = MagicMock()
     ex = HLExchange(info=info)
     assert ex.name == "hyperliquid"
-
-
-# ---------------------------------------------------------------------------
-# 6. PaperExchange has name attribute
-# ---------------------------------------------------------------------------
-
-def test_paper_exchange_has_name():
-    upstream = MagicMock(spec=Exchange)
-    session_factory = MagicMock()
-    paper = PaperExchange(
-        upstream=upstream,
-        session_factory=session_factory,
-        fee_bps_spot=7.0,
-        fee_bps_perp=3.5,
-    )
-    assert paper.name == "paper"
