@@ -99,11 +99,3 @@ class Strategy(ABC):
         OR when there are no open positions to monitor.
         """
         return None
-
-    def set_fees_cum(self, value: float) -> None:
-        """Replace the running fees counter with the DB-authoritative total."""
-        self._fees_cum = value  # type: ignore[attr-defined]
-
-    def set_funding_cum(self, value: float) -> None:
-        """Replace the running funding counter with the DB-authoritative total."""
-        self._funding_cum = value  # type: ignore[attr-defined]

@@ -726,8 +726,6 @@ async def test_rehydrate_restores_two_phase_state(mocker):
         accumulators=AccumulatorsSnapshot(
             cash=5000.0,
             realized_pnl_cum=0.0,
-            funding_cum=0.5,
-            fees_cum=0.2,
         ),
     )
 
@@ -767,8 +765,6 @@ async def test_rehydrate_uses_restored_state_in_next_tick(mocker):
         accumulators=AccumulatorsSnapshot(
             cash=5000.0,
             realized_pnl_cum=0.0,
-            funding_cum=0.0,
-            fees_cum=0.2,
         ),
     )
 
@@ -902,7 +898,6 @@ async def test_funding_accrual_updates_position(mocker):
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
 
     # funding = 10 * 100 * 0.0001 = 0.1
-    assert strat.funding_cum == pytest.approx(0.1, abs=1e-9)
     assert strat.cash == pytest.approx(cash_after_open + 0.1, abs=1e-9)
     assert report.funding_accrued == (("BTC", pytest.approx(0.1, abs=1e-9)),)
 
@@ -1030,7 +1025,6 @@ async def test_open_paired_failure_records_failed_open_no_position_change(mocker
     # In-memory state must be unchanged
     assert "BTC" not in strat._positions
     assert strat.cash == pytest.approx(cash_before)
-    assert strat.fees_cum == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio
@@ -1060,7 +1054,6 @@ async def test_close_paired_failure_keeps_position_open(mocker):
 
     assert "BTC" in strat._positions
     cash_before_close = strat.cash
-    fees_before_close = strat.fees_cum
     realized_before_close = strat.realized_pnl_cum
     pos_before = strat._positions["BTC"]
 
@@ -1079,8 +1072,7 @@ async def test_close_paired_failure_keeps_position_open(mocker):
     # Position must still exist
     assert "BTC" in strat._positions
 
-    # Fees and realized PnL must not have changed
-    assert strat.fees_cum == pytest.approx(fees_before_close)
+    # realized PnL must not have changed
     assert strat.realized_pnl_cum == pytest.approx(realized_before_close)
 
     # Position state must be intact
@@ -1091,16 +1083,16 @@ async def test_close_paired_failure_keeps_position_open(mocker):
 
 
 # ---------------------------------------------------------------------------
-# F1.3c: dual-track to PortfolioService
+# F1.4f: PortfolioService direct-write (record_fill_fees / accrue_funding)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_open_position_mirrors_fees_to_portfolio_service(mocker):
-    """After _open_position succeeds, set_fees_cum is awaited with strategy's _fees_cum."""
+async def test_open_position_calls_record_fill_fees_on_portfolio_service(mocker):
+    """After _open_position succeeds, record_fill_fees is awaited with open fees."""
     ps = mocker.MagicMock()
-    ps.set_fees_cum = mocker.AsyncMock()
-    ps.set_funding_cum = mocker.AsyncMock()
+    ps.record_fill_fees = mocker.AsyncMock()
+    ps.accrue_funding = mocker.AsyncMock()
     ps.apply_open = mocker.AsyncMock()
     ps.apply_close = mocker.AsyncMock()
 
@@ -1120,16 +1112,18 @@ async def test_open_position_mirrors_fees_to_portfolio_service(mocker):
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
 
-    expected_fees = strat._fees_cum
-    ps.set_fees_cum.assert_awaited_with(pytest.approx(expected_fees))
+    ps.record_fill_fees.assert_awaited_once()
+    _, coin_arg, fees_arg = ps.record_fill_fees.call_args.args
+    assert coin_arg == "BTC"
+    assert fees_arg == pytest.approx(0.035 + 0.07)
 
 
 @pytest.mark.asyncio
-async def test_hour_tick_funding_accrual_mirrors_to_portfolio_service(mocker):
-    """After funding accrual loop, set_funding_cum is awaited once with post-loop value."""
+async def test_hour_tick_funding_accrual_calls_accrue_funding_per_coin(mocker):
+    """Funding accrual loop calls accrue_funding once per open coin."""
     ps = mocker.MagicMock()
-    ps.set_fees_cum = mocker.AsyncMock()
-    ps.set_funding_cum = mocker.AsyncMock()
+    ps.record_fill_fees = mocker.AsyncMock()
+    ps.accrue_funding = mocker.AsyncMock()
     ps.apply_open = mocker.AsyncMock()
     ps.apply_close = mocker.AsyncMock()
 
@@ -1157,8 +1151,6 @@ async def test_hour_tick_funding_accrual_mirrors_to_portfolio_service(mocker):
         accumulators=AccumulatorsSnapshot(
             cash=1000.0,
             realized_pnl_cum=0.0,
-            funding_cum=0.0,
-            fees_cum=0.0,
         ),
     )
 
@@ -1166,11 +1158,11 @@ async def test_hour_tick_funding_accrual_mirrors_to_portfolio_service(mocker):
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.0001)})
 
-    # Funding delta = 10 * 100 * 0.0001 = 0.1
-    expected_funding = strat._funding_cum
-    assert expected_funding == pytest.approx(0.1, abs=1e-9)
-    ps.set_funding_cum.assert_awaited_with(pytest.approx(expected_funding))
-    assert ps.set_funding_cum.await_count == 1
+    # Funding delta = 10 * 100 * 0.0001 = 0.1; accrue_funding called once per coin
+    ps.accrue_funding.assert_awaited_once()
+    _, coin_arg, amount_arg = ps.accrue_funding.call_args.args
+    assert coin_arg == "BTC"
+    assert amount_arg == pytest.approx(0.1, abs=1e-9)
 
 
 @pytest.mark.asyncio
@@ -1195,10 +1187,10 @@ async def test_two_phase_without_portfolio_service_works_as_before(mocker):
 
 @pytest.mark.asyncio
 async def test_set_portfolio_service_attaches_late(mocker):
-    """Late binding via set_portfolio_service activates dual-track."""
+    """Late binding via set_portfolio_service activates direct portfolio writes."""
     ps = mocker.MagicMock()
-    ps.set_fees_cum = mocker.AsyncMock()
-    ps.set_funding_cum = mocker.AsyncMock()
+    ps.record_fill_fees = mocker.AsyncMock()
+    ps.accrue_funding = mocker.AsyncMock()
     ps.apply_open = mocker.AsyncMock()
     ps.apply_close = mocker.AsyncMock()
 
@@ -1214,7 +1206,7 @@ async def test_set_portfolio_service_attaches_late(mocker):
     await strat.on_minute_tick(T0, {"BTC": _quote("BTC", mark=100.0)})
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
 
-    ps.set_fees_cum.assert_awaited()
+    ps.record_fill_fees.assert_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1236,8 +1228,8 @@ async def test_open_position_calls_portfolio_service_apply_open(mocker):
         budget_cap_usd=10000.0,
     )
     ps = mocker.MagicMock()
-    ps.set_fees_cum = mocker.AsyncMock()
-    ps.set_funding_cum = mocker.AsyncMock()
+    ps.record_fill_fees = mocker.AsyncMock()
+    ps.accrue_funding = mocker.AsyncMock()
     ps.apply_open = mocker.AsyncMock()
     ps.apply_close = mocker.AsyncMock()
 
@@ -1268,8 +1260,8 @@ async def test_open_position_calls_portfolio_service_apply_open(mocker):
 async def test_open_position_without_margin_manager_zero_margin(mocker):
     """Without a margin_manager, apply_open is called with margin_reserve_usd=0."""
     ps = mocker.MagicMock()
-    ps.set_fees_cum = mocker.AsyncMock()
-    ps.set_funding_cum = mocker.AsyncMock()
+    ps.record_fill_fees = mocker.AsyncMock()
+    ps.accrue_funding = mocker.AsyncMock()
     ps.apply_open = mocker.AsyncMock()
     ps.apply_close = mocker.AsyncMock()
 
@@ -1295,8 +1287,8 @@ async def test_open_position_without_margin_manager_zero_margin(mocker):
 async def test_close_position_calls_portfolio_service_apply_close(mocker):
     """After _close_position succeeds, apply_close is awaited with released_notional = qty * exit_price."""
     ps = mocker.MagicMock()
-    ps.set_fees_cum = mocker.AsyncMock()
-    ps.set_funding_cum = mocker.AsyncMock()
+    ps.record_fill_fees = mocker.AsyncMock()
+    ps.accrue_funding = mocker.AsyncMock()
     ps.apply_open = mocker.AsyncMock()
     ps.apply_close = mocker.AsyncMock()
 

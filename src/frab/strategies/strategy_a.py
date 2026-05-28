@@ -92,8 +92,6 @@ class OpenPositionSnapshot:
 class AccumulatorsSnapshot:
     cash: float
     realized_pnl_cum: float
-    funding_cum: float
-    fees_cum: float
 
 
 class StrategyA(Strategy):
@@ -118,8 +116,6 @@ class StrategyA(Strategy):
         self._positions: dict[str, _PositionRecord] = {}
         self._last_quotes: dict[str, Quote] = {}
         self._realized_pnl_cum: float = 0.0
-        self._funding_cum: float = 0.0
-        self._fees_cum: float = 0.0
         self._cash: float = params.concurrency_cap * params.position_size_usdc * 2
         self._perp_cash: float = 0.0
         self._n_skipped_opens_capital: int = 0
@@ -133,14 +129,6 @@ class StrategyA(Strategy):
         return self._realized_pnl_cum
 
     @property
-    def funding_cum(self) -> float:
-        return self._funding_cum
-
-    @property
-    def fees_cum(self) -> float:
-        return self._fees_cum
-
-    @property
     def perp_cash(self) -> float:
         return self._perp_cash
 
@@ -152,14 +140,6 @@ class StrategyA(Strategy):
         """Late binding: server.py wires PortfolioService after rehydrate.
         F1.4 will remove this once spec.build accepts portfolio_service directly."""
         self._portfolio_service = portfolio_service
-
-    def set_fees_cum(self, value: float) -> None:
-        """Replace the running fees counter with the DB-authoritative total."""
-        self._fees_cum = value
-
-    def set_funding_cum(self, value: float) -> None:
-        """Replace the running funding counter with the DB-authoritative total."""
-        self._funding_cum = value
 
     def open_positions(self) -> list[str]:
         return list(self._positions.keys())
@@ -191,8 +171,6 @@ class StrategyA(Strategy):
         if accumulators is not None:
             self._cash = accumulators.cash
             self._realized_pnl_cum = accumulators.realized_pnl_cum
-            self._funding_cum = accumulators.funding_cum
-            self._fees_cum = accumulators.fees_cum
         # On rehydrate, retroactively reserve `required_margin` for each
         # existing position. Without this the watchdog would think nothing
         # is locked and trigger a forced-close on first tick. Coins absent
@@ -296,11 +274,9 @@ class StrategyA(Strategy):
             f = pos.perp_qty * mark * rate
             self._cash += f
             pos.funding_collected += f
-            self._funding_cum += f
             funding_accrued.append((coin, f))
-
-        if self._portfolio_service is not None:
-            await self._portfolio_service.set_funding_cum(self._funding_cum)
+            if self._portfolio_service is not None:
+                await self._portfolio_service.accrue_funding(DomainExchange.HYPERLIQUID, coin, f)
 
         # Step 3: compute decisions for every coin in MarketState
         signals_log: list[SignalEvent] = []
@@ -425,9 +401,6 @@ class StrategyA(Strategy):
         spot_cost = fill_spot.qty * fill_spot.price + fill_spot.fee
         self._cash -= spot_cost
         self._cash -= fill_perp.fee
-        self._fees_cum += fill_spot.fee + fill_perp.fee
-        if self._portfolio_service is not None:
-            await self._portfolio_service.set_fees_cum(self._fees_cum)
 
         self._positions[coin] = _PositionRecord(
             opened_at=now,
@@ -456,6 +429,9 @@ class StrategyA(Strategy):
                 state={},
             )
             await self._portfolio_service.apply_open(domain_pos)
+            await self._portfolio_service.record_fill_fees(
+                DomainExchange.HYPERLIQUID, coin, fill_spot.fee + fill_perp.fee
+            )
         # Preserve existing fill order in the returned list (spot first, then perp)
         # so callers/recorder iteration order is stable.
         return [fill_spot, fill_perp], None
@@ -492,10 +468,10 @@ class StrategyA(Strategy):
         self._cash += realized_perp - fill_perp.fee
 
         self._realized_pnl_cum += realized_perp
-        self._fees_cum += fill_spot.fee + fill_perp.fee
         if self._portfolio_service is not None:
-            await self._portfolio_service.set_fees_cum(self._fees_cum)
-        if self._portfolio_service is not None:
+            await self._portfolio_service.record_fill_fees(
+                DomainExchange.HYPERLIQUID, coin, fill_spot.fee + fill_perp.fee
+            )
             margin_release = 0.0
             if self._margin_manager is not None and coin in self._margin_manager._params:
                 margin_release = self._margin_manager.compute_required_margin_for_open(coin)
@@ -607,6 +583,6 @@ class StrategyA(Strategy):
             spot_value=spot_value,
             perp_unrealized=perp_unrealized,
             perp_realized_cum=self._realized_pnl_cum,
-            funding_cum=self._funding_cum,
-            fees_cum=self._fees_cum,
+            funding_cum=0.0,
+            fees_cum=0.0,
         )

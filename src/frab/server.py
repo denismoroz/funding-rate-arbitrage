@@ -425,17 +425,14 @@ async def _rehydrate_strategy_from_db(
         accumulators = AccumulatorsSnapshot(
             cash=last_eq.cash,
             realized_pnl_cum=last_eq.perp_realized_cum,
-            funding_cum=last_eq.funding_cum,
-            fees_cum=last_eq.fees_cum,
         )
 
     if snapshots or accumulators is not None:
         strategy.rehydrate(positions=snapshots, accumulators=accumulators)
         logger.info(
-            "rehydrate_strategy: positions=%d, cash=%s, funding_cum=%s",
+            "rehydrate_strategy: positions=%d, cash=%s",
             len(snapshots),
             accumulators.cash if accumulators else "default",
-            accumulators.funding_cum if accumulators else "default",
         )
 
 
