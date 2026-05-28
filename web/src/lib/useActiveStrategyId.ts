@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchStrategies } from "./api";
 
 /**
- * Returns the id of the strategy currently bound to the engine (status === "running"),
- * or undefined while loading / if no strategy is running.
+ * Returns the id of the active strategy (status in {"active", "running"}),
+ * or undefined while loading / if none exists.
  *
  * Pollers/UI components keyed on this id should guard with `enabled: !!id`
  * so they don't fire with a stale or default value.
@@ -15,6 +15,6 @@ export function useActiveStrategyId(): number | undefined {
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
-  const running = q.data?.find((s) => s.status === "running");
-  return running?.id;
+  const active = q.data?.find((s) => s.status === "active" || s.status === "running");
+  return active?.id;
 }
