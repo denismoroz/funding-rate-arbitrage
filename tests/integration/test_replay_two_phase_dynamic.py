@@ -177,9 +177,12 @@ async def test_replay_two_phase_dynamic_six_months_smoke():
                 opens_per_coin[coin] += 1
             for coin in outcome.tick_report.closed:
                 closes_per_coin[coin] += 1
-            # Capture first opened_min_holds entry for C-specific assertion
-            if first_opened_min_hold is None and outcome.tick_report.opened_min_holds:
-                first_opened_min_hold = outcome.tick_report.opened_min_holds[0]
+            # Capture first position_min_hold_hours patch for C-specific assertion
+            if first_opened_min_hold is None:
+                for coin, patch in outcome.tick_report.position_state_updates:
+                    if "position_min_hold_hours" in patch:
+                        first_opened_min_hold = (coin, patch["position_min_hold_hours"])
+                        break
 
     total_opens = sum(opens_per_coin.values())
     total_closes = sum(closes_per_coin.values())
@@ -208,12 +211,12 @@ async def test_replay_two_phase_dynamic_six_months_smoke():
         f"expected {2 * (total_opens + total_closes)} fills, got {total_fills}"
     )
 
-    # TwoPhaseDynamic-specific: opened_min_holds must have been populated
+    # TwoPhaseDynamic-specific: position_state_updates must carry min_hold_hours
     assert first_opened_min_hold is not None, (
-        "no opened_min_holds populated — TwoPhaseDynamic not recording min_hold correctly"
+        "no position_min_hold_hours patch populated — TwoPhaseDynamic not recording min_hold correctly"
     )
     coin_oh, min_hold_val = first_opened_min_hold
-    assert coin_oh in COINS, f"opened_min_holds coin {coin_oh!r} not in universe"
+    assert coin_oh in COINS, f"position_state_updates coin {coin_oh!r} not in universe"
     assert C_PARAMS["base_min_hold_hours"] <= min_hold_val <= C_PARAMS["cap_min_hold_hours"], (
         f"min_hold {min_hold_val} outside [{C_PARAMS['base_min_hold_hours']}, {C_PARAMS['cap_min_hold_hours']}]"
     )

@@ -115,6 +115,15 @@ def make_paired_close_failed(perp_fill=None, spot_fill=None, errors=("some error
     )
 
 
+def _get_state_patch(report: TickReport, coin: str) -> dict | None:
+    """Return the last state patch for `coin` from report.position_state_updates, or None."""
+    result = None
+    for c, patch in report.position_state_updates:
+        if c == coin:
+            result = patch
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -199,10 +208,10 @@ async def test_sufficient_signal_opens_position(mocker):
     assert report.opened == ("BTC",)
     assert report.closed == ()
     assert "BTC" in strat.open_positions()
-    # opened_min_holds should be populated
-    assert len(report.opened_min_holds) == 1
-    coin, min_hold = report.opened_min_holds[0]
-    assert coin == "BTC"
+    # position_state_updates should carry position_min_hold_hours for BTC
+    patch = _get_state_patch(report, "BTC")
+    assert patch is not None
+    min_hold = patch["position_min_hold_hours"]
     assert min_hold > 0
     # min_hold = min(720, max(24, 5.0 * (18.396 / 0.876))) ≈ min(720, max(24, 105.0)) = 105
     assert min_hold == strat._positions["BTC"].position_min_hold_hours
@@ -299,7 +308,9 @@ async def test_min_hold_blocks_close_before_expiry(mocker):
     open_report = await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.0001)})
 
     assert open_report.opened == ("BTC",)
-    _, min_hold = open_report.opened_min_holds[0]
+    open_patch = _get_state_patch(open_report, "BTC")
+    assert open_patch is not None
+    min_hold = open_patch["position_min_hold_hours"]
     assert min_hold > 1  # min_hold > 1 hour — lock is active
 
     # One hour later: catastrophic negative rate — but min_hold not met
@@ -584,7 +595,7 @@ async def test_phase2_rate_above_threshold_no_close(mocker):
 
 @pytest.mark.asyncio
 async def test_opened_min_holds_populated_on_open(mocker):
-    """opened_min_holds contains entry for each newly opened position."""
+    """position_state_updates contains position_min_hold_hours for each newly opened position."""
     strat = TwoPhaseDynamic(_default_params(coins=("BTC", "ETH"), concurrency_cap=2), make_executor(mocker))
 
     async def _open_gen(perp_req, spot_req):
@@ -603,16 +614,17 @@ async def test_opened_min_holds_populated_on_open(mocker):
     }
     report = await strat.on_hour_tick(T0, funding)
 
-    assert len(report.opened_min_holds) == 2
-    opened_coins = {coin for coin, _ in report.opened_min_holds}
-    assert opened_coins == {"BTC", "ETH"}
-    for coin, mh in report.opened_min_holds:
-        assert mh > 0
+    open_coins = {c for c, p in report.position_state_updates if "position_min_hold_hours" in p}
+    assert open_coins == {"BTC", "ETH"}
+    for coin in ("BTC", "ETH"):
+        patch = _get_state_patch(report, coin)
+        assert patch is not None
+        assert patch["position_min_hold_hours"] > 0
 
 
 @pytest.mark.asyncio
 async def test_consec_negative_updates_for_open_positions(mocker):
-    """consec_negative_updates contains entry for each in-position coin."""
+    """position_state_updates contains consec_negative_hours for each in-position coin."""
     strat = TwoPhaseDynamic(_default_params(coins=("BTC",), concurrency_cap=1), make_executor(mocker))
 
     perp_fill = _fill("BTC", Leg.PERP, Side.SELL, qty=10.0, price=100.0, fee=0.0)
@@ -624,16 +636,15 @@ async def test_consec_negative_updates_for_open_positions(mocker):
     await strat.on_hour_tick(T0, {"BTC": _funding("BTC", T0, 0.5 / 8760)})
     assert "BTC" in strat.open_positions()
 
-    # Next tick: BTC in position → should appear in consec_negative_updates
+    # Next tick: BTC in position → should appear in position_state_updates with consec_negative_hours
     t1 = T0 + HOUR
     strat._executor.open_paired = mocker.AsyncMock(side_effect=[])
     strat._executor.close_paired = mocker.AsyncMock(side_effect=[])
     await strat.on_minute_tick(t1, {"BTC": _quote("BTC", mark=100.0)})
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, 0.5 / 8760)})
 
-    assert len(report.consec_negative_updates) >= 1
-    update_coins = {coin for coin, _ in report.consec_negative_updates}
-    assert "BTC" in update_coins
+    consec_coins = {c for c, p in report.position_state_updates if "consec_negative_hours" in p}
+    assert "BTC" in consec_coins
 
 
 @pytest.mark.asyncio
@@ -671,9 +682,13 @@ async def test_consec_negative_updates_excludes_closed_coins(mocker):
     report = await strat.on_hour_tick(t1, {"BTC": _funding("BTC", t1, -0.5 / 8760)})
 
     assert report.closed == ("BTC",)
-    # BTC was closed → must NOT appear in consec_negative_updates
-    closed_in_updates = any(coin == "BTC" for coin, _ in report.consec_negative_updates)
-    assert not closed_in_updates
+    # BTC was closed → must NOT appear in position_state_updates with only consec_negative_hours
+    # (it may appear with position_min_hold_hours if re-opened, but not with a bare consec update)
+    consec_only_for_btc = any(
+        coin == "BTC" and list(patch.keys()) == ["consec_negative_hours"]
+        for coin, patch in report.position_state_updates
+    )
+    assert not consec_only_for_btc
 
 
 # ---------------------------------------------------------------------------
@@ -914,7 +929,7 @@ async def test_dry_run_skips_open_decisions(mocker):
 
     assert report.opened == ()
     assert report.fills == ()
-    assert report.opened_min_holds == ()
+    assert not any("position_min_hold_hours" in p for _, p in report.position_state_updates)
     assert len(strat._positions) == 0
     ex.open_paired.assert_not_called()
     ex.close_paired.assert_not_called()
@@ -1006,8 +1021,11 @@ async def test_open_paired_failure_records_failed_open_no_position_change(mocker
     # BTC must NOT be in opened
     assert "BTC" not in report.opened
 
-    # opened_min_holds must NOT have an entry for BTC
-    assert not any(coin == "BTC" for coin, _ in report.opened_min_holds)
+    # position_state_updates must NOT have a position_min_hold_hours entry for BTC
+    assert not any(
+        coin == "BTC" and "position_min_hold_hours" in patch
+        for coin, patch in report.position_state_updates
+    )
 
     # In-memory state must be unchanged
     assert "BTC" not in strat._positions

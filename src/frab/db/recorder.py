@@ -266,16 +266,22 @@ class DbRecorder:
                     )
                 )
 
-            # --- Update position_min_hold_hours on newly opened positions ---
-            for coin, min_hold in report.opened_min_holds:
+            # --- Apply per-strategy state patches via JSON merge into Position.state ---
+            for coin, patch in report.position_state_updates:
                 position_id = self._open_positions.get(coin)
                 if position_id is None:
-                    logger.warning("save_tick_report: opened_min_hold for %r but no open position — skipping", coin)
+                    logger.warning(
+                        "save_tick_report: position_state_update for %r but no open position — skipping",
+                        coin,
+                    )
                     continue
                 pos = await session.get(Position, position_id)
                 if pos is None:
                     continue
-                pos.position_min_hold_hours = min_hold
+                # JSON column on SQLite needs explicit re-assignment for change tracking.
+                current_state = dict(pos.state or {})
+                current_state.update(patch)
+                pos.state = current_state
 
             # --- Closes ---
             for coin in report.closed:
@@ -399,17 +405,6 @@ class DbRecorder:
                         slippage_bps=fill.slippage_bps,
                         client_ref=fill.client_ref,
                     ))
-
-            # --- Update consec_negative on open positions (per-tick state) ---
-            for coin, consec in report.consec_negative_updates:
-                position_id = self._open_positions.get(coin)
-                if position_id is None:
-                    # Position may have been closed this tick — skip silently
-                    continue
-                pos = await session.get(Position, position_id)
-                if pos is None:
-                    continue
-                pos.consec_negative_hours = consec
 
     async def save_equity(self, snapshot: EquitySnapshot) -> None:
         async with session_scope(self._session_factory) as session:

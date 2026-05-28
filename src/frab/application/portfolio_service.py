@@ -160,8 +160,6 @@ class PortfolioService:
                 realized_pnl=0.0,
                 funding_collected=pos.funding_collected,
                 fees_paid=pos.fees_paid,
-                position_min_hold_hours=0,
-                consec_negative_hours=0,
                 exchange=pos.exchange.value,
                 state=pos.state if pos.state is not None else {},
                 notional_usd=pos.notional_usd,

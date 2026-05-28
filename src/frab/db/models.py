@@ -134,9 +134,6 @@ class Position(Base):
     realized_pnl: Mapped[float] = mapped_column(default=0.0)
     funding_collected: Mapped[float] = mapped_column(default=0.0)
     fees_paid: Mapped[float] = mapped_column(default=0.0)
-    # TwoPhaseDynamic strategy fields:
-    position_min_hold_hours: Mapped[int] = mapped_column(default=0)
-    consec_negative_hours: Mapped[int] = mapped_column(default=0)
     # F1.2 portfolio columns:
     exchange: Mapped[str] = mapped_column(default="hyperliquid", nullable=False)
     state: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)

@@ -304,7 +304,7 @@ class TwoPhaseDynamic(Strategy):
             await self._portfolio_service.set_funding_cum(self._funding_cum)
 
         # Step 3: update consec_negative for every open position
-        consec_updates: list[tuple[str, int]] = []
+        position_state_updates: list[tuple[str, dict]] = []
         for coin, pos in self._positions.items():
             cs = self._market_state.get(coin)
             smoothed = cs.smoothed_signal()
@@ -312,7 +312,7 @@ class TwoPhaseDynamic(Strategy):
                 prev_consec_negative=pos.consec_negative_hours,
                 smoothed_signal_annual=smoothed,
             )
-            consec_updates.append((coin, pos.consec_negative_hours))
+            position_state_updates.append((coin, {"consec_negative_hours": pos.consec_negative_hours}))
 
         # Step 4: compute decisions for every coin
         signals_log: list[SignalEvent] = []
@@ -393,7 +393,6 @@ class TwoPhaseDynamic(Strategy):
 
         # Step 6: execute OPEN decisions with concurrency cap
         opened: list[str] = []
-        opened_min_holds: list[tuple[str, int]] = []
         failed_opens: list[FailedOpen] = []
         slots_free = self._params.concurrency_cap - len(self._positions)
         if slots_free > 0:
@@ -440,12 +439,19 @@ class TwoPhaseDynamic(Strategy):
                 if failed is None:
                     fills_log.extend(open_fills)
                     opened.append(coin)
-                    opened_min_holds.append((coin, min_hold))
+                    position_state_updates.append((coin, {
+                        "position_min_hold_hours": min_hold,
+                        "consec_negative_hours": 0,
+                    }))
                 else:
                     failed_opens.append(failed)
 
-        # Step 7: filter consec_updates to coins still open
-        consec_updates_filtered = [(c, v) for c, v in consec_updates if c in self._positions]
+        # Step 7: filter position_state_updates — consec entries only for coins still open;
+        # open entries (position_min_hold_hours key) are always valid since we just opened.
+        position_state_updates_filtered = [
+            (c, patch) for c, patch in position_state_updates
+            if "position_min_hold_hours" in patch or c in self._positions
+        ]
 
         return TickReport(
             ts=now,
@@ -454,8 +460,7 @@ class TwoPhaseDynamic(Strategy):
             opened=tuple(opened),
             closed=tuple(closed),
             funding_accrued=tuple(funding_accrued),
-            opened_min_holds=tuple(opened_min_holds),
-            consec_negative_updates=tuple(consec_updates_filtered),
+            position_state_updates=tuple(position_state_updates_filtered),
             failed_opens=tuple(failed_opens),
         )
 
