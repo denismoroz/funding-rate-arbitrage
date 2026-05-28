@@ -8,12 +8,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from frab.api.app import create_app
-from frab.db.models import Exchange, Market, Position, PositionMode, PositionStatus, Price, Strategy
+from frab.db.models import Strategy
 from frab.db.session import session_scope
-
-
-def _utc() -> datetime:
-    return datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 async def _seed_strategy(session_factory, *, name: str = "test_strat") -> int:

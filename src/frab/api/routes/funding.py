@@ -1,49 +1,42 @@
-from datetime import datetime
-
+"""Funding rate routes — updated for new schema (exchange_id + coin + ts_ms)."""
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
-from frab.api.schemas import FundingRateOut
-from frab.db.models import FundingRate, Market
+from frab.db.models import FundingRate
 
 router = APIRouter()
 
 
-@router.get("/{coin}", response_model=list[FundingRateOut])
+@router.get("/{coin}")
 async def list_funding_rates(
     coin: str,
     exchange_id: int | None = None,
-    since: datetime | None = None,
     limit: int = 500,
     session: AsyncSession = Depends(get_session),
-) -> list[FundingRateOut]:
+) -> list[dict]:
     stmt = (
-        select(FundingRate, Market.coin)
-        .join(Market, FundingRate.market_id == Market.id)
-        .where(Market.coin == coin)
-        .order_by(FundingRate.ts.desc())
+        select(FundingRate)
+        .where(FundingRate.coin == coin)
+        .order_by(FundingRate.ts_ms.desc())
         .limit(limit)
     )
     if exchange_id is not None:
-        stmt = stmt.where(Market.exchange_id == exchange_id)
-    if since is not None:
-        stmt = stmt.where(FundingRate.ts >= since)
+        stmt = stmt.where(FundingRate.exchange_id == exchange_id)
 
     result = await session.execute(stmt)
-    rows = result.all()
+    rows = result.scalars().all()
 
-    out = []
-    for fr, coin_val in rows:
-        fr_dict = {
+    return [
+        {
             "id": fr.id,
-            "market_id": fr.market_id,
-            "coin": coin_val,
-            "ts": fr.ts,
+            "exchange_id": fr.exchange_id,
+            "coin": fr.coin,
+            "ts_ms": fr.ts_ms,
             "rate": fr.rate,
             "premium": fr.premium,
             "annualized_pct": fr.annualized_pct,
         }
-        out.append(FundingRateOut.model_validate(fr_dict))
-    return out
+        for fr in rows
+    ]

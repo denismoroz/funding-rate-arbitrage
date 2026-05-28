@@ -1,28 +1,19 @@
-from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Index, JSON, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Enum as SQLEnum,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from frab.engine.signals import Decision
-from frab.exchanges.base import Leg, Side
-
-
-def now_utc() -> datetime:
-    return datetime.now(UTC)
-
-
-class PositionMode(StrEnum):
-    LIVE = "live"
-
-
-class PositionStatus(StrEnum):
-    OPENING = "opening"
-    OPEN = "open"
-    CLOSING = "closing"
-    CLOSED = "closed"
-    FAILED = "failed"
+from frab.domain.enums import FarbState, Instrument, PositionStatus, Side
 
 
 class Base(DeclarativeBase):
@@ -33,11 +24,10 @@ class Exchange(Base):
     __tablename__ = "exchanges"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     funding_interval_h: Mapped[int]
     spot_taker_bps: Mapped[float]
     perp_taker_bps: Mapped[float]
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class Market(Base):
@@ -46,9 +36,9 @@ class Market(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id", ondelete="CASCADE"))
-    coin: Mapped[str]
-    has_spot: Mapped[bool] = mapped_column(default=True)
-    has_perp: Mapped[bool] = mapped_column(default=True)
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    has_spot: Mapped[bool] = mapped_column(Boolean, default=True)
+    has_perp: Mapped[bool] = mapped_column(Boolean, default=True)
     min_size: Mapped[float] = mapped_column(default=0.0)
     tick_size: Mapped[float] = mapped_column(default=0.0)
 
@@ -56,13 +46,14 @@ class Market(Base):
 class FundingRate(Base):
     __tablename__ = "funding_rates"
     __table_args__ = (
-        UniqueConstraint("market_id", "ts"),
-        Index("ix_funding_rates_lookup", "market_id", "ts"),
+        UniqueConstraint("exchange_id", "coin", "ts_ms"),
+        Index("ix_funding_rates_lookup", "exchange_id", "coin", "ts_ms"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id", ondelete="CASCADE"))
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     rate: Mapped[float]
     premium: Mapped[Optional[float]] = mapped_column(nullable=True)
     annualized_pct: Mapped[float]
@@ -71,13 +62,14 @@ class FundingRate(Base):
 class Price(Base):
     __tablename__ = "prices"
     __table_args__ = (
-        UniqueConstraint("market_id", "ts"),
-        Index("ix_prices_lookup", "market_id", "ts"),
+        UniqueConstraint("exchange_id", "coin", "ts_ms"),
+        Index("ix_prices_lookup", "exchange_id", "coin", "ts_ms"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id", ondelete="CASCADE"))
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     mark: Mapped[float]
     spot: Mapped[Optional[float]] = mapped_column(nullable=True)
     bid: Mapped[Optional[float]] = mapped_column(nullable=True)
@@ -86,99 +78,129 @@ class Price(Base):
 
 class Strategy(Base):
     __tablename__ = "strategies"
-    __table_args__ = (UniqueConstraint("name", "version"),)
+    __table_args__ = (Index("ix_strategies_status", "status"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str]
-    version: Mapped[str]
-    params_json: Mapped[dict] = mapped_column(JSON)
-    status: Mapped[str] = mapped_column(default="idle")
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    stopped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    instance_token: Mapped[Optional[str]] = mapped_column(nullable=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    version: Mapped[str] = mapped_column(String, nullable=False)
+    params_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="idle", nullable=False)
+    started_at_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    stopped_at_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
-class Signal(Base):
-    __tablename__ = "signals"
-    __table_args__ = (UniqueConstraint("strategy_id", "market_id", "ts"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
-    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    signal_value: Mapped[float]
-    regime_pass: Mapped[bool] = mapped_column(default=True)
-    action: Mapped[Decision] = mapped_column(SQLEnum(Decision, native_enum=False, length=10))
-
+# Positions and FarbPositions have a circular FK:
+#   positions.farb_position_id → farb_positions.id
+#   farb_positions.{spot,perp,margin}_position_id → positions.id
+#
+# Resolution: use use_alter=True on the farb_positions → positions FK side so
+# the FK constraint is added as a separate ALTER TABLE after both tables exist.
+# SQLite ignores FK DDL at CREATE time anyway (requires PRAGMA foreign_keys=ON
+# at runtime), but this keeps Alembic's autogenerate from complaining.
 
 class Position(Base):
     __tablename__ = "positions"
     __table_args__ = (
-        Index("ix_positions_status", "strategy_id", "status"),
-        Index("ix_positions_market_time", "market_id", "opened_at"),
+        Index("ix_positions_farb", "farb_position_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id", ondelete="CASCADE"))
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    instrument: Mapped[str] = mapped_column(
+        SQLEnum(Instrument, native_enum=False, length=12),
+        nullable=False,
+    )
+    side: Mapped[str] = mapped_column(
+        SQLEnum(Side, native_enum=False, length=8),
+        nullable=False,
+    )
+    qty: Mapped[float]
+    entry_price: Mapped[float]
+    opened_at: Mapped[int] = mapped_column(Integer, nullable=False)   # Unix ms UTC
+    closed_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(
+        SQLEnum(PositionStatus, native_enum=False, length=8),
+        nullable=False,
+    )
+    farb_position_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("farb_positions.id", use_alter=True, name="fk_positions_farb_position_id"),
+        nullable=True,
+    )
+
+
+class FarbPosition(Base):
+    __tablename__ = "farb_positions"
+    __table_args__ = (
+        Index("ix_farb_positions_state", "state"),
+        Index("ix_farb_positions_strategy", "strategy_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
-    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))
-    mode: Mapped[PositionMode] = mapped_column(SQLEnum(PositionMode, native_enum=False, length=10))
-    status: Mapped[PositionStatus] = mapped_column(SQLEnum(PositionStatus, native_enum=False, length=10))
-    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    spot_units: Mapped[float]
-    perp_units: Mapped[float]
-    entry_spot_price: Mapped[float]
-    entry_perp_price: Mapped[float]
-    exit_spot_price: Mapped[Optional[float]] = mapped_column(nullable=True)
-    exit_perp_price: Mapped[Optional[float]] = mapped_column(nullable=True)
-    realized_pnl: Mapped[float] = mapped_column(default=0.0)
-    funding_collected: Mapped[float] = mapped_column(default=0.0)
-    fees_paid: Mapped[float] = mapped_column(default=0.0)
-    # F1.2 portfolio columns:
-    exchange: Mapped[str] = mapped_column(default="hyperliquid", nullable=False)
-    state: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    notional_usd: Mapped[float] = mapped_column(default=0.0)
-    margin_reserve_usd: Mapped[float] = mapped_column(default=0.0)
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(
+        SQLEnum(FarbState, native_enum=False, length=20),
+        nullable=False,
+    )
+    state_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    spot_position_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("positions.id", use_alter=True, name="fk_farb_positions_spot_position_id"),
+        nullable=True,
+    )
+    perp_position_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("positions.id", use_alter=True, name="fk_farb_positions_perp_position_id"),
+        nullable=True,
+    )
+    margin_position_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("positions.id", use_alter=True, name="fk_farb_positions_margin_position_id"),
+        nullable=True,
+    )
+    opened_at: Mapped[int] = mapped_column(Integer, nullable=False)   # Unix ms UTC
+    closed_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class Fill(Base):
     __tablename__ = "fills"
-    __table_args__ = (UniqueConstraint("client_ref", name="uq_fills_client_ref"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     position_id: Mapped[int] = mapped_column(ForeignKey("positions.id", ondelete="CASCADE"))
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    leg: Mapped[Leg] = mapped_column(SQLEnum(Leg, native_enum=False, length=10))
-    side: Mapped[Side] = mapped_column(SQLEnum(Side, native_enum=False, length=10))
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    side: Mapped[str] = mapped_column(String, nullable=False)
     qty: Mapped[float]
     price: Mapped[float]
     fee: Mapped[float]
     slippage_bps: Mapped[float]
-    client_ref: Mapped[Optional[str]] = mapped_column(nullable=True)
+    is_paper: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
-class PositionFundingAccrual(Base):
-    """Per-tick funding delta attributed to a single open position.
-
-    Written by the strategy via DbRecorder on each hour-tick; reconcilers later
-    replace local estimates with HL's authoritative SUM.
-    """
-    __tablename__ = "position_funding_accruals"
-    __table_args__ = (Index("ix_pfa_position_ts", "position_id", "ts"),)
+class FundingAccrual(Base):
+    __tablename__ = "funding_accruals"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     position_id: Mapped[int] = mapped_column(ForeignKey("positions.id", ondelete="CASCADE"))
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    delta: Mapped[float]
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount: Mapped[float]
+
+
+class WalletSnapshot(Base):
+    __tablename__ = "wallet_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id", ondelete="CASCADE"))
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    balance: Mapped[float]
+    source: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class EquitySnapshot(Base):
     __tablename__ = "equity_snapshots"
-    __table_args__ = (Index("ix_equity_lookup", "strategy_id", "ts"),)
+    __table_args__ = (Index("ix_equity_snapshots_lookup", "strategy_id", "ts_ms"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     total_equity: Mapped[float]
     cash: Mapped[float]
     spot_value: Mapped[float]
@@ -188,29 +210,17 @@ class EquitySnapshot(Base):
     fees_cum: Mapped[float]
 
 
-class WalletSnapshot(Base):
-    __tablename__ = "wallet_snapshots"
-    __table_args__ = (Index("ix_wallet_snapshots_ts", "ts"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    account_value: Mapped[float]
-    perp_equity: Mapped[float]
-    spot_equity: Mapped[float]
-    withdrawable: Mapped[float]
-
-
 class Event(Base):
     __tablename__ = "events"
     __table_args__ = (
-        Index("ix_events_time", "ts"),
+        Index("ix_events_ts_ms", "ts_ms"),
         Index("ix_events_level", "level"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    level: Mapped[str]
-    source: Mapped[str]
-    kind: Mapped[str]
-    message: Mapped[str]
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    level: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
     payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

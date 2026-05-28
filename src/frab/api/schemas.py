@@ -75,36 +75,7 @@ class FillOut(_UtcAwareOut):
     slippage_bps: float
 
 
-class PositionOut(_UtcAwareOut):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    strategy_id: int
-    market_id: int
-    coin: str
-    mode: str
-    status: str
-    opened_at: datetime
-    closed_at: datetime | None
-    spot_units: float
-    perp_units: float
-    entry_spot_price: float
-    entry_perp_price: float
-    exit_spot_price: float | None
-    exit_perp_price: float | None
-    realized_pnl: float
-    funding_collected: float
-    fees_paid: float
-    fills: list[FillOut]
-    # MTM fields (None if latest price unavailable):
-    current_mark: float | None = None
-    spot_value_now: float | None = None
-    perp_unrealized: float | None = None
-    notional_at_entry: float | None = None
-    net_mtm: float | None = None
-    # Cost/projection fields:
-    slippage_cost: float | None = None      # Sum of bid-ask spread cost paid (open + close)
-    breakeven_at: datetime | None = None    # Projected breakeven date based on latest signal
+# PositionOut removed in Step 3 — new single-leg Position schema in Step 5.
 
 
 class SignalOut(_UtcAwareOut):
@@ -143,14 +114,6 @@ class EventOut(_UtcAwareOut):
     message: str
     payload_json: dict | None
 
-
-class PositionFundingAccrualOut(_UtcAwareOut):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    position_id: int
-    ts: datetime
-    delta: float
 
 
 class StrategyParamsOut(BaseModel):

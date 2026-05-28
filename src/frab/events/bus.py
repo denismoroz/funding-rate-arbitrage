@@ -66,9 +66,10 @@ class EventDbSink:
                 await self._persist(event)
 
     async def _persist(self, event: Event) -> None:
+        ts_ms = int(event.ts.timestamp() * 1000)
         async with session_scope(self._session_factory) as session:
             row = db_models.Event(
-                ts=event.ts,
+                ts_ms=ts_ms,
                 level=event.level,
                 source=event.source,
                 kind=event.kind,

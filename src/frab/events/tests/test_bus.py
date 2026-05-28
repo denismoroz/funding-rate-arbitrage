@@ -133,8 +133,8 @@ async def test_db_sink_persists_event(session_factory):
 
     assert len(rows) == 1
     row = rows[0]
-    # SQLite strips timezone info; compare naive UTC datetimes
-    assert row.ts.replace(tzinfo=None) == event.ts.replace(tzinfo=None)
+    expected_ts_ms = int(event.ts.timestamp() * 1000)
+    assert row.ts_ms == expected_ts_ms
     assert row.level == "INFO"
     assert row.source == "executor"
     assert row.kind == "fill"
@@ -166,15 +166,15 @@ async def test_db_sink_persists_multiple_events_in_order(session_factory):
 
     async with session_factory() as session:
         result = await session.execute(
-            select(db_models.Event).order_by(db_models.Event.ts)
+            select(db_models.Event).order_by(db_models.Event.ts_ms)
         )
         rows = result.scalars().all()
 
     assert len(rows) == 3
     for i, row in enumerate(rows):
         assert row.message == f"event {i}"
-        # SQLite strips timezone info; compare naive UTC datetimes
-        assert row.ts.replace(tzinfo=None) == events[i].ts.replace(tzinfo=None)
+        expected_ts_ms = int(events[i].ts.timestamp() * 1000)
+        assert row.ts_ms == expected_ts_ms
 
 
 async def test_db_sink_handles_none_payload(session_factory):

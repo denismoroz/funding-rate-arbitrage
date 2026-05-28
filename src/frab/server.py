@@ -15,12 +15,7 @@ from fastapi import FastAPI
 from sqlalchemy import select
 
 from frab.api.app import create_app
-from frab.db.models import (
-    Exchange,
-    FundingRate,
-    Market,
-    Strategy,
-)
+from frab.db.models import Exchange
 from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.events.bus import EventBus, EventDbSink

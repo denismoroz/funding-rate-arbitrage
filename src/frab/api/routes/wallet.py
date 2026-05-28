@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
 from frab.api.schemas import SpotBalanceItem, WalletBalance
-from frab.db.models import Market, Price
+from frab.db.models import Price
 
 router = APIRouter()
 
@@ -26,12 +26,11 @@ async def get_wallet(
     # Pre-fetch latest mark per coin from DB so HL spot holdings get priced.
     mark_prices: dict[str, float] = {}
     latest_q = await session.execute(
-        select(Market.coin, Price.mark, Price.ts)
-        .join(Price, Price.market_id == Market.id)
-        .order_by(Price.ts.desc())
+        select(Price.coin, Price.mark, Price.ts_ms)
+        .order_by(Price.ts_ms.desc())
         .limit(500)
     )
-    for coin, mark, _ts in latest_q.all():
+    for coin, mark, _ts_ms in latest_q.all():
         if coin not in mark_prices:
             mark_prices[coin] = float(mark)
 

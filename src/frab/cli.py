@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 import sqlalchemy
 
 from frab.settings import PROJECT_ROOT, get_settings
-from frab.db.models import Exchange, FundingRate, Market
+from frab.db.models import Exchange, FundingRate, Market, Strategy
 from frab.db.session import session_scope
 from frab.events.bus import EventBus
 from frab.exchanges.atomic import AtomicExecutor
@@ -55,13 +55,18 @@ def _sync_db_url(async_url: str) -> str:
 
 @app.command()
 def init_db() -> None:
-    """Initialise the database schema (Base.metadata.create_all)."""
+    """Initialise the database schema via Alembic (alembic upgrade head)."""
     settings = get_settings()
-    from frab.db.models import Base as _Base
-    sync_url = _sync_db_url(settings.db_url)
-    engine = sqlalchemy.create_engine(sync_url, future=True)
-    _Base.metadata.create_all(bind=engine)
-    engine.dispose()
+    # Ensure the data directory exists before Alembic tries to create the DB file.
+    from pathlib import Path
+    db_path = settings.db_url.replace("sqlite+aiosqlite:///", "")
+    if db_path and not db_path.startswith(":"):
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    alembic_cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
+    # env.py creates an async engine; pass the async URL (sqlite+aiosqlite://)
+    alembic_cfg.set_main_option("sqlalchemy.url", settings.db_url)
+    command.upgrade(alembic_cfg, "head")
     typer.echo(f"Database initialised: {settings.db_url}")
 
 
@@ -146,13 +151,13 @@ async def _backfill_funding_async(
         exc = result.scalar_one_or_none()
         if exc is None:
             raise RuntimeError(f"Exchange {EXCHANGE_NAME!r} not seeded; run `frab seed` first.")
-        markets_result = await s.execute(select(Market).where(Market.exchange_id == exc.id))
-        coin_to_market_id = {m.coin: m.id for m in markets_result.scalars().all()}
+        exchange_id = exc.id
+        seeded_coins_result = await s.execute(select(Market.coin).where(Market.exchange_id == exchange_id))
+        seeded_coins = {row for (row,) in seeded_coins_result.all()}
 
     counts: dict[str, int] = {}
     for coin in coins:
-        market_id = coin_to_market_id.get(coin)
-        if market_id is None:
+        if coin not in seeded_coins:
             typer.echo(f"  {coin}: unknown coin (not seeded), skipped")
             counts[coin] = 0
             continue
@@ -160,17 +165,20 @@ async def _backfill_funding_async(
         added = 0
         async with session_scope(session_factory) as s:
             for tick in ticks:
+                tick_ms = int(tick.ts.timestamp() * 1000)
                 existing = await s.scalar(
                     select(FundingRate.id).where(
-                        FundingRate.market_id == market_id,
-                        FundingRate.ts == tick.ts,
+                        FundingRate.exchange_id == exchange_id,
+                        FundingRate.coin == coin,
+                        FundingRate.ts_ms == tick_ms,
                     )
                 )
                 if existing is not None:
                     continue
                 s.add(FundingRate(
-                    market_id=market_id,
-                    ts=tick.ts,
+                    exchange_id=exchange_id,
+                    coin=coin,
+                    ts_ms=tick_ms,
                     rate=tick.rate,
                     premium=tick.premium,
                     annualized_pct=tick.annualized_pct,
@@ -565,7 +573,7 @@ async def _smoke_paired_impl(settings, coin: str, qty: float, wait_sec: float) -
     pos = await executor.get_position(coin)
     _hdr("=== position after open ===")
     if pos is not None:
-        typer.echo(f"  spot_units: {pos.spot_units}   perp_units: {pos.perp_units}")
+        typer.echo(f"  pos: {pos}")
     else:
         typer.echo("  (zero)")
 
@@ -594,7 +602,7 @@ async def _smoke_paired_impl(settings, coin: str, qty: float, wait_sec: float) -
     pos2 = await executor.get_position(coin)
     _hdr("=== position after close ===")
     if pos2 is not None:
-        typer.echo(f"  spot_units: {pos2.spot_units}   perp_units: {pos2.perp_units}")
+        typer.echo(f"  pos: {pos2}")
     else:
         typer.echo("  (zero)")
 
