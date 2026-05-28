@@ -32,7 +32,7 @@ from frab.exchanges.hyperliquid.tokens import (  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_COINS: tuple[str, ...] = ("BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE")
+DEFAULT_COINS: tuple[str, ...] = ("BTC", "ETH", "SOL")
 EXCHANGE_NAME = "hyperliquid"
 
 _STRATEGY_NAME = "two_phase"
