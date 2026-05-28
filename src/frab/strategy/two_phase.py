@@ -402,6 +402,7 @@ class TwoPhaseStrategy:
 
         # Evaluate each coin for entry
         candidates: list[tuple[str, float]] = []
+        current_hour = now_ms // 3_600_000
         for coin in p.coins:
             # Skip if already has a non-terminal position
             existing = await self.farb_repo.list_by_coin(
@@ -411,6 +412,24 @@ class TwoPhaseStrategy:
             # but we also want to skip if there's an OPEN position
             open_for_coin = [fp for fp in open_fps if fp.coin == coin]
             if existing or open_for_coin:
+                continue
+
+            # Cooldown: if a FP for this coin failed in the current hour, wait
+            # for the next hour-tick before retrying (avoids tight failure loop).
+            all_for_coin = await self.farb_repo.list_by_coin(
+                self.strategy_id, coin, include_terminal=True
+            )
+            last_failed_ms = max(
+                (int(fp.closed_at.timestamp() * 1000)
+                 for fp in all_for_coin
+                 if fp.state == FarbState.FAILED and fp.closed_at is not None),
+                default=None,
+            )
+            if last_failed_ms is not None and last_failed_ms // 3_600_000 == current_hour:
+                logger.info(
+                    "entry cooldown: coin=%s last_failed_at_ms=%d this_hour=%d, skip",
+                    coin, last_failed_ms, current_hour,
+                )
                 continue
 
             signal = await self._compute_signal(coin)

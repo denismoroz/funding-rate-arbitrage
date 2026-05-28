@@ -90,7 +90,7 @@ const WS_DOT: Record<WsStatus, string> = {
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" | "funding" }) {
+function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" | "funding" | "journal" }) {
   const now = useNow();
   const strategyId = useActiveStrategyId();
   const stratQ = useQuery({
@@ -139,6 +139,12 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
           className={route === "funding" ? "text-white" : "text-gray-400 hover:text-gray-200"}
         >
           Funding
+        </a>
+        <a
+          href="#/journal"
+          className={route === "journal" ? "text-white" : "text-gray-400 hover:text-gray-200"}
+        >
+          Journal
         </a>
       </nav>
 
