@@ -1,0 +1,334 @@
+"""Tests for EngineLoop (src/frab/engine/loop.py).
+
+Uses mocker (pytest-mock) to mock Exchange, Strategy, Ledger. Time is
+controlled by patching frab.engine.loop.utcnow_ms. No real sleeping beyond
+a tiny minute_interval_s (0.05 s) to let the loop iterate quickly.
+"""
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
+import pytest
+import pytest_asyncio
+
+from frab.engine.loop import EngineLoop, utcnow_ms
+from frab.events.bus import EventBus
+from frab.exchanges.protocol import FundingTick, Quote, WalletKind
+
+
+# ─── Fixtures ────────────────────────────────────────────────────────────────
+
+def _make_quote(coin: str = "BTC") -> Quote:
+    return Quote(coin=coin, mark=50000.0, spot=49900.0, bid=49950.0, ask=50050.0, ts_ms=1_700_000_000_000)
+
+
+def _make_funding_tick(coin: str = "BTC") -> FundingTick:
+    return FundingTick(coin=coin, ts_ms=1_700_000_000_000, rate=0.0001, premium=0.0001, annualized_pct=8.76)
+
+
+@pytest.fixture
+def mock_exchange():
+    exc = MagicMock()
+    exc.name = "hyperliquid"
+    exc.get_quote = AsyncMock(side_effect=lambda coin: _make_quote(coin))
+    exc.get_funding_rate = AsyncMock(side_effect=lambda coin: _make_funding_tick(coin))
+    exc.get_wallet = AsyncMock(return_value=1000.0)
+    return exc
+
+
+@pytest.fixture
+def mock_strategy():
+    strat = MagicMock()
+    strat.strategy_id = 1
+    strat.on_minute_tick = AsyncMock()
+    strat.on_hour_tick = AsyncMock()
+    return strat
+
+
+@pytest.fixture
+def mock_ledger():
+    led = MagicMock()
+    led.compute_and_save = AsyncMock()
+    return led
+
+
+@pytest.fixture
+def mock_session_factory():
+    """Minimal session_factory that won't be called in unit tests (exchange id is cached)."""
+    return MagicMock()
+
+
+@pytest.fixture
+def event_bus():
+    return EventBus()
+
+
+def make_loop(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+    event_bus=None, coins=None, minute_interval_s=0.05,
+    wallet_coins=None,
+):
+    coins = coins or ["BTC", "ETH"]
+    return EngineLoop(
+        strategy=mock_strategy,
+        exchange=mock_exchange,
+        ledger=mock_ledger,
+        session_factory=mock_session_factory,
+        coins=coins,
+        event_bus=event_bus,
+        minute_interval_s=minute_interval_s,
+        wallet_coins=wallet_coins,
+    )
+
+
+# ─── Helper: run loop for a short duration then stop ─────────────────────────
+
+async def _run_loop_briefly(loop: EngineLoop, duration_s: float = 0.25) -> None:
+    await loop.start()
+    await asyncio.sleep(duration_s)
+    await loop.stop()
+
+
+# ─── 1. _minute_tick: quotes fetched, prices saved, strategy + ledger called ─
+
+@pytest.mark.asyncio
+async def test_minute_tick_fetches_quotes_and_calls_strategy_and_ledger(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, mock_session_factory, coins=["BTC", "ETH"])
+
+    # Patch exchange_id resolution and _save_prices so no real DB is needed
+    loop._exchange_id_cache = 1
+    loop._save_prices = AsyncMock()
+
+    now_ms = 1_700_000_060_000
+    await loop._minute_tick(now_ms)
+
+    # get_quote called once per coin
+    assert mock_exchange.get_quote.call_count == 2
+    mock_exchange.get_quote.assert_any_call("BTC")
+    mock_exchange.get_quote.assert_any_call("ETH")
+
+    # strategy.on_minute_tick called
+    mock_strategy.on_minute_tick.assert_awaited_once_with(now_ms=now_ms)
+
+    # ledger.compute_and_save called with strategy_id and quote dict
+    mock_ledger.compute_and_save.assert_awaited_once()
+    args, kwargs = mock_ledger.compute_and_save.call_args
+    assert args[0] == mock_strategy.strategy_id  # strategy_id
+    assert "BTC" in args[1]
+    assert "ETH" in args[1]
+
+
+# ─── 2. _hour_tick: funding fetched, saved, wallet refreshed, strategy called ─
+
+@pytest.mark.asyncio
+async def test_hour_tick_fetches_funding_and_refreshes_wallets_and_calls_strategy(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    wallet_coins = [("USDC", WalletKind.SPOT), ("USDC", WalletKind.PERP)]
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        coins=["BTC", "ETH"], wallet_coins=wallet_coins,
+    )
+
+    loop._exchange_id_cache = 1
+    loop._save_funding = AsyncMock()
+
+    now_ms = 1_700_003_600_000
+    await loop._hour_tick(now_ms)
+
+    # get_funding_rate called once per coin
+    assert mock_exchange.get_funding_rate.call_count == 2
+    mock_exchange.get_funding_rate.assert_any_call("BTC")
+    mock_exchange.get_funding_rate.assert_any_call("ETH")
+
+    # get_wallet called for each wallet_coin pair
+    assert mock_exchange.get_wallet.call_count == 2
+    mock_exchange.get_wallet.assert_any_call("USDC", WalletKind.SPOT)
+    mock_exchange.get_wallet.assert_any_call("USDC", WalletKind.PERP)
+
+    # strategy.on_hour_tick called
+    mock_strategy.on_hour_tick.assert_awaited_once_with(now_ms=now_ms)
+
+
+# ─── 3. Hour boundary detection ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_hour_tick_fires_on_hour_boundary(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    """Minute tick at 12:59:30 should NOT fire hour tick. At 13:00:00 it should."""
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, mock_session_factory)
+    loop._exchange_id_cache = 1
+    loop._save_prices = AsyncMock()
+    loop._save_funding = AsyncMock()
+
+    # Simulate 12:59:30 — hour index = (ts_ms // 3_600_000)
+    # Choose explicit ms values: hour 0 is 0-3599999, hour 1 is 3600000-7199999, etc.
+    ms_12_59 = 1_700_000_000_000  # arbitrary, just need two different hours
+    ms_13_00 = ms_12_59 + 3_600_000
+
+    hour_before = ms_12_59 // 3_600_000
+    hour_after = ms_13_00 // 3_600_000
+    assert hour_after != hour_before, "test setup: hours must differ"
+
+    # First minute tick — hour changes from None → hour_before → hour tick fires
+    loop._last_hour = None
+    # Manually simulate what _run does (without actual sleeping):
+    # At ms_12_59 → first tick, _last_hour is None so hour tick fires (initialisation)
+    current_hour = ms_12_59 // 3_600_000
+    await loop._minute_tick(ms_12_59)
+    should_run_hour = loop._last_hour is None or current_hour != loop._last_hour
+    if should_run_hour:
+        await loop._hour_tick(ms_12_59)
+    loop._last_hour = current_hour
+
+    # Hour tick ran once
+    assert mock_strategy.on_hour_tick.call_count == 1
+
+    # Second minute tick within same hour — no hour tick
+    same_hour_ms = ms_12_59 + 30_000
+    current_hour2 = same_hour_ms // 3_600_000
+    assert current_hour2 == current_hour
+    await loop._minute_tick(same_hour_ms)
+    should_run_hour2 = loop._last_hour is None or current_hour2 != loop._last_hour
+    if should_run_hour2:
+        await loop._hour_tick(same_hour_ms)
+        loop._last_hour = current_hour2
+
+    # Still only one hour tick
+    assert mock_strategy.on_hour_tick.call_count == 1
+
+    # Third tick — new hour — hour tick must fire
+    current_hour3 = ms_13_00 // 3_600_000
+    await loop._minute_tick(ms_13_00)
+    should_run_hour3 = loop._last_hour is None or current_hour3 != loop._last_hour
+    if should_run_hour3:
+        await loop._hour_tick(ms_13_00)
+        loop._last_hour = current_hour3
+
+    assert mock_strategy.on_hour_tick.call_count == 2
+
+
+# ─── 4. strategy.on_minute_tick raises → error logged, loop continues ─────────
+
+@pytest.mark.asyncio
+async def test_minute_tick_error_does_not_kill_loop(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory, event_bus,
+):
+    """on_minute_tick raises → error event logged; loop keeps ticking."""
+    call_count = 0
+
+    async def flaky_on_minute_tick(*, now_ms):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("strategy exploded")
+
+    mock_strategy.on_minute_tick = flaky_on_minute_tick
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        event_bus=event_bus, minute_interval_s=0.05,
+    )
+    loop._exchange_id_cache = 1
+    loop._save_prices = AsyncMock()
+    loop._last_hour = 999999  # prevent hour ticks during test
+
+    await _run_loop_briefly(loop, duration_s=0.35)
+
+    # Loop survived and strategy was called more than once
+    assert call_count >= 2
+
+
+# ─── 5. exchange.get_quote fails for one coin → other coins still saved ────────
+
+@pytest.mark.asyncio
+async def test_quote_failure_one_coin_other_coins_still_fetched(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    """If get_quote raises for one coin, the other coins should still be fetched."""
+    async def get_quote_side(coin):
+        if coin == "BTC":
+            raise ConnectionError("HL unreachable")
+        return _make_quote(coin)
+
+    mock_exchange.get_quote = AsyncMock(side_effect=get_quote_side)
+
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        coins=["BTC", "ETH", "SOL"],
+    )
+    loop._exchange_id_cache = 1
+    loop._save_prices = AsyncMock()
+
+    now_ms = 1_700_000_060_000
+    await loop._minute_tick(now_ms)
+
+    # BTC failed, ETH and SOL succeeded
+    assert mock_exchange.get_quote.call_count == 3
+    # _save_prices was called with the two successful quotes
+    loop._save_prices.assert_awaited_once()
+    saved_quotes = loop._save_prices.call_args[0][0]
+    saved_coins = {q.coin for q in saved_quotes}
+    assert "BTC" not in saved_coins
+    assert "ETH" in saved_coins
+    assert "SOL" in saved_coins
+
+
+# ─── 6. asyncio.CancelledError propagates ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_cancelled_error_propagates_through_minute_tick(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    mock_exchange.get_quote = AsyncMock(side_effect=asyncio.CancelledError)
+
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, mock_session_factory)
+    loop._exchange_id_cache = 1
+
+    with pytest.raises(asyncio.CancelledError):
+        await loop._minute_tick(1_700_000_000_000)
+
+
+# ─── 7. start() is idempotent; second start is a no-op ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_start_is_idempotent(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, mock_session_factory)
+    loop._exchange_id_cache = 1
+    loop._last_hour = 999999  # suppress hour ticks
+
+    await loop.start()
+    task_first = loop._task
+
+    # Second start should not spawn a new task
+    await loop.start()
+    assert loop._task is task_first, "second start() must not replace the running task"
+
+    await loop.stop()
+
+
+# ─── 8. stop() cancels cleanly; subsequent stop() is no-op ────────────────────
+
+@pytest.mark.asyncio
+async def test_stop_cancels_and_subsequent_stop_is_noop(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, mock_session_factory)
+    loop._exchange_id_cache = 1
+    loop._last_hour = 999999
+
+    await loop.start()
+    assert loop._task is not None
+    assert not loop._task.done()
+
+    await loop.stop()
+    assert loop._task.done()
+
+    # Subsequent stop must not raise
+    await loop.stop()

@@ -136,9 +136,11 @@ async def test_get_equity_returns_snapshots_for_strategy(api_client, session_fac
 # ---------------------------------------------------------------------------
 
 
-async def test_get_positions_returns_503(api_client):
+async def test_get_positions_returns_list(api_client):
+    # Route unfrozen in Step 8: returns 200 + empty list when no positions exist
     resp = await api_client.get("/api/positions")
-    assert resp.status_code == 503
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
 
 
 # ---------------------------------------------------------------------------
