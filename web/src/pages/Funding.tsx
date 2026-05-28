@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart,
@@ -10,15 +10,16 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
-import { fetchFundingHistory, tsMsToDate } from "../lib/api";
+import { fetchFundingHistory, fetchStrategy, tsMsToDate } from "../lib/api";
 import { formatNumber, formatRelative } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { useLiveEvents } from "../lib/useLiveEvents";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Header } from "./Dashboard";
 
-// Default coins to show (can be expanded via strategy params in the future)
-const DEFAULT_COINS = ["BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE"];
+// Fallback coin list used while the strategy params query is loading or
+// if no active strategy is configured.
+const FALLBACK_COINS = ["BTC", "ETH", "SOL"];
 
 function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
@@ -135,7 +136,18 @@ function CoinFundingCard({ coin }: { coin: string }) {
 export default function Funding() {
   const strategyId = useActiveStrategyId();
   const { status } = useLiveEvents(strategyId);
-  const [coins] = useState<string[]>(DEFAULT_COINS);
+  const stratQ = useQuery({
+    queryKey: ["strategy", strategyId],
+    queryFn: () => fetchStrategy(strategyId!),
+    enabled: !!strategyId,
+  });
+  const [coins, setCoins] = useState<string[]>(FALLBACK_COINS);
+  useEffect(() => {
+    const fromParams = stratQ.data?.params_json?.coins;
+    if (Array.isArray(fromParams) && fromParams.length > 0) {
+      setCoins(fromParams as string[]);
+    }
+  }, [stratQ.data]);
 
   return (
     <div className="min-h-screen bg-gray-50">
