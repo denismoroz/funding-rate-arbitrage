@@ -137,5 +137,9 @@ async def force_hour_tick(strategy_id: int, request: Request) -> dict:
         engine_loop._strategy.params = TwoPhaseParams.from_dict(dict(row.params_json))
 
     now_ms = int(time.time() * 1000)
-    await engine_loop._hour_tick(now_ms)
+    engine_loop._strategy.force_entry_cooldown_bypass = True
+    try:
+        await engine_loop._hour_tick(now_ms)
+    finally:
+        engine_loop._strategy.force_entry_cooldown_bypass = False
     return {"status": "ok", "ts_ms": now_ms, "message": "hour tick forced (params reloaded)"}

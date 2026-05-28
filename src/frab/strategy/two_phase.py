@@ -103,6 +103,9 @@ class TwoPhaseStrategy:
         self.farb_repo = farb_repo
         self._sf = session_factory
         self.params = params
+        # Set by the force-tick API to bypass the same-hour entry cooldown on a
+        # single hour_tick invocation. The API resets it after _hour_tick returns.
+        self.force_entry_cooldown_bypass = False
 
     # ── Public entry points ───────────────────────────────────────────────────
 
@@ -425,7 +428,11 @@ class TwoPhaseStrategy:
                  if fp.state == FarbState.FAILED and fp.closed_at is not None),
                 default=None,
             )
-            if last_failed_ms is not None and last_failed_ms // 3_600_000 == current_hour:
+            if (
+                last_failed_ms is not None
+                and last_failed_ms // 3_600_000 == current_hour
+                and not self.force_entry_cooldown_bypass
+            ):
                 logger.info(
                     "entry cooldown: coin=%s last_failed_at_ms=%d this_hour=%d, skip",
                     coin, last_failed_ms, current_hour,
