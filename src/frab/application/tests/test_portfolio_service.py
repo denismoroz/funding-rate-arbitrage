@@ -326,9 +326,8 @@ async def test_apply_close_credits_cash_and_bumps_pnl_cum(session_factory):
         released_notional_usd=500.0,
     )
     await svc.apply_close(closed)
-    # cash += released_notional + released_margin = 400 + 500 + 100 = 1000
-    # realized_pnl flows through _realized_pnl_cum only
-    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(1000.0)
+    # cash += released_notional + released_margin + realized_pnl = 400 + 500 + 100 + 25 = 1025
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(1025.0)
     assert svc._realized_pnl_cum == pytest.approx(25.0)
 
 
@@ -424,7 +423,8 @@ async def test_record_fill_fees(session_factory):
 
     await svc.record_fill_fees(Exchange.HYPERLIQUID, "BTC", 3.5)
 
-    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(cash_before)
+    # real-wallet: fees debit cash
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(cash_before - 3.5)
     assert svc._fees_cum == pytest.approx(3.5)
     assert svc._positions[(Exchange.HYPERLIQUID, "BTC")].fees_paid == pytest.approx(3.5)
 
@@ -451,7 +451,8 @@ async def test_accrue_funding(session_factory):
 
     await svc.accrue_funding(Exchange.HYPERLIQUID, "BTC", 7.0)
 
-    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(cash_before)
+    # real-wallet: funding credits cash
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(cash_before + 7.0)
     assert svc._funding_cum == pytest.approx(7.0)
     assert svc._positions[(Exchange.HYPERLIQUID, "BTC")].funding_collected == pytest.approx(7.0)
 
@@ -578,19 +579,21 @@ async def test_equity_matches_domain_formula_after_full_cycle(session_factory):
     assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(450.0)
 
     await svc.record_fill_fees(Exchange.HYPERLIQUID, "BTC", 5.0)
-    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(450.0)
+    # real-wallet: fees debit cash: 450 - 5 = 445
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(445.0)
     assert svc._fees_cum == pytest.approx(5.0)
 
     await svc.accrue_funding(Exchange.HYPERLIQUID, "BTC", 3.0)
-    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(450.0)
+    # real-wallet: funding credits cash: 445 + 3 = 448
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(448.0)
     assert svc._funding_cum == pytest.approx(3.0)
 
     # flat mark: entry_spot_price == entry_perp_price == 50000
     marks = {(Exchange.HYPERLIQUID, "BTC"): 50000.0}
     eq = svc.equity(marks)
 
-    # 450 + spot_value(500) + perp_unrealized(0) + margin_reserved(50)
-    # + realized_pnl_cum(0) + funding_cum(3) - fees_cum(5) = 998
+    # 448 (cash) + spot_value(500) + perp_unrealized(0) + margin_reserved(50) = 998
+    # fees and funding are already baked into cash — no double-count
     assert eq.total_equity == pytest.approx(998.0)
 
 
@@ -686,9 +689,107 @@ async def test_equity_unchanged_by_flat_close(session_factory):
     )
     await svc.apply_close(closed)
 
-    # cash = 450 + 500 + 50 = 1000
-    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(1000.0)
+    # cash = 448 (after fees/funding) + 500 (released_notional) + 50 (released_margin) + 0 (realized_pnl) = 998
+    assert svc._cash_per_exchange[Exchange.HYPERLIQUID] == pytest.approx(998.0)
 
-    # equity = 1000 + 0(spot) + 0(perp_unreal) + 0(margin) + 0(realized) + 3(funding) - 5(fees) = 998
+    # equity = 998 + 0(spot) + 0(perp_unreal) + 0(margin) = 998
     eq_after = svc.equity({})
     assert eq_after.total_equity == pytest.approx(998.0)
+
+
+# ---------------------------------------------------------------------------
+# 22. Real-wallet invariant: open → fees → funding → close round-trip
+#     equity must equal a single closed-form derived from real-wallet bookkeeping.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry_price,exit_price,fees,funding,notional,margin", [
+    (100.0, 100.0, 0.0,  0.0,   500.0, 50.0),   # flat, no cost
+    (100.0, 110.0, 2.0,  1.5,  500.0, 50.0),   # spot up, perp down, fees/funding
+    (100.0,  90.0, 3.0,  5.0,  500.0, 75.0),   # spot down, perp up, funding covers
+    (100.0, 100.0, 4.0, 10.0,  800.0, 80.0),   # flat price, net gain from funding
+])
+async def test_equity_invariant_open_close_round_trip(
+    session_factory,
+    entry_price: float,
+    exit_price: float,
+    fees: float,
+    funding: float,
+    notional: float,
+    margin: float,
+) -> None:
+    """Equity equals the real-wallet closed-form after a full round-trip.
+
+    Cash flow model (real-wallet semantics):
+      - apply_open:        cash -= notional + margin
+      - record_fill_fees:  cash -= fees
+      - accrue_funding:    cash += funding
+      - apply_close:       cash += released_notional (qty*exit_price)
+                                 + released_margin
+                                 + realized_pnl (perp PnL only: (entry-exit)*qty)
+
+    Net cash after round-trip:
+        initial
+        - notional - margin          (open)
+        - fees                       (record_fill_fees)
+        + funding                    (accrue_funding)
+        + qty*exit_price             (released_notional)
+        + margin                     (released_margin)
+        + (entry-exit)*qty           (perp PnL)
+      = initial - fees + funding
+        + qty*(entry_price + exit_price - exit_price - entry_price + exit_price)
+        ...simplifying: initial - fees + funding
+        (the spot leg proceeds plus the perp settlement exactly recover the original notional)
+
+    Concretely:
+        released_notional = qty * exit_price
+        perp_pnl          = (entry - exit) * qty
+        released_notional + perp_pnl = qty*exit_price + (entry-exit)*qty
+                                     = qty * entry_price   (= original notional)
+        + released_margin → total = original_notional + original_margin
+
+    So equity = initial_cash - fees + funding.
+    """
+    initial_cash = 2000.0
+    qty = notional / entry_price  # spot_qty = perp_qty
+
+    svc = PortfolioService(
+        session_factory,
+        strategy_id=1,
+        initial_cash_per_exchange={Exchange.HYPERLIQUID: initial_cash},
+    )
+    pos = Position(
+        exchange=Exchange.HYPERLIQUID,
+        coin="BTC",
+        spot_qty=qty,
+        perp_qty=qty,
+        notional_usd=notional,
+        margin_reserve_usd=margin,
+        entry_spot_price=entry_price,
+        entry_perp_price=entry_price,
+        opened_at=_now(),
+    )
+    await svc.apply_open(pos)
+    await svc.record_fill_fees(Exchange.HYPERLIQUID, "BTC", fees)
+    await svc.accrue_funding(Exchange.HYPERLIQUID, "BTC", funding)
+
+    # Perp PnL only (short position: profit when price falls)
+    perp_pnl = (entry_price - exit_price) * qty
+
+    closed = ClosedPosition(
+        exchange=Exchange.HYPERLIQUID,
+        coin="BTC",
+        closed_at=_now(),
+        realized_pnl=perp_pnl,
+        fees_paid_total=fees,
+        funding_collected_total=funding,
+        released_margin_usd=margin,
+        released_notional_usd=qty * exit_price,
+    )
+    await svc.apply_close(closed)
+
+    # Real-wallet closed-form: perp PnL + spot proceeds = original notional
+    expected_equity = initial_cash - fees + funding
+
+    eq = svc.equity({})
+    assert eq.total_equity == pytest.approx(expected_equity, rel=1e-9)

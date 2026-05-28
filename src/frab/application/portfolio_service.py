@@ -175,8 +175,8 @@ class PortfolioService:
 
     async def apply_close(self, closed: ClosedPosition) -> None:
         """Mark matching DB Position row CLOSED; remove from _positions; credit
-        released_margin_usd + realized_pnl back to cash; increment
-        _realized_pnl_cum.
+        released_notional_usd + released_margin_usd + realized_pnl to cash;
+        increment _realized_pnl_cum (reporting counter only).
         """
         async with session_scope(self._session_factory) as session:
             market_result = await session.execute(
@@ -206,7 +206,7 @@ class PortfolioService:
         self._positions.pop(key, None)
         if closed.exchange in self._cash_per_exchange:
             self._cash_per_exchange[closed.exchange] += (
-                closed.released_notional_usd + closed.released_margin_usd
+                closed.released_notional_usd + closed.released_margin_usd + closed.realized_pnl
             )
         self._realized_pnl_cum += closed.realized_pnl
 
@@ -263,8 +263,8 @@ class PortfolioService:
     async def record_fill_fees(
         self, exchange: Exchange, coin: str, fees: float
     ) -> None:
-        """Debit cash; increment _fees_cum; increment in-memory and DB
-        Position.fees_paid by `fees`.
+        """Debit cash (real-wallet semantics); increment _fees_cum (reporting
+        counter); increment in-memory and DB Position.fees_paid by `fees`.
         """
         async with session_scope(self._session_factory) as session:
             market_result = await session.execute(
@@ -306,12 +306,14 @@ class PortfolioService:
                 state=old.state,
             )
         self._fees_cum += fees
+        if exchange in self._cash_per_exchange:
+            self._cash_per_exchange[exchange] -= fees
 
     async def accrue_funding(
         self, exchange: Exchange, coin: str, amount: float
     ) -> None:
-        """Credit cash; increment _funding_cum; increment in-memory and DB
-        Position.funding_collected by `amount`.
+        """Credit cash (real-wallet semantics); increment _funding_cum (reporting
+        counter); increment in-memory and DB Position.funding_collected by `amount`.
         """
         async with session_scope(self._session_factory) as session:
             market_result = await session.execute(
@@ -353,6 +355,8 @@ class PortfolioService:
                 state=old.state,
             )
         self._funding_cum += amount
+        if exchange in self._cash_per_exchange:
+            self._cash_per_exchange[exchange] += amount
 
     async def set_fees_cum(self, value: float) -> None:
         """Authoritative overwrite from reconciler."""
@@ -363,7 +367,17 @@ class PortfolioService:
         self._funding_cum = value
 
     def equity(self, marks: dict[tuple[Exchange, str], float]) -> Equity:
-        """Synchronous; build Portfolio snapshot (no DB write) and call .equity()."""
+        """Synchronous; compute equity from real-wallet cash semantics.
+
+        Fees, funding, and realized PnL are already baked into
+        _cash_per_exchange (debited/credited on each mutator call). The
+        formula is therefore:
+
+            total = cash_total + spot_value + perp_unrealized + margin_reserved
+
+        The _realized_pnl_cum, _funding_cum, _fees_cum fields are kept for
+        dashboard/reporting but are NOT double-counted here.
+        """
         cash_total = sum(self._cash_per_exchange.values())
         positions = tuple(self._positions.values())
         spot_value = sum(
@@ -374,15 +388,7 @@ class PortfolioService:
             for p in positions
         )
         margin_reserved = sum(p.margin_reserve_usd for p in positions)
-        total_equity = (
-            cash_total
-            + spot_value
-            + perp_unrealized
-            + margin_reserved
-            + self._realized_pnl_cum
-            + self._funding_cum
-            - self._fees_cum
-        )
+        total_equity = cash_total + spot_value + perp_unrealized + margin_reserved
         return Equity(
             ts=datetime.now(UTC),
             total_equity=total_equity,
