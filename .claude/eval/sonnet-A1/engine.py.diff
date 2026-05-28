@@ -1,0 +1,390 @@
+diff --git a/research/engine.py b/research/engine.py
+index 8da721c..c947587 100644
+--- a/research/engine.py
++++ b/research/engine.py
+@@ -30,6 +30,17 @@ PERP_TAKER      = 0.00035   # 0.035% Hyperliquid perp
+ SPOT_TAKER      = 0.00070   # 0.07%  Hyperliquid spot
+ HOURS_PER_YEAR  = 8760
+ 
++# Maintenance margin ratios (Hyperliquid approximations)
++DEFAULT_MAINT_RATIO = {
++    "BTC":  0.01,
++    "ETH":  0.01,
++    "SOL":  0.025,
++    "AVAX": 0.025,
++    "LINK": 0.025,
++    "AAVE": 0.05,
++    "DOGE": 0.05,
++}
++
+ ENTRY_THRESHOLD = 0.20
+ EXIT_THRESHOLD  = -0.05
+ MIN_HOLD_HOURS  = 72
+@@ -92,12 +103,33 @@ def simulate(
+     momentum_window: int   = 0,   # часы; вход только если funding >= среднего за окно
+     track_capital:   bool  = False,
+     hedge_signal:    np.ndarray = None,   # bool[n], только для strategy="B_hedge"
++    # --- Margin model (keyword-only; backwards-compat when per_coin_leverage=None) ---
++    coin: "str | None" = None,
++    per_coin_leverage: "dict[str, float] | None" = None,
++    per_coin_maint_ratio: "dict[str, float] | None" = None,
++    margin_buffer_x: float = 3.0,
++    top_up_trigger: float = 2.0,
++    healthy_ratio: float = 3.0,
+ ):
+     """
+     Возвращает (pnl_arr, info_dict).
+       pnl_arr — почасовые ΔEquity (длина = len(df))
+       info_dict — trades, hours_in_position, capital_arr (если track_capital)
++
++    Margin model активируется когда per_coin_leverage is not None.
++    В этом случае используются отдельные spot_cash / perp_cash кошельки
++    с резервированием маржи, top-up логикой и форс-клозом при нехватке.
++    Без margin model (per_coin_leverage=None) поведение байт-идентично старому коду.
+     """
++    # Validate margin model params
++    margin_active = per_coin_leverage is not None
++    if margin_active:
++        if coin is None:
++            raise ValueError("coin must be specified when per_coin_leverage is provided")
++        lev = per_coin_leverage[coin]
++        maint_ratio_map = per_coin_maint_ratio if per_coin_maint_ratio is not None else DEFAULT_MAINT_RATIO
++        mr = maint_ratio_map[coin]
++
+     close = df["close"].values
+     rates = df["fundingRate"].values
+     ma200 = df["ma200"].values   if "ma200"   in df.columns else None
+@@ -119,7 +151,23 @@ def simulate(
+     pnl_arr = np.zeros(n)
+     capital_arr = np.zeros(n) if track_capital else None
+ 
+-    cash        = TOTAL_CAPITAL
++    # Margin model counters (only used when margin_active)
++    if margin_active:
++        n_liquidations         = 0
++        n_top_ups              = 0
++        n_forced_closes        = 0
++        n_skipped_opens_capital = 0
++        min_margin_ratio       = float("nan")
++        peak_committed_capital = 0.0
++
++    # Cash / wallet state
++    if margin_active:
++        spot_cash   = TOTAL_CAPITAL
++        perp_cash   = 0.0
++        cash        = 0.0   # unused sentinel (never read in margin path)
++    else:
++        cash        = TOTAL_CAPITAL
++
+     units_spot  = 0.0
+     short_size  = 0.0
+     entry_price = 0.0
+@@ -142,8 +190,12 @@ def simulate(
+         P0 = close[0]
+         units_spot = POSITION_SIZE / P0
+         units_initial = units_spot
+-        cash -= POSITION_SIZE
+-        cash -= POSITION_SIZE * SPOT_TAKER
++        if margin_active:
++            spot_cash -= POSITION_SIZE
++            spot_cash -= POSITION_SIZE * SPOT_TAKER
++        else:
++            cash -= POSITION_SIZE
++            cash -= POSITION_SIZE * SPOT_TAKER
+         spot_fees_total += POSITION_SIZE * SPOT_TAKER
+ 
+     equity_prev = TOTAL_CAPITAL
+@@ -164,30 +216,135 @@ def simulate(
+         # 2) Funding (по текущей notional)
+         if in_position:
+             f = short_size * P * rate
+-            cash += f
++            if margin_active:
++                perp_cash += f
++            else:
++                cash += f
+             funding_total += f
+             hours_in += 1
+ 
++            # Margin checks (only when margin_active)
++            if margin_active:
++                notional = short_size * P
++                maintenance = notional * mr
++                unrealized_perp_pnl = short_size * (entry_price - P)
++                perp_equity = perp_cash + unrealized_perp_pnl
++
++                if maintenance > 0:
++                    margin_ratio = perp_equity / maintenance
++                else:
++                    margin_ratio = float("inf")
++
++                # Track min margin ratio
++                if not np.isfinite(min_margin_ratio) or margin_ratio < min_margin_ratio:
++                    min_margin_ratio = margin_ratio
++
++                # Liquidation check
++                if perp_equity <= maintenance:
++                    # Lose all margin — set realized = -perp_cash
++                    realized = -perp_cash
++                    short_realized += realized
++                    perp_cash = 0.0
++                    short_size = 0.0
++                    entry_price = 0.0
++                    in_position = False
++                    n_liquidations += 1
++                    # Unwind spot leg for A_cycle on liquidation
++                    if strategy == "A_cycle":
++                        spot_cash += units_spot * P
++                        sfee = units_spot * P * SPOT_TAKER
++                        spot_cash -= sfee
++                        spot_fees_total += sfee
++                        units_spot = 0.0
++
++                elif margin_ratio < top_up_trigger:
++                    # Attempt top-up
++                    target_perp = healthy_ratio * maintenance
++                    top_up = target_perp - perp_equity
++                    if spot_cash >= top_up:
++                        spot_cash -= top_up
++                        perp_cash += top_up
++                        n_top_ups += 1
++                    else:
++                        # Partial top-up
++                        avail = max(0.0, spot_cash)
++                        spot_cash -= avail
++                        perp_cash += avail
++                        # Re-compute margin ratio after partial top-up
++                        perp_equity2 = perp_cash + unrealized_perp_pnl
++                        if maintenance > 0:
++                            margin_ratio2 = perp_equity2 / maintenance
++                        else:
++                            margin_ratio2 = float("inf")
++                        if margin_ratio2 < 1.5:
++                            # Forced close
++                            realized = short_size * (entry_price - P)
++                            perp_cash += realized
++                            short_realized += realized
++                            fee = short_size * P * PERP_TAKER
++                            perp_cash -= fee
++                            perp_fees_total += fee
++                            # Release remaining perp_cash to spot_cash
++                            if perp_cash > 0:
++                                spot_cash += perp_cash
++                            perp_cash = 0.0
++                            short_size = 0.0
++                            entry_price = 0.0
++                            in_position = False
++                            n_forced_closes += 1
++                            # Unwind spot leg for A_cycle
++                            if strategy == "A_cycle":
++                                spot_cash += units_spot * P
++                                sfee = units_spot * P * SPOT_TAKER
++                                spot_cash -= sfee
++                                spot_fees_total += sfee
++                                units_spot = 0.0
++
+         # 3) Entry / exit
+         if strategy == "B_hedge":
+             want_hedge = bool(hedge_signal[i]) if hedge_signal is not None else False
+             if not in_position and want_hedge:
+-                short_size  = POSITION_SIZE / P
+-                entry_price = P
+-                cash -= POSITION_SIZE * PERP_TAKER
+-                perp_fees_total += POSITION_SIZE * PERP_TAKER
+-                in_position = True
+-                trades += 1
+-                hours_since = 0
++                perp_fee = POSITION_SIZE * PERP_TAKER
++                if margin_active:
++                    required_margin = POSITION_SIZE / lev * margin_buffer_x
++                    if spot_cash < required_margin + perp_fee:
++                        n_skipped_opens_capital += 1
++                    else:
++                        spot_cash -= required_margin
++                        perp_cash += required_margin
++                        perp_cash -= perp_fee
++                        perp_fees_total += perp_fee
++                        short_size  = POSITION_SIZE / P
++                        entry_price = P
++                        in_position = True
++                        trades += 1
++                        hours_since = 0
++                        committed = POSITION_SIZE + required_margin
++                        if committed > peak_committed_capital:
++                            peak_committed_capital = committed
++                else:
++                    short_size  = POSITION_SIZE / P
++                    entry_price = P
++                    cash -= perp_fee
++                    perp_fees_total += perp_fee
++                    in_position = True
++                    trades += 1
++                    hours_since = 0
+             elif in_position:
+                 hours_since += 1
+                 if not want_hedge:
+                     realized = short_size * (entry_price - P)
+-                    cash += realized
+                     short_realized += realized
+                     fee = short_size * P * PERP_TAKER
+-                    cash -= fee
+                     perp_fees_total += fee
++                    if margin_active:
++                        perp_cash += realized
++                        perp_cash -= fee
++                        spot_cash += perp_cash
++                        perp_cash = 0.0
++                    else:
++                        cash += realized
++                        cash -= fee
+                     short_size = 0.0
+                     entry_price = 0.0
+                     in_position = False
+@@ -197,33 +354,70 @@ def simulate(
+                 if strategy == "B" and regime_filter is not None:
+                     regime_ok = regime_filter(i, close, ma200, mom72, m168)
+                 if regime_ok:
+-                    if strategy == "A_cycle":
+-                        units_spot = POSITION_SIZE / P
+-                        cash -= POSITION_SIZE
+-                        cash -= POSITION_SIZE * SPOT_TAKER
+-                        spot_fees_total += POSITION_SIZE * SPOT_TAKER
+-                    short_size  = POSITION_SIZE / P
+-                    entry_price = P
+-                    cash -= POSITION_SIZE * PERP_TAKER
+-                    perp_fees_total += POSITION_SIZE * PERP_TAKER
+-                    in_position = True
+-                    trades += 1
+-                    hours_since = 0
++                    perp_fee = POSITION_SIZE * PERP_TAKER
++                    if margin_active:
++                        required_margin = POSITION_SIZE / lev * margin_buffer_x
++                        if spot_cash < required_margin + perp_fee:
++                            n_skipped_opens_capital += 1
++                        else:
++                            if strategy == "A_cycle":
++                                units_spot = POSITION_SIZE / P
++                                spot_cash -= POSITION_SIZE
++                                sfee = POSITION_SIZE * SPOT_TAKER
++                                spot_cash -= sfee
++                                spot_fees_total += sfee
++                            spot_cash -= required_margin
++                            perp_cash += required_margin
++                            perp_cash -= perp_fee
++                            perp_fees_total += perp_fee
++                            short_size  = POSITION_SIZE / P
++                            entry_price = P
++                            in_position = True
++                            trades += 1
++                            hours_since = 0
++                            committed = POSITION_SIZE + required_margin
++                            if committed > peak_committed_capital:
++                                peak_committed_capital = committed
++                    else:
++                        if strategy == "A_cycle":
++                            units_spot = POSITION_SIZE / P
++                            cash -= POSITION_SIZE
++                            cash -= POSITION_SIZE * SPOT_TAKER
++                            spot_fees_total += POSITION_SIZE * SPOT_TAKER
++                        short_size  = POSITION_SIZE / P
++                        entry_price = P
++                        cash -= perp_fee
++                        perp_fees_total += perp_fee
++                        in_position = True
++                        trades += 1
++                        hours_since = 0
+         else:
+             hours_since += 1
+             if hours_since >= min_hold and annual_rate < exit_threshold:
+                 # close short
+                 realized = short_size * (entry_price - P)
+-                cash += realized
+                 short_realized += realized
+                 fee = short_size * P * PERP_TAKER
+-                cash -= fee
+                 perp_fees_total += fee
++                if margin_active:
++                    perp_cash += realized
++                    perp_cash -= fee
++                    spot_cash += perp_cash
++                    perp_cash = 0.0
++                else:
++                    cash += realized
++                    cash -= fee
+                 if strategy == "A_cycle":
+-                    cash += units_spot * P
+-                    sfee = units_spot * P * SPOT_TAKER
+-                    cash -= sfee
+-                    spot_fees_total += sfee
++                    if margin_active:
++                        spot_cash += units_spot * P
++                        sfee = units_spot * P * SPOT_TAKER
++                        spot_cash -= sfee
++                        spot_fees_total += sfee
++                    else:
++                        cash += units_spot * P
++                        sfee = units_spot * P * SPOT_TAKER
++                        cash -= sfee
++                        spot_fees_total += sfee
+                     units_spot = 0.0
+                 short_size = 0.0
+                 entry_price = 0.0
+@@ -232,7 +426,10 @@ def simulate(
+ 
+         # MTM equity
+         short_pnl = short_size * (entry_price - P) if in_position else 0.0
+-        equity_now = cash + units_spot * P + short_pnl
++        if margin_active:
++            equity_now = spot_cash + perp_cash + units_spot * P + short_pnl
++        else:
++            equity_now = cash + units_spot * P + short_pnl
+         pnl_arr[i] = equity_now - equity_prev
+         equity_prev = equity_now
+ 
+@@ -249,18 +446,27 @@ def simulate(
+     final_units_at_close = units_spot
+     if in_position:
+         realized = short_size * (entry_price - P_final)
+-        cash += realized
+         short_realized += realized
+         fee = short_size * P_final * PERP_TAKER
+-        cash -= fee
+         perp_fees_total += fee
+         extra -= fee
++        if margin_active:
++            perp_cash += realized
++            perp_cash -= fee
++            spot_cash += perp_cash
++            perp_cash = 0.0
++        else:
++            cash += realized
++            cash -= fee
+         short_size = 0.0
+     if units_spot > 0:
+         sfee = units_spot * P_final * SPOT_TAKER
+-        cash -= sfee
+         spot_fees_total += sfee
+         extra -= sfee
++        if margin_active:
++            spot_cash -= sfee
++        else:
++            cash -= sfee
+         units_spot = 0.0
+     pnl_arr[-1] += extra
+ 
+@@ -280,6 +486,15 @@ def simulate(
+     }
+     if track_capital:
+         info["capital_arr"] = capital_arr
++    if margin_active:
++        info["n_liquidations"]          = n_liquidations
++        info["n_top_ups"]               = n_top_ups
++        info["n_forced_closes"]         = n_forced_closes
++        info["n_skipped_opens_capital"] = n_skipped_opens_capital
++        info["min_margin_ratio"]        = min_margin_ratio
++        info["peak_committed_capital"]  = peak_committed_capital
++        info["final_spot_cash"]         = round(spot_cash, 4)
++        info["final_perp_cash"]         = round(perp_cash, 4)
+     return pnl_arr, info
+ 
+ 

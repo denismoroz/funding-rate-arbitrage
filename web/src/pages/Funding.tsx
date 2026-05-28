@@ -90,27 +90,37 @@ function CoinFundingCard({ coin }: { coin: string }) {
         <p className="text-xs text-gray-400">No data</p>
       )}
       {!isLoading && !error && chronological.length > 0 && (
-        <ResponsiveContainer width="100%" height={120}>
+        <ResponsiveContainer width="100%" height={260}>
           <LineChart
             data={chronological.map((r) => ({ ts_ms: r.ts_ms, rate_apr: r.annualized_pct }))}
+            margin={{ top: 5, right: 20, bottom: 5, left: 0 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis
               dataKey="ts_ms"
-              tickFormatter={(v: number) =>
-                tsMsToDate(v).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
-              }
-              tick={{ fontSize: 10 }}
-              minTickGap={60}
+              type="number"
+              scale="time"
+              domain={["dataMin", "dataMax"]}
+              tickFormatter={(v: number) => {
+                const d = tsMsToDate(v);
+                const sameDay = d.toDateString() === new Date().toDateString();
+                return sameDay
+                  ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                  : d.toLocaleString([], {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    });
+              }}
+              tick={{ fontSize: 11 }}
+              minTickGap={80}
             />
             <YAxis
               domain={["auto", "auto"]}
               tickFormatter={(v: number) => `${v.toFixed(0)}%`}
-              tick={{ fontSize: 10 }}
-              width={40}
+              tick={{ fontSize: 11 }}
+              width={50}
             />
             <Tooltip
               formatter={(v: number) => [`${v.toFixed(3)}%`, "APR"]}
@@ -154,7 +164,7 @@ export default function Funding() {
       <Header wsStatus={status} route="funding" />
       <main className="mx-auto max-w-7xl p-4 space-y-4">
         <h1 className="text-lg font-semibold text-gray-800">Funding Rates</h1>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="space-y-4">
           {coins.map((coin) => (
             <CoinFundingCard key={coin} coin={coin} />
           ))}

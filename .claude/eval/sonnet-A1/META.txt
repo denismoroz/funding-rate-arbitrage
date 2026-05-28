@@ -1,0 +1,1 @@
+Sonnet: 12 tool calls, ~6 min wall clock, hit limit before reporting

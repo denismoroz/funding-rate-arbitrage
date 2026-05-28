@@ -29,6 +29,23 @@ async function apiPatchJson<TReq, TRes>(path: string, body: TReq): Promise<TRes>
   return res.json() as Promise<TRes>;
 }
 
+async function apiPost<TRes>(path: string): Promise<TRes> {
+  const res = await fetch(`${BASE}${path}`, { method: "POST" });
+  if (!res.ok) {
+    let msg: string;
+    try {
+      const json = (await res.json()) as unknown;
+      msg = typeof json === "object" && json !== null && "detail" in json
+        ? String((json as Record<string, unknown>).detail)
+        : JSON.stringify(json);
+    } catch {
+      msg = res.statusText;
+    }
+    throw new Error(`${res.status}: ${msg}`);
+  }
+  return res.json() as Promise<TRes>;
+}
+
 // Convert epoch ms (integer) to Date — backend sends ts_ms not ts.
 export function tsMsToDate(ms: number): Date {
   return new Date(ms);
@@ -189,3 +206,13 @@ export function patchStrategyParams(
 
 // Alias for StrategyParamsPatch value type — exported for use in consumers.
 export type ParamValue = number | string | boolean | string[] | null;
+
+export type ForceTickResponse = {
+  status: string;
+  ts_ms: number;
+  message: string;
+};
+
+export function forceHourTick(id: number): Promise<ForceTickResponse> {
+  return apiPost<ForceTickResponse>(`/strategies/${id}/force-tick`);
+}

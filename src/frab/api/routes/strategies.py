@@ -109,9 +109,26 @@ async def patch_strategy_params(
 
 
 @router.post("/{strategy_id}/force-tick")
-async def force_hour_tick(
-    strategy_id: int,
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    raise HTTPException(status_code=503, detail="Engine not configured")
+async def force_hour_tick(strategy_id: int, request: Request) -> dict:
+    """Force an immediate hour-tick on the running engine: fetch funding,
+    refresh wallet snapshots, run strategy.on_hour_tick. Useful for manual
+    testing without waiting for the next hour boundary."""
+    import time
+
+    engine_loop = getattr(request.app.state, "engine_loop", None)
+    if engine_loop is None:
+        raise HTTPException(status_code=503, detail="Engine not configured")
+
+    running_strategy_id = engine_loop._strategy.strategy_id
+    if running_strategy_id != strategy_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"strategy_id mismatch: engine is running id={running_strategy_id}, "
+                f"got id={strategy_id}"
+            ),
+        )
+
+    now_ms = int(time.time() * 1000)
+    await engine_loop._hour_tick(now_ms)
+    return {"status": "ok", "ts_ms": now_ms, "message": "hour tick forced"}
