@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Callable
 
 from frab.exchanges.base import ExchangeDataSource
-from frab.exchanges.hyperliquid.reader import HLExchangeReader
+from frab.exchanges.hyperliquid.exchange import HLExchange
 
 _REGISTRY: dict[str, Callable[..., ExchangeDataSource]] = {
-    "hyperliquid": HLExchangeReader,
+    "hyperliquid": HLExchange,
 }
 
 

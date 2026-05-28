@@ -24,8 +24,7 @@ from frab.db.models import (
 from frab.db.recorder import DbRecorder
 from frab.db.session import create_engine, make_session_factory, session_scope
 from frab.events.bus import EventBus, EventDbSink
-from frab.exchanges.hyperliquid.reader import HLExchangeReader
-from frab.exchanges.hyperliquid.live import LiveHLExecutor
+from frab.exchanges.hyperliquid.exchange import HLExchange  # noqa: F401 — available for callers
 from frab.settings import Settings, get_settings
 from frab.exchanges.hyperliquid.tokens import (  # noqa: E402
     MAINNET_SPOT_TOKEN_MAP,

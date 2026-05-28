@@ -23,6 +23,10 @@ Live audit 2026-05-19:
 """
 from __future__ import annotations
 
+# EVM bridge tokens: independent price discovery from the canonical perp — mapping one
+# to the other silently breaks delta-neutrality and cost real money in testing (-$3 incident).
+BRIDGE_TOKEN_BLACKLIST: frozenset[str] = frozenset({"AVAX0", "LINK0", "AAVE0"})
+
 MAINNET_SPOT_TOKEN_MAP: dict[str, str] = {
     "BTC": "UBTC",
     "ETH": "UETH",

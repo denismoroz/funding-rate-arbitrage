@@ -1,4 +1,4 @@
-"""Tests for HLExchangeReader."""
+"""Tests for HLExchange read methods (formerly HLExchangeReader)."""
 from __future__ import annotations
 
 import json
@@ -9,9 +9,9 @@ import pytest
 import respx
 from tenacity import wait_none
 
-import frab.exchanges.hyperliquid.reader as hl_mod
+import frab.exchanges.hyperliquid.exchange as hl_mod
 from frab.exchanges.base import Leg, Side
-from frab.exchanges.hyperliquid.reader import HLExchangeReader, _ms_to_dt
+from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader, _ms_to_dt
 
 BASE_URL = "https://api.hyperliquid.xyz"
 INFO_URL = f"{BASE_URL}/info"
@@ -540,7 +540,7 @@ def test_spot_token_inverse_does_not_alias_bridge_tokens():
     """The reverse map must contain only wrapped tokens 1:1 with their perp.
     AVAX0/LINK0/AAVE0 are EVM bridges with independent price discovery —
     aliasing them to AVAX/LINK/AAVE would silently break delta-neutrality."""
-    from frab.exchanges.hyperliquid.reader import _SPOT_TOKEN_INVERSE
+    from frab.exchanges.hyperliquid.exchange import _SPOT_TOKEN_INVERSE
 
     assert _SPOT_TOKEN_INVERSE == {"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL"}
     for forbidden in ("LINK0", "AAVE0", "AVAX0"):

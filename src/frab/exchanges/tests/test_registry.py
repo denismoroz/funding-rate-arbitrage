@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 import frab.exchanges.registry as reg_mod
-from frab.exchanges.hyperliquid.reader import HLExchangeReader
+from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader
 from frab.exchanges.registry import available, make_market_data, register
 
 
@@ -87,7 +87,7 @@ class _AltAdapter:
 
 
 def test_register_overwrites_silently(mocker):
-    mocker.patch.dict(reg_mod._REGISTRY, {"hyperliquid": HLExchangeReader})
+    mocker.patch.dict(reg_mod._REGISTRY, {"hyperliquid": HLExchangeReader})  # HLExchangeReader = HLExchange alias
     register("hyperliquid", _AltAdapter)
     adapter = make_market_data("hyperliquid")
     assert isinstance(adapter, _AltAdapter)

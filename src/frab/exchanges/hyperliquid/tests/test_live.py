@@ -1,4 +1,4 @@
-"""Tests for LiveHLExecutor."""
+"""Tests for HLExchange write methods (formerly LiveHLExecutor)."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -7,7 +7,7 @@ import pytest
 from hyperliquid.utils import constants
 
 from frab.exchanges.base import FillReport, Leg, OrderRequest, PositionState, Side
-from frab.exchanges.hyperliquid.live import HLTransferError, LiveHLExecutor, PartialFillError
+from frab.exchanges.hyperliquid.exchange import HLTransferError, HLExchange as LiveHLExecutor, PartialFillError
 
 _FIXED_DT = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 _CLOCK = lambda: _FIXED_DT  # noqa: E731
@@ -299,9 +299,9 @@ async def test_reconcile_is_noop(mocker):
 
 # 19. constructor builds Info for testnet when not injected
 async def test_constructor_builds_info_for_testnet_when_not_injected(mocker):
-    mock_info_cls = mocker.patch("frab.exchanges.hyperliquid.live.Info")
-    mock_exchange_cls = mocker.patch("frab.exchanges.hyperliquid.live.Exchange")
-    mocker.patch("frab.exchanges.hyperliquid.live.Account")
+    mock_info_cls = mocker.patch("frab.exchanges.hyperliquid.exchange.Info")
+    mock_exchange_cls = mocker.patch("frab.exchanges.hyperliquid.exchange.Exchange")
+    mocker.patch("frab.exchanges.hyperliquid.exchange.Account")
 
     LiveHLExecutor(
         private_key="0x" + "a" * 64,
@@ -316,9 +316,9 @@ async def test_constructor_builds_info_for_testnet_when_not_injected(mocker):
 
 # 20. constructor uses mainnet URL
 async def test_constructor_uses_mainnet_url(mocker):
-    mock_info_cls = mocker.patch("frab.exchanges.hyperliquid.live.Info")
-    mock_exchange_cls = mocker.patch("frab.exchanges.hyperliquid.live.Exchange")
-    mocker.patch("frab.exchanges.hyperliquid.live.Account")
+    mock_info_cls = mocker.patch("frab.exchanges.hyperliquid.exchange.Info")
+    mock_exchange_cls = mocker.patch("frab.exchanges.hyperliquid.exchange.Exchange")
+    mocker.patch("frab.exchanges.hyperliquid.exchange.Account")
 
     LiveHLExecutor(
         private_key="0x" + "a" * 64,

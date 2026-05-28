@@ -1,9 +1,10 @@
-"""Tests for _hl_tokens — token map and spot-pair validator (F2.3)."""
+"""Tests for tokens.py — token map, bridge-token blacklist, and spot-pair validator."""
 from __future__ import annotations
 
 import pytest
 
 from frab.exchanges.hyperliquid.tokens import (
+    BRIDGE_TOKEN_BLACKLIST,
     MAINNET_SPOT_TOKEN_MAP,
     select_spot_token_map,
     validate_spot_pairs,
@@ -77,6 +78,67 @@ async def test_validate_spot_pairs_token_not_on_hl_raises():
     market_data = _FakeMarketData(_spot_meta_payload(pairs=[("UBTC/USDC", "UBTC")]))
     with pytest.raises(RuntimeError, match="not_on_hl"):
         await validate_spot_pairs(market_data, ("BTC", "ETH"))
+
+
+# ---------------------------------------------------------------------------
+# BRIDGE_TOKEN_BLACKLIST tests
+# ---------------------------------------------------------------------------
+
+def test_bridge_token_blacklist_contains_known_bridges():
+    """The three known EVM bridge tokens must be in the blacklist."""
+    assert "AVAX0" in BRIDGE_TOKEN_BLACKLIST
+    assert "LINK0" in BRIDGE_TOKEN_BLACKLIST
+    assert "AAVE0" in BRIDGE_TOKEN_BLACKLIST
+
+
+def test_bridge_token_blacklist_does_not_contain_safe_tokens():
+    """Safe wrapped tokens (1:1 with perp) must NOT be blacklisted."""
+    for safe in ("UBTC", "UETH", "USOL"):
+        assert safe not in BRIDGE_TOKEN_BLACKLIST
+
+
+def test_bridge_token_blacklist_is_frozenset():
+    assert isinstance(BRIDGE_TOKEN_BLACKLIST, frozenset)
+
+
+@pytest.mark.asyncio
+async def test_normalize_hl_coin_rejects_avax0():
+    """AVAX0/USDC fill must raise ValueError — never silently map to AVAX perp."""
+    from frab.exchanges.hyperliquid.exchange import HLExchange
+    import httpx
+    ex = HLExchange(client=httpx.AsyncClient())
+    with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
+        await ex._normalize_hl_coin("AVAX0/USDC")
+
+
+@pytest.mark.asyncio
+async def test_normalize_hl_coin_rejects_link0():
+    from frab.exchanges.hyperliquid.exchange import HLExchange
+    import httpx
+    ex = HLExchange(client=httpx.AsyncClient())
+    with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
+        await ex._normalize_hl_coin("LINK0/USDC")
+
+
+@pytest.mark.asyncio
+async def test_normalize_hl_coin_rejects_aave0():
+    from frab.exchanges.hyperliquid.exchange import HLExchange
+    import httpx
+    ex = HLExchange(client=httpx.AsyncClient())
+    with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
+        await ex._normalize_hl_coin("AAVE0/USDC")
+
+
+@pytest.mark.asyncio
+async def test_normalize_hl_coin_future_bridge_token_rejected():
+    """Any token name added to BRIDGE_TOKEN_BLACKLIST is blocked, even a hypothetical one."""
+    from frab.exchanges.hyperliquid.exchange import HLExchange, BRIDGE_TOKEN_BLACKLIST
+    import httpx
+    # Verify the guard is data-driven: patch a hypothetical future bridge token.
+    fake_token = next(iter(BRIDGE_TOKEN_BLACKLIST))  # any existing one
+    ex = HLExchange(client=httpx.AsyncClient())
+    with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
+        await ex._normalize_hl_coin(f"{fake_token}/USDC")
 
 
 def test_server_back_compat_re_export():

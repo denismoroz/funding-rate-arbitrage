@@ -18,8 +18,8 @@ from frab.db.session import session_scope
 from frab.events.bus import EventBus
 from frab.exchanges.atomic import AtomicExecutor
 from frab.exchanges.base import Leg, ExchangeDataSource, OrderRequest, Side
-from frab.exchanges.hyperliquid.reader import HLExchangeReader
-from frab.exchanges.hyperliquid.live import LiveHLExecutor
+from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader
+from frab.exchanges.hyperliquid.exchange import HLExchange as LiveHLExecutor
 from frab.server import _hl_info_url, _select_spot_token_map
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
