@@ -224,21 +224,13 @@ class TwoPhaseStrategy:
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.CHECK_MARGIN,
-            to_state=FarbState.OPENING_MARGIN,
+            to_state=FarbState.OPENING_LONG,
             state_data={**fp.state_data, "required_margin": required},
         )
 
     async def _step_opening_margin(self, fp: FarbPosition) -> None:
-        required = fp.state_data.get("required_margin", self.params.required_margin())
-        req = OpenRequest(
-            coin="USDC",
-            instrument=Instrument.COLLATERAL,
-            side=Side.NONE,
-            qty=required,
-            farb_position_id=fp.id,
-        )
-        pos = await self.exchange.open_position(req)
-        await self.farb_repo.set_leg(fp.id, instrument=Instrument.COLLATERAL, position_id=pos.id)
+        # HL is cross-margin on one account; no spot→perp transfer needed.
+        # Kept as a pass-through transition for any FP already mid-flight in this state.
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_MARGIN,
@@ -324,20 +316,11 @@ class TwoPhaseStrategy:
             raise RuntimeError(f"FarbPosition {fp.id} has no spot_position_id in CLOSING_LONG")
         spot_pos = await self._get_position(fp.spot_position_id)
         await self.exchange.close_position(spot_pos)
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.CLOSING_LONG,
-            to_state=FarbState.RELEASING_MARGIN,
-        )
+        await self.farb_repo.mark_closed(fp.id)
 
     async def _step_releasing_margin(self, fp: FarbPosition) -> None:
-        required = fp.state_data.get("required_margin", self.params.required_margin())
-        # Transfer USDC from PERP wallet back to SPOT
-        await self.exchange.transfer("USDC", required, WalletKind.PERP, WalletKind.SPOT)
-        # Close the margin reservation position record
-        if fp.margin_position_id is not None:
-            margin_pos = await self._get_position(fp.margin_position_id)
-            await self.exchange.close_position(margin_pos)
+        # HL is cross-margin on one account; no perp→spot transfer needed.
+        # Kept as a pass-through close for any FP already mid-flight in this state.
         await self.farb_repo.mark_closed(fp.id)
 
     # ── Signal computation ────────────────────────────────────────────────────
