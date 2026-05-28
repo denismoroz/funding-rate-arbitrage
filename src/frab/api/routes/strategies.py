@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
 from frab.db.models import Strategy
+from frab.db.session import session_scope
 from frab.strategy.two_phase import TwoPhaseParams
 
 router = APIRouter()
@@ -129,6 +130,12 @@ async def force_hour_tick(strategy_id: int, request: Request) -> dict:
             ),
         )
 
+    # Reload params from DB so PATCH /params takes effect without restart.
+    session_factory = request.app.state.session_factory
+    async with session_scope(session_factory) as s:
+        row = (await s.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        engine_loop._strategy.params = TwoPhaseParams.from_dict(dict(row.params_json))
+
     now_ms = int(time.time() * 1000)
     await engine_loop._hour_tick(now_ms)
-    return {"status": "ok", "ts_ms": now_ms, "message": "hour tick forced"}
+    return {"status": "ok", "ts_ms": now_ms, "message": "hour tick forced (params reloaded)"}
