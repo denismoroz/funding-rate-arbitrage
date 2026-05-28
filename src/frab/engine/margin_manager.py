@@ -27,9 +27,9 @@ class OpenPosition:
     """Snapshot of one open spot+perp pair."""
 
     coin: str
-    spot_units: float        # absolute, in coin units
+    spot_qty: float          # absolute, in coin units
     short_size: float        # absolute, in coin units
-    entry_perp_price: float  # USDC per coin at perp entry
+    perp_entry: float        # USDC per coin at perp entry
     required_margin: float   # USDC reserved at open
 
 
@@ -147,7 +147,7 @@ class MarginManager:
         total = 0.0
         for pos in opens:
             price = current_prices[pos.coin]  # raises KeyError if missing
-            total += pos.short_size * (pos.entry_perp_price - price)
+            total += pos.short_size * (pos.perp_entry - price)
         return total
 
     def compute_margin_ratio(

@@ -1,20 +1,16 @@
-"""HLExchange: single class owning both read (httpx) and write (HL SDK) paths.
+"""HLExchange: stateless Hyperliquid exchange implementation.
 
-Merged from reader.py (HLExchangeReader) and live.py (LiveHLExecutor).
-Read methods use an httpx.AsyncClient against the HL /info REST endpoint.
-Write methods use the hyperliquid-python-sdk Info/Exchange objects (sync,
-run via asyncio.to_thread).
-
-The two HTTP clients cannot be shared because reader uses httpx while the
-SDK uses its own internal requests session.  Both are initialized at
-construction and closed together in aclose()/aexit.
+Satisfies the Exchange Protocol. Read methods use httpx against the HL /info
+REST endpoint. Write methods use the hyperliquid-python-sdk (sync, run via
+asyncio.to_thread). DB session is opened per-method (short-lived), committed,
+and closed — no in-memory caches of positions or wallet state.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import UTC, datetime
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any, Callable, Literal
 
 import httpx
@@ -22,6 +18,8 @@ from eth_account import Account
 from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -29,19 +27,23 @@ from tenacity import (
     wait_exponential,
 )
 
-from frab.exchanges.base import (
-    FillReport,
-    FundingPayment,
-    FundingTick,
-    Leg,
-    MarketSpec,
-    OrderRequest,
-    PositionState,
-    Quote,
-    Side,
-    UserFill,
+from frab.db.models import (
+    Exchange as DBExchange,
+    Fill as DBFill,
+    FundingAccrual as DBFundingAccrual,
+    Position as DBPosition,
+    WalletSnapshot as DBWalletSnapshot,
 )
+from frab.db.session import session_scope
+from frab.domain import Instrument, Position, PositionStatus, Side
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
+from frab.exchanges.protocol import (
+    FundingTick,
+    MarketSpec,
+    OpenRequest,
+    Quote,
+    WalletKind,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,10 @@ _SPOT_TOKEN_INVERSE: dict[str, str] = {
 
 def _ms_to_dt(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000, tz=UTC)
+
+
+def _dt_to_ms(dt: datetime) -> int:
+    return int(dt.timestamp() * 1000)
 
 
 def _base_url(network: Literal["testnet", "mainnet"]) -> str:
@@ -86,18 +92,18 @@ class HLTransferError(RuntimeError):
 class PartialFillError(RuntimeError):
     """Raised when HL filled less than the requested qty beyond tolerance."""
 
-    def __init__(self, requested_qty: float, filled_qty: float, fill: FillReport) -> None:
+    def __init__(self, requested_qty: float, filled_qty: float, fill_price: float) -> None:
         super().__init__(
             f"partial fill: requested {requested_qty}, filled {filled_qty} "
             f"({filled_qty / requested_qty * 100:.1f}%)"
         )
         self.requested_qty = requested_qty
         self.filled_qty = filled_qty
-        self.fill = fill
+        self.fill_price = fill_price
 
 
 class HLExchange:
-    """Unified Hyperliquid exchange class: read (httpx) + write (SDK)."""
+    """Unified Hyperliquid exchange class: read (httpx) + write (SDK) + DB writes."""
 
     name = "hyperliquid"
 
@@ -114,6 +120,8 @@ class HLExchange:
         network: Literal["testnet", "mainnet"] = "testnet",
         info: Info | None = None,
         exchange: Exchange | None = None,
+        # --- DB ---
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
         # --- Shared order settings ---
         spot_token_map: dict[str, str] | None = None,
         spot_quote_token: str = "USDC",
@@ -153,6 +161,7 @@ class HLExchange:
             candidate = getattr(exchange, "account_address", None) if exchange is not None else None
             self._address = candidate if isinstance(candidate, str) else None
 
+        self._session_factory = session_factory
         self._spot_token_map: dict[str, str] = spot_token_map if spot_token_map is not None else {}
         self._spot_quote_token = spot_quote_token
         self._slippage = slippage
@@ -227,17 +236,16 @@ class HLExchange:
     # Internal: coin normalization
     # ------------------------------------------------------------------
 
-    async def _normalize_hl_coin(self, hl_coin: str) -> tuple[str, Leg]:
-        """Normalize HL coin field to (coin, leg).
+    async def _normalize_hl_coin(self, hl_coin: str) -> tuple[str, str]:
+        """Normalize HL coin field to (coin, leg_str) where leg_str is 'spot' or 'perp'.
 
-        Raises ValueError if the resolved token is in BRIDGE_TOKEN_BLACKLIST
-        (independent price discovery — must not be aliased to a perp coin).
+        Raises ValueError if the resolved token is in BRIDGE_TOKEN_BLACKLIST.
         """
         if hl_coin.startswith("@"):
             try:
                 idx = int(hl_coin[1:])
             except ValueError:
-                return hl_coin, Leg.PERP
+                return hl_coin, "perp"
             await self._load_spot_idx_map()
             name = (self._spot_idx_to_name or {}).get(idx)
             if name and "/" in name:
@@ -247,8 +255,8 @@ class HLExchange:
                         f"HL spot token {wrapped!r} is in BRIDGE_TOKEN_BLACKLIST "
                         f"(independent price discovery — not safe to map to perp coin)"
                     )
-                return _SPOT_TOKEN_INVERSE.get(wrapped, wrapped), Leg.SPOT
-            return hl_coin, Leg.PERP
+                return _SPOT_TOKEN_INVERSE.get(wrapped, wrapped), "spot"
+            return hl_coin, "perp"
         if "/" in hl_coin:
             wrapped = hl_coin.split("/")[0]
             if wrapped in BRIDGE_TOKEN_BLACKLIST:
@@ -257,54 +265,56 @@ class HLExchange:
                     f"(independent price discovery — not safe to map to perp coin)"
                 )
             coin = _SPOT_TOKEN_INVERSE.get(wrapped, wrapped)
-            return coin, Leg.SPOT
-        return hl_coin, Leg.PERP
+            return coin, "spot"
+        return hl_coin, "perp"
 
     def _record_to_tick(self, coin: str, record: dict) -> FundingTick:
         rate = float(record["fundingRate"])
         premium = float(record["premium"])
-        ts = _ms_to_dt(int(record["time"]))
+        ts_ms = int(record["time"])
         return FundingTick(
             coin=coin,
-            ts=ts,
+            ts_ms=ts_ms,
             rate=rate,
             premium=premium,
             annualized_pct=rate * _PERIODS_PER_YEAR * 100,
         )
 
     # ------------------------------------------------------------------
-    # Read methods (httpx)
+    # Internal: DB helpers
     # ------------------------------------------------------------------
 
-    async def fetch_funding(self, coin: str) -> FundingTick:
-        now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        data: list[dict] = await self._post({
-            "type": "fundingHistory",
-            "coin": coin,
-            "startTime": now_ms - 2 * 3600 * 1000,
-        })
-        if not data:
-            raise ValueError(f"no recent funding for {coin}")
-        return self._record_to_tick(coin, data[-1])
+    async def _get_exchange_id(self, session: AsyncSession) -> int:
+        result = await session.execute(
+            select(DBExchange).where(DBExchange.name == self.name)
+        )
+        exc = result.scalar_one_or_none()
+        if exc is None:
+            raise RuntimeError(
+                f"Exchange {self.name!r} not found in DB; run `frab seed` first."
+            )
+        return exc.id
 
-    async def fetch_funding_history(self, coin: str, since_ms: int) -> list[FundingTick]:
-        ticks: list[FundingTick] = []
-        start = since_ms
-        while True:
-            data: list[dict] = await self._post({
-                "type": "fundingHistory",
-                "coin": coin,
-                "startTime": start,
-            })
-            for rec in data:
-                ticks.append(self._record_to_tick(coin, rec))
-            if len(data) < 500:
-                break
-            start = int(data[-1]["time"]) + 1
-        ticks.sort(key=lambda t: t.ts)
-        return ticks
+    def _db_pos_to_domain(self, row: DBPosition) -> Position:
+        return Position(
+            id=row.id,
+            exchange_name=self.name,
+            coin=row.coin,
+            instrument=Instrument(row.instrument),
+            side=Side(row.side),
+            qty=row.qty,
+            entry_price=row.entry_price,
+            opened_at=_ms_to_dt(row.opened_at),
+            closed_at=_ms_to_dt(row.closed_at) if row.closed_at is not None else None,
+            status=PositionStatus(row.status),
+            farb_position_id=row.farb_position_id,
+        )
 
-    async def fetch_quote(self, coin: str) -> Quote:
+    # ------------------------------------------------------------------
+    # Protocol: Read methods
+    # ------------------------------------------------------------------
+
+    async def get_quote(self, coin: str) -> Quote:
         mids_data, book = await asyncio.gather(
             self._post({"type": "allMids"}),
             self._post({"type": "l2Book", "coin": coin}),
@@ -315,10 +325,21 @@ class HLExchange:
         asks = levels[1] if len(levels) >= 2 else []
         bid = float(bids[0]["px"]) if bids else mark
         ask = float(asks[0]["px"]) if asks else mark
-        ts = _ms_to_dt(int(book["time"]))
-        return Quote(coin=coin, ts=ts, bid=bid, ask=ask, mark=mark, spot=None)
+        ts_ms = int(book["time"])
+        return Quote(coin=coin, mark=mark, spot=None, bid=bid, ask=ask, ts_ms=ts_ms)
 
-    async def fetch_meta(self) -> list[MarketSpec]:
+    async def get_funding_rate(self, coin: str) -> FundingTick:
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        data: list[dict] = await self._post({
+            "type": "fundingHistory",
+            "coin": coin,
+            "startTime": now_ms - 2 * 3600 * 1000,
+        })
+        if not data:
+            raise ValueError(f"no recent funding for {coin}")
+        return self._record_to_tick(coin, data[-1])
+
+    async def get_meta(self) -> list[MarketSpec]:
         data = await self._post({"type": "meta"})
         specs: list[MarketSpec] = []
         for entry in data["universe"]:
@@ -332,65 +353,436 @@ class HLExchange:
                 has_perp=True,
                 min_size=min_size,
                 tick_size=tick_size,
+                sz_decimals=sz,
             ))
         return specs
 
-    async def fetch_user_fills(self, user_address: str, since_ms: int) -> list[UserFill]:
-        data: list[dict] = await self._post({
-            "type": "userFillsByTime",
-            "user": user_address,
-            "startTime": since_ms,
-        })
-        if not data:
-            return []
+    # ------------------------------------------------------------------
+    # Protocol: open_position
+    # ------------------------------------------------------------------
 
-        fills: list[UserFill] = []
-        for record in data:
-            hl_coin = record["coin"]
-            coin, leg = await self._normalize_hl_coin(hl_coin)
-            side = Side.BUY if record["side"] == "B" else Side.SELL
-            fills.append(UserFill(
-                coin=coin,
-                ts=_ms_to_dt(int(record["time"])),
-                leg=leg,
-                side=side,
-                qty=abs(float(record["sz"])),
-                price=float(record["px"]),
-                fee=float(record["fee"]),
-                fee_token=record["feeToken"],
-                hl_oid=int(record["oid"]),
-                hl_tid=int(record["tid"]),
-            ))
+    async def open_position(self, req: OpenRequest) -> Position:
+        """Open a position on HL and write it to DB. Returns domain Position."""
+        now = self._clock_fn()
+        now_ms = _dt_to_ms(now)
 
-        fills.sort(key=lambda f: f.ts)
-        return fills
+        if req.instrument == Instrument.COLLATERAL:
+            # Transfer USDC spot → perp, then record a COLLATERAL position
+            await self.transfer(req.coin, req.qty, WalletKind.SPOT, WalletKind.PERP)
+            if self._session_factory is None:
+                raise RuntimeError("session_factory required for open_position")
+            async with session_scope(self._session_factory) as s:
+                exchange_id = await self._get_exchange_id(s)
+                row = DBPosition(
+                    exchange_id=exchange_id,
+                    coin=req.coin,
+                    instrument=Instrument.COLLATERAL.value,
+                    side=Side.NONE.value,
+                    qty=req.qty,
+                    entry_price=1.0,
+                    opened_at=now_ms,
+                    closed_at=None,
+                    status=PositionStatus.OPEN.value,
+                    farb_position_id=req.farb_position_id,
+                )
+                s.add(row)
+                await s.flush()
+                pos = self._db_pos_to_domain(row)
+            return pos
 
-    async def fetch_user_funding(self, user_address: str, since_ms: int) -> list[FundingPayment]:
-        data: list[dict] = await self._post({
-            "type": "userFunding",
-            "user": user_address,
-            "startTime": since_ms,
-        })
-        if not data:
-            return []
+        # SPOT or PERP
+        exchange_sdk = self._require_exchange()
 
-        payments: list[FundingPayment] = []
-        for record in data:
-            delta = record["delta"]
-            payments.append(FundingPayment(
-                coin=delta["coin"],
-                ts=_ms_to_dt(int(record["time"])),
-                usdc=float(delta["usdc"]),
-                szi=float(delta["szi"]),
-                rate=float(delta["fundingRate"]),
-                hash=record["hash"],
-            ))
+        if req.instrument == Instrument.SPOT:
+            is_buy = req.side == Side.LONG
+            spot_name = self._make_spot_name(req.coin)
+            resp = await asyncio.to_thread(
+                exchange_sdk.market_open, spot_name, is_buy, req.qty, None, self._slippage
+            )
+        else:  # PERP
+            is_buy = req.side == Side.LONG
+            resp = await asyncio.to_thread(
+                exchange_sdk.market_open, req.coin, is_buy, req.qty, None, self._slippage
+            )
 
-        payments.sort(key=lambda p: p.ts)
-        return payments
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            raise RuntimeError(f"HL order rejected: {resp!r}")
+        try:
+            status0 = resp["response"]["data"]["statuses"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"HL order response shape unexpected: {resp!r}") from exc
+
+        if "filled" in status0:
+            filled = status0["filled"]
+            qty_filled = float(filled["totalSz"])
+            fill_price = float(filled["avgPx"])
+            fee = float(filled.get("fee", 0.0))
+        elif "error" in status0:
+            raise RuntimeError(f"HL order error: {status0['error']!r}")
+        elif "resting" in status0:
+            raise RuntimeError(f"HL market order unexpectedly resting: {status0!r}")
+        else:
+            raise RuntimeError(f"HL order unrecognized status: {status0!r}")
+
+        if qty_filled < req.qty * (1 - self._partial_fill_tolerance):
+            raise PartialFillError(
+                requested_qty=req.qty,
+                filled_qty=qty_filled,
+                fill_price=fill_price,
+            )
+
+        if self._session_factory is None:
+            raise RuntimeError("session_factory required for open_position")
+        async with session_scope(self._session_factory) as s:
+            exchange_id = await self._get_exchange_id(s)
+            row = DBPosition(
+                exchange_id=exchange_id,
+                coin=req.coin,
+                instrument=req.instrument.value,
+                side=req.side.value,
+                qty=qty_filled,
+                entry_price=fill_price,
+                opened_at=now_ms,
+                closed_at=None,
+                status=PositionStatus.OPEN.value,
+                farb_position_id=req.farb_position_id,
+            )
+            s.add(row)
+            await s.flush()
+            fill_row = DBFill(
+                position_id=row.id,
+                ts_ms=now_ms,
+                side=req.side.value,
+                qty=qty_filled,
+                price=fill_price,
+                fee=fee,
+                slippage_bps=self._slippage * 1e4,
+                is_paper=False,
+            )
+            s.add(fill_row)
+            pos = self._db_pos_to_domain(row)
+        return pos
 
     # ------------------------------------------------------------------
-    # Write methods (SDK via asyncio.to_thread)
+    # Protocol: close_position
+    # ------------------------------------------------------------------
+
+    async def close_position(self, pos: Position) -> Position:
+        """Close a position on HL and update DB. Returns closed Position."""
+        now = self._clock_fn()
+        now_ms = _dt_to_ms(now)
+
+        if pos.instrument == Instrument.COLLATERAL:
+            await self.transfer(pos.coin, pos.qty, WalletKind.PERP, WalletKind.SPOT)
+            if self._session_factory is None:
+                raise RuntimeError("session_factory required for close_position")
+            async with session_scope(self._session_factory) as s:
+                row = await s.get(DBPosition, pos.id)
+                if row is None:
+                    raise RuntimeError(f"Position {pos.id} not found in DB")
+                row.status = PositionStatus.CLOSED.value
+                row.closed_at = now_ms
+                closed_pos = self._db_pos_to_domain(row)
+            return closed_pos
+
+        # SPOT or PERP: market close
+        exchange_sdk = self._require_exchange()
+
+        if pos.instrument == Instrument.SPOT:
+            # Sell the spot holdings
+            is_buy = False  # SELL
+            spot_name = self._make_spot_name(pos.coin)
+            resp = await asyncio.to_thread(
+                exchange_sdk.market_open, spot_name, is_buy, pos.qty, None, self._slippage
+            )
+        else:  # PERP: use market_close
+            resp = await asyncio.to_thread(
+                exchange_sdk.market_close, pos.coin, None, None, self._slippage
+            )
+
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            raise RuntimeError(f"HL close rejected: {resp!r}")
+        try:
+            status0 = resp["response"]["data"]["statuses"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"HL close response shape unexpected: {resp!r}") from exc
+
+        if "filled" in status0:
+            filled = status0["filled"]
+            qty_filled = float(filled["totalSz"])
+            fill_price = float(filled["avgPx"])
+            fee = float(filled.get("fee", 0.0))
+        elif "error" in status0:
+            raise RuntimeError(f"HL close error: {status0['error']!r}")
+        else:
+            raise RuntimeError(f"HL close unrecognized status: {status0!r}")
+
+        # Closing side is opposite to the opening side
+        closing_side = Side.SHORT if pos.side == Side.LONG else Side.LONG
+
+        if self._session_factory is None:
+            raise RuntimeError("session_factory required for close_position")
+        async with session_scope(self._session_factory) as s:
+            row = await s.get(DBPosition, pos.id)
+            if row is None:
+                raise RuntimeError(f"Position {pos.id} not found in DB")
+            row.status = PositionStatus.CLOSED.value
+            row.closed_at = now_ms
+            fill_row = DBFill(
+                position_id=row.id,
+                ts_ms=now_ms,
+                side=closing_side.value,
+                qty=qty_filled,
+                price=fill_price,
+                fee=fee,
+                slippage_bps=self._slippage * 1e4,
+                is_paper=False,
+            )
+            s.add(fill_row)
+            closed_pos = self._db_pos_to_domain(row)
+        return closed_pos
+
+    # ------------------------------------------------------------------
+    # Protocol: get_open_positions
+    # ------------------------------------------------------------------
+
+    async def get_open_positions(self) -> list[Position]:
+        """Fetch open positions from HL, reconcile with DB, return canonical set.
+
+        Out-of-band positions are logged at WARN but not auto-corrected.
+        """
+        address = self._require_address()
+        if self._session_factory is None:
+            raise RuntimeError("session_factory required for get_open_positions")
+
+        perp_state, spot_state = await asyncio.gather(
+            asyncio.to_thread(self._info.user_state, address),
+            asyncio.to_thread(self._info.spot_user_state, address),
+        )
+
+        # Build set of coins with open positions on HL
+        hl_perp_coins: set[str] = set()
+        for entry in perp_state.get("assetPositions", []):
+            pos = entry.get("position", {})
+            szi = float(pos.get("szi", 0))
+            if abs(szi) > 1e-12:
+                hl_perp_coins.add(pos["coin"])
+
+        hl_spot_coins: set[str] = set()
+        for balance in spot_state.get("balances", []):
+            total = float(balance.get("total", 0))
+            if total > 1e-12:
+                hl_spot_coins.add(balance["coin"])
+
+        async with session_scope(self._session_factory) as s:
+            exchange_id = await self._get_exchange_id(s)
+            result = await s.execute(
+                select(DBPosition).where(
+                    DBPosition.exchange_id == exchange_id,
+                    DBPosition.status == PositionStatus.OPEN.value,
+                )
+            )
+            db_rows = result.scalars().all()
+
+        positions = []
+        for row in db_rows:
+            # Check reconciliation for PERP positions
+            if row.instrument == Instrument.PERP.value and row.coin not in hl_perp_coins:
+                logger.warning(
+                    "get_open_positions: DB has OPEN PERP %s but HL reports no position",
+                    row.coin,
+                )
+            # Check reconciliation for SPOT positions
+            spot_hl_coin = self._spot_token_map.get(row.coin, row.coin)
+            if row.instrument == Instrument.SPOT.value and spot_hl_coin not in hl_spot_coins:
+                logger.warning(
+                    "get_open_positions: DB has OPEN SPOT %s but HL reports no balance",
+                    row.coin,
+                )
+            positions.append(self._db_pos_to_domain(row))
+
+        return positions
+
+    # ------------------------------------------------------------------
+    # Protocol: get_accrued_funding
+    # ------------------------------------------------------------------
+
+    async def get_accrued_funding(self, pos: Position) -> float:
+        """Fetch HL funding history since pos.opened_at, write accruals to DB.
+
+        Idempotent: skips rows that already exist by (position_id, ts_ms).
+        """
+        address = self._require_address()
+        if pos.id is None:
+            raise ValueError("Position must have a DB id to fetch accrued funding")
+        if self._session_factory is None:
+            raise RuntimeError("session_factory required for get_accrued_funding")
+
+        since_ms = _dt_to_ms(pos.opened_at)
+        data: list[dict] = await self._post({
+            "type": "userFunding",
+            "user": address,
+            "startTime": since_ms,
+        })
+
+        # Filter to matching coin
+        total = 0.0
+        new_accruals: list[tuple[int, float]] = []
+        for record in data:
+            delta = record.get("delta", {})
+            if delta.get("coin") != pos.coin:
+                continue
+            ts_ms = int(record["time"])
+            amount = float(delta["usdc"])
+            new_accruals.append((ts_ms, amount))
+            total += amount
+
+        async with session_scope(self._session_factory) as s:
+            # Load existing accrual ts_ms values for this position to avoid duplicates
+            result = await s.execute(
+                select(DBFundingAccrual.ts_ms).where(
+                    DBFundingAccrual.position_id == pos.id
+                )
+            )
+            existing_ts = {row for (row,) in result.all()}
+
+            for ts_ms, amount in new_accruals:
+                if ts_ms not in existing_ts:
+                    s.add(DBFundingAccrual(
+                        position_id=pos.id,
+                        ts_ms=ts_ms,
+                        amount=amount,
+                    ))
+
+        # Return cumulative sum from DB (source of truth)
+        async with session_scope(self._session_factory) as s:
+            result = await s.execute(
+                select(DBFundingAccrual.amount).where(
+                    DBFundingAccrual.position_id == pos.id
+                )
+            )
+            total = sum(row for (row,) in result.all())
+
+        return total
+
+    # ------------------------------------------------------------------
+    # Protocol: get_wallet
+    # ------------------------------------------------------------------
+
+    async def get_wallet(self, coin: str, kind: WalletKind) -> float:
+        """Get free balance for (coin, kind), write wallet_snapshot, return balance."""
+        address = self._require_address()
+        if self._session_factory is None:
+            raise RuntimeError("session_factory required for get_wallet")
+
+        perp_state, spot_state = await asyncio.gather(
+            asyncio.to_thread(self._info.user_state, address),
+            asyncio.to_thread(self._info.spot_user_state, address),
+        )
+
+        now_ms = _dt_to_ms(self._clock_fn())
+        balance = 0.0
+
+        if kind == WalletKind.PERP:
+            margin = perp_state.get("marginSummary", {})
+            if coin in ("USDC", "USD"):
+                balance = float(margin.get("accountValue", 0.0))
+            else:
+                # For other coins in perp — not standard HL usage
+                balance = 0.0
+        else:  # SPOT
+            spot_coin = self._spot_token_map.get(coin, coin)
+            for bal in spot_state.get("balances", []):
+                if bal.get("coin") == spot_coin or bal.get("coin") == coin:
+                    balance = float(bal.get("total", 0.0))
+                    break
+
+        async with session_scope(self._session_factory) as s:
+            exchange_id = await self._get_exchange_id(s)
+            s.add(DBWalletSnapshot(
+                exchange_id=exchange_id,
+                coin=coin,
+                ts_ms=now_ms,
+                balance=balance,
+                source="hl_account_state",
+            ))
+
+        return balance
+
+    # ------------------------------------------------------------------
+    # Protocol: transfer
+    # ------------------------------------------------------------------
+
+    async def transfer(
+        self,
+        coin: str,
+        amount: float,
+        from_wallet: WalletKind,
+        to_wallet: WalletKind,
+    ) -> None:
+        """Transfer funds between wallets. Writes wallet_snapshots after transfer."""
+        exchange_sdk = self._require_exchange()
+        if amount <= 0:
+            raise ValueError(f"amount must be positive, got {amount!r}")
+
+        if from_wallet == WalletKind.SPOT and to_wallet == WalletKind.PERP:
+            to_perp = True
+        elif from_wallet == WalletKind.PERP and to_wallet == WalletKind.SPOT:
+            to_perp = False
+        else:
+            raise ValueError(
+                f"unsupported transfer direction: {from_wallet} → {to_wallet}"
+            )
+
+        resp = await asyncio.to_thread(exchange_sdk.usd_class_transfer, amount, to_perp)
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            raise HLTransferError(
+                f"HL usdClassTransfer {from_wallet}→{to_wallet} rejected: {resp!r}"
+            )
+        logger.info(
+            "transfer coin=%s amount=%.4f %s→%s ok",
+            coin, amount, from_wallet, to_wallet,
+        )
+
+        # Write wallet_snapshots after transfer if session_factory available
+        if self._session_factory is not None:
+            now_ms = _dt_to_ms(self._clock_fn())
+            address = self._address
+            if address is not None:
+                # Capture post-transfer balances
+                perp_state, spot_state = await asyncio.gather(
+                    asyncio.to_thread(self._info.user_state, address),
+                    asyncio.to_thread(self._info.spot_user_state, address),
+                )
+                perp_balance = float(
+                    perp_state.get("marginSummary", {}).get("accountValue", 0.0)
+                )
+                spot_coin = self._spot_token_map.get(coin, coin)
+                spot_balance = 0.0
+                for bal in spot_state.get("balances", []):
+                    if bal.get("coin") == spot_coin or bal.get("coin") == coin:
+                        spot_balance = float(bal.get("total", 0.0))
+                        break
+
+                async with session_scope(self._session_factory) as s:
+                    exchange_id = await self._get_exchange_id(s)
+                    s.add(DBWalletSnapshot(
+                        exchange_id=exchange_id,
+                        coin=coin,
+                        ts_ms=now_ms,
+                        balance=perp_balance,
+                        source="hl_post_transfer_perp",
+                    ))
+                    s.add(DBWalletSnapshot(
+                        exchange_id=exchange_id,
+                        coin=coin,
+                        ts_ms=now_ms,
+                        balance=spot_balance,
+                        source="hl_post_transfer_spot",
+                    ))
+
+    # ------------------------------------------------------------------
+    # Internal: SDK helpers
     # ------------------------------------------------------------------
 
     def _require_exchange(self) -> Exchange:
@@ -406,99 +798,9 @@ class HLExchange:
             raise RuntimeError("account_address required")
         return self._address
 
-    def _make_order_name(self, req: OrderRequest) -> str:
-        if req.leg == Leg.PERP:
-            return req.coin
-        base = self._spot_token_map.get(req.coin, req.coin)
+    def _make_spot_name(self, coin: str) -> str:
+        base = self._spot_token_map.get(coin, coin)
         return f"{base}/{self._spot_quote_token}"
-
-    async def submit(self, req: OrderRequest) -> FillReport:
-        exchange = self._require_exchange()
-        name = self._make_order_name(req)
-        is_buy = req.side == Side.BUY
-
-        resp = await asyncio.to_thread(
-            exchange.market_open, name, is_buy, req.qty, None, self._slippage
-        )
-
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            raise RuntimeError(f"HL order rejected: {resp!r}")
-        try:
-            status0 = resp["response"]["data"]["statuses"][0]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError(f"HL order response shape unexpected: {resp!r}") from exc
-
-        if "filled" in status0:
-            filled = status0["filled"]
-            qty = float(filled["totalSz"])
-            price = float(filled["avgPx"])
-            fee = float(filled.get("fee", 0.0))
-        elif "error" in status0:
-            raise RuntimeError(f"HL order error: {status0['error']!r}")
-        elif "resting" in status0:
-            raise RuntimeError(f"HL market order unexpectedly resting: {status0!r}")
-        else:
-            raise RuntimeError(f"HL order unrecognized status: {status0!r}")
-
-        fill = FillReport(
-            coin=req.coin,
-            leg=req.leg,
-            side=req.side,
-            ts=self._clock_fn(),
-            qty=qty,
-            price=price,
-            fee=fee,
-            slippage_bps=self._slippage * 1e4,
-            client_ref=req.client_ref,
-        )
-
-        if qty < req.qty * (1 - self._partial_fill_tolerance):
-            raise PartialFillError(requested_qty=req.qty, filled_qty=qty, fill=fill)
-
-        return fill
-
-    async def get_position(self, coin: str) -> PositionState | None:
-        address = self._require_address()
-
-        perp_state, spot_state = await asyncio.gather(
-            asyncio.to_thread(self._info.user_state, address),
-            asyncio.to_thread(self._info.spot_user_state, address),
-        )
-
-        perp_units = 0.0
-        avg_entry_perp: float | None = None
-        for entry in perp_state.get("assetPositions", []):
-            pos = entry.get("position", {})
-            if pos.get("coin") == coin:
-                perp_units = float(pos["szi"])
-                if "entryPx" in pos:
-                    avg_entry_perp = float(pos["entryPx"])
-                break
-
-        spot_coin = self._spot_token_map.get(coin, coin)
-        spot_units = 0.0
-        avg_entry_spot: float | None = None
-        for balance in spot_state.get("balances", []):
-            if balance.get("coin") == spot_coin:
-                spot_units = float(balance["total"])
-                entry_ntl = float(balance.get("entryNtl", 0))
-                if spot_units > 0 and entry_ntl > 0:
-                    avg_entry_spot = entry_ntl / spot_units
-                break
-
-        if abs(perp_units) < 1e-12 and abs(spot_units) < 1e-12:
-            return None
-
-        return PositionState(
-            coin=coin,
-            spot_units=spot_units,
-            perp_units=perp_units,
-            avg_entry_spot=avg_entry_spot,
-            avg_entry_perp=avg_entry_perp,
-        )
-
-    async def reconcile(self) -> None:
-        logger.debug("reconcile is no-op in HLExchange")
 
     async def _sz_decimals(self, coin: str) -> int:
         if self._sz_decimals_cache is None:
@@ -516,52 +818,31 @@ class HLExchange:
         return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_DOWN))
 
     async def round_qty_to_nearest(self, coin: str, qty: float) -> float:
-        """Round qty to asset's szDecimals with ROUND_HALF_UP (minimises hedge residual)."""
+        """Round qty to asset's szDecimals with ROUND_HALF_UP."""
         sz_dec = await self._sz_decimals(coin)
         quant = Decimal(10) ** -sz_dec
         return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_HALF_UP))
 
-    async def close_position(self, coin: str) -> FillReport | None:
-        """Reduce-only market close for a perp position. Returns None if flat."""
-        exchange = self._require_exchange()
-        pos = await self.get_position(coin)
-        if pos is None or abs(pos.perp_units) < 1e-12:
-            return None
-        closing_side = Side.BUY if pos.perp_units < 0 else Side.SELL
+    # ------------------------------------------------------------------
+    # Additional read helpers (non-Protocol, for CLI/internal use)
+    # ------------------------------------------------------------------
 
-        resp = await asyncio.to_thread(
-            exchange.market_close, coin, None, None, self._slippage
-        )
-
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            raise RuntimeError(f"HL market_close rejected: {resp!r}")
-        try:
-            status0 = resp["response"]["data"]["statuses"][0]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError(f"HL market_close response shape unexpected: {resp!r}") from exc
-
-        if "filled" not in status0:
-            if "error" in status0:
-                raise RuntimeError(f"HL market_close error: {status0['error']!r}")
-            return None
-
-        filled = status0["filled"]
-        qty = float(filled["totalSz"])
-        if qty <= 0:
-            return None
-        price = float(filled["avgPx"])
-        fee = float(filled.get("fee", 0.0))
-        return FillReport(
-            coin=coin,
-            leg=Leg.PERP,
-            side=closing_side,
-            ts=self._clock_fn(),
-            qty=qty,
-            price=price,
-            fee=fee,
-            slippage_bps=self._slippage * 1e4,
-            client_ref=None,
-        )
+    async def fetch_funding_history(self, coin: str, since_ms: int) -> list[FundingTick]:
+        ticks: list[FundingTick] = []
+        start = since_ms
+        while True:
+            data: list[dict] = await self._post({
+                "type": "fundingHistory",
+                "coin": coin,
+                "startTime": start,
+            })
+            for rec in data:
+                ticks.append(self._record_to_tick(coin, rec))
+            if len(data) < 500:
+                break
+            start = int(data[-1]["time"]) + 1
+        ticks.sort(key=lambda t: t.ts_ms)
+        return ticks
 
     async def fetch_account_state(self) -> dict[str, Any]:
         """Return raw perp + spot account state dicts."""
@@ -572,41 +853,18 @@ class HLExchange:
         )
         return {"perp": perp_state, "spot": spot_state}
 
-    async def transfer_spot_to_perp(self, usdc_amount: float) -> dict:
-        """Transfer USDC from spot wallet to perp margin account."""
-        exchange = self._require_exchange()
-        if usdc_amount <= 0:
-            raise ValueError(f"usdc_amount must be positive, got {usdc_amount!r}")
-        resp = await asyncio.to_thread(exchange.usd_class_transfer, usdc_amount, True)
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            raise HLTransferError(f"HL usdClassTransfer spot→perp rejected: {resp!r}")
-        logger.info("transfer_spot_to_perp amount=%.4f ok", usdc_amount)
-        return {"status": "ok", "amount": usdc_amount, "direction": "spot_to_perp", "response": resp}
-
-    async def transfer_perp_to_spot(self, usdc_amount: float) -> dict:
-        """Transfer USDC from perp margin account to spot wallet."""
-        exchange = self._require_exchange()
-        if usdc_amount <= 0:
-            raise ValueError(f"usdc_amount must be positive, got {usdc_amount!r}")
-        resp = await asyncio.to_thread(exchange.usd_class_transfer, usdc_amount, False)
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            raise HLTransferError(f"HL usdClassTransfer perp→spot rejected: {resp!r}")
-        logger.info("transfer_perp_to_spot amount=%.4f ok", usdc_amount)
-        return {"status": "ok", "amount": usdc_amount, "direction": "perp_to_spot", "response": resp}
-
     def _inverse_spot_token_map(self) -> dict[str, str]:
         return {v: k for k, v in self._spot_token_map.items()}
 
     def _normalize_spot_coin(self, hl_coin: str) -> str:
-        """Translate a HL spot coin name to the canonical coin name via inverse map."""
         return self._inverse_spot_token_map().get(hl_coin, hl_coin)
 
     async def fetch_wallet_state(
         self,
         mark_prices: dict[str, float] | None = None,
     ) -> dict[str, Any]:
-        """Return a normalized wallet snapshot suitable for the /api/equity/wallet endpoint."""
-        address = self._require_address()  # noqa: F841 — triggers address check early
+        """Return normalized wallet snapshot suitable for the /api/equity/wallet endpoint."""
+        address = self._require_address()  # noqa: F841
 
         raw = await self.fetch_account_state()
         perp_state = raw["perp"]

@@ -15,11 +15,9 @@ import sqlalchemy
 from frab.settings import PROJECT_ROOT, get_settings
 from frab.db.models import Exchange, FundingRate, Market, Strategy
 from frab.db.session import session_scope
-from frab.events.bus import EventBus
-from frab.exchanges.atomic import AtomicExecutor
-from frab.exchanges.base import Leg, ExchangeDataSource, OrderRequest, Side
 from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader
 from frab.exchanges.hyperliquid.exchange import HLExchange as LiveHLExecutor
+from frab.exchanges.protocol import Exchange as ExchangeDataSource
 from frab.server import _hl_info_url, _select_spot_token_map
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -165,7 +163,7 @@ async def _backfill_funding_async(
         added = 0
         async with session_scope(session_factory) as s:
             for tick in ticks:
-                tick_ms = int(tick.ts.timestamp() * 1000)
+                tick_ms = tick.ts_ms
                 existing = await s.scalar(
                     select(FundingRate.id).where(
                         FundingRate.exchange_id == exchange_id,
@@ -306,7 +304,7 @@ async def _smoke_read_impl(settings) -> None:
     try:
         # 1. meta
         _hdr("=== meta ===")
-        meta = await market_data.fetch_meta()
+        meta = await market_data.get_meta()
         typer.echo(f"  perp coins: {len(meta)}")
         sample_names = [s.coin for s in meta[:5]]
         typer.echo(f"  first 5: {sample_names}")
@@ -328,8 +326,8 @@ async def _smoke_read_impl(settings) -> None:
 
         # 4. funding (latest tick)
         _hdr("=== funding/PURR (latest) ===")
-        tick = await market_data.fetch_funding("PURR")
-        typer.echo(f"  rate: {tick.rate:.8f}   annualized: {tick.annualized_pct:.2f}%   ts: {tick.ts}")
+        tick = await market_data.get_funding_rate("PURR")
+        typer.echo(f"  rate: {tick.rate:.8f}   annualized: {tick.annualized_pct:.2f}%   ts_ms: {tick.ts_ms}")
 
         # 5. funding history (bulk)
         _hdr("=== funding_history/PURR (last 12 h) ===")
@@ -337,11 +335,11 @@ async def _smoke_read_impl(settings) -> None:
         ticks = await market_data.fetch_funding_history("PURR", since_ms)
         typer.echo(f"  ticks: {len(ticks)}")
         if ticks:
-            typer.echo(f"  first ts: {ticks[0].ts}   last ts: {ticks[-1].ts}")
+            typer.echo(f"  first ts_ms: {ticks[0].ts_ms}   last ts_ms: {ticks[-1].ts_ms}")
 
         # 6. l2Book perp (HYPE — testnet has more depth than PURR perp)
         _hdr("=== l2Book perp/HYPE ===")
-        quote_perp = await market_data.fetch_quote("HYPE")
+        quote_perp = await market_data.get_quote("HYPE")
         typer.echo(f"  bid: {quote_perp.bid}   ask: {quote_perp.ask}   mark: {quote_perp.mark}")
 
         # 7. l2Book spot — via _info SDK (pair name format)
@@ -377,45 +375,25 @@ async def _smoke_read_impl(settings) -> None:
 
 
 async def _smoke_spot_impl(settings, coin: str, qty: float) -> None:
+    from frab.domain import Instrument, Side
+    from frab.exchanges.protocol import OpenRequest
     market_data, executor = _build_smoke_clients(settings)
 
     try:
         _hdr(f"=== spot smoke: {coin}/USDC ===")
-        quote_before = await market_data.fetch_quote(coin)
+        quote_before = await market_data.get_quote(coin)
         typer.echo(f"  mark before: {quote_before.mark}")
 
-        buy_ref = f"smoke-spot-buy-{int(time.time() * 1000)}"
-        buy_req = OrderRequest(
-            coin=coin,
-            leg=Leg.SPOT,
-            side=Side.BUY,
-            qty=qty,
-            client_ref=buy_ref,
-        )
+        buy_req = OpenRequest(coin=coin, instrument=Instrument.SPOT, side=Side.LONG, qty=qty)
         typer.echo(f"  submitting BUY {qty} {coin}/USDC ...")
-        buy_fill = await executor.submit(buy_req)
-        typer.echo(
-            f"  BUY fill — price: {buy_fill.price}  qty: {buy_fill.qty}  fee: {buy_fill.fee}  ref: {buy_fill.client_ref}"
-        )
+        pos = await executor.open_position(buy_req)
+        typer.echo(f"  BUY fill — price: {pos.entry_price}  qty: {pos.qty}")
 
         await asyncio.sleep(1.0)
 
-        sell_ref = f"smoke-spot-sell-{int(time.time() * 1000)}"
-        sell_req = OrderRequest(
-            coin=coin,
-            leg=Leg.SPOT,
-            side=Side.SELL,
-            qty=qty,
-            client_ref=sell_ref,
-        )
         typer.echo(f"  submitting SELL {qty} {coin}/USDC ...")
-        sell_fill = await executor.submit(sell_req)
-        typer.echo(
-            f"  SELL fill — price: {sell_fill.price}  qty: {sell_fill.qty}  fee: {sell_fill.fee}  ref: {sell_fill.client_ref}"
-        )
-
-        net_pnl = (sell_fill.price - buy_fill.price) * qty - buy_fill.fee - sell_fill.fee
-        typer.echo(f"  net PnL (cost of smoke): {net_pnl:.6f} USDC")
+        closed_pos = await executor.close_position(pos)
+        typer.echo(f"  SELL done — status: {closed_pos.status}")
 
     finally:
         await market_data.aclose()
@@ -424,46 +402,25 @@ async def _smoke_spot_impl(settings, coin: str, qty: float) -> None:
 
 
 async def _smoke_perp_impl(settings, coin: str, qty: float, slippage: float) -> None:
+    from frab.domain import Instrument, Side
+    from frab.exchanges.protocol import OpenRequest
     market_data, executor = _build_smoke_clients_with_slippage(settings, slippage)
 
     try:
         _hdr(f"=== perp smoke: {coin} ===")
-        quote_before = await market_data.fetch_quote(coin)
+        quote_before = await market_data.get_quote(coin)
         typer.echo(f"  mark before: {quote_before.mark}")
 
-        sell_ref = f"smoke-perp-sell-{int(time.time() * 1000)}"
-        sell_req = OrderRequest(
-            coin=coin,
-            leg=Leg.PERP,
-            side=Side.SELL,
-            qty=qty,
-            client_ref=sell_ref,
-        )
-        typer.echo(f"  submitting SELL (short) {qty} {coin} perp ...")
-        sell_fill = await executor.submit(sell_req)
-        typer.echo(
-            f"  SELL fill — price: {sell_fill.price}  qty: {sell_fill.qty}  fee: {sell_fill.fee}  ref: {sell_fill.client_ref}"
-        )
+        typer.echo(f"  submitting SHORT {qty} {coin} perp ...")
+        sell_req = OpenRequest(coin=coin, instrument=Instrument.PERP, side=Side.SHORT, qty=qty)
+        pos = await executor.open_position(sell_req)
+        typer.echo(f"  SHORT fill — price: {pos.entry_price}  qty: {pos.qty}")
 
         await asyncio.sleep(1.0)
 
-        buy_ref = f"smoke-perp-buy-{int(time.time() * 1000)}"
-        buy_req = OrderRequest(
-            coin=coin,
-            leg=Leg.PERP,
-            side=Side.BUY,
-            qty=qty,
-            client_ref=buy_ref,
-        )
-        typer.echo(f"  submitting BUY (cover) {qty} {coin} perp ...")
-        buy_fill = await executor.submit(buy_req)
-        typer.echo(
-            f"  BUY fill — price: {buy_fill.price}  qty: {buy_fill.qty}  fee: {buy_fill.fee}  ref: {buy_fill.client_ref}"
-        )
-
-        # Short P&L: opened at sell_fill.price, closed at buy_fill.price
-        net_pnl = (sell_fill.price - buy_fill.price) * qty - sell_fill.fee - buy_fill.fee
-        typer.echo(f"  net PnL (cost of smoke): {net_pnl:.6f} USDC")
+        typer.echo(f"  submitting COVER {qty} {coin} perp ...")
+        closed_pos = await executor.close_position(pos)
+        typer.echo(f"  COVER done — status: {closed_pos.status}")
 
     finally:
         await market_data.aclose()
@@ -541,70 +498,38 @@ def smoke_all(
 
 
 async def _smoke_paired_impl(settings, coin: str, qty: float, wait_sec: float) -> None:
+    """Open spot+perp pair, wait, close both legs."""
+    from frab.domain import Instrument, Side
+    from frab.exchanges.protocol import OpenRequest
+
     _, executor = _build_smoke_clients(settings)
-    bus = EventBus()
-    atomic = AtomicExecutor(executor, bus, max_attempts=1, sleep_between_attempts=())
 
-    ts = int(time.time() * 1000)
-    perp_open = OrderRequest(
-        coin=coin, leg=Leg.PERP, side=Side.SELL, qty=qty,
-        client_ref=f"smoke-paired-open-perp-{ts}",
-    )
-    spot_open = OrderRequest(
-        coin=coin, leg=Leg.SPOT, side=Side.BUY, qty=qty,
-        client_ref=f"smoke-paired-open-spot-{ts}",
-    )
-
-    _hdr("=== open_paired ===")
+    _hdr("=== open spot leg ===")
     typer.echo(f"  requested {qty} {coin}")
-    open_result = await atomic.open_paired(perp_open, spot_open)
-    typer.echo(f"  status: {open_result.status}")
-    if open_result.spot_fill is not None:
-        typer.echo(f"  spot fill: qty={open_result.spot_fill.qty}  px={open_result.spot_fill.price}")
-    if open_result.perp_fill is not None:
-        typer.echo(f"  perp fill: qty={open_result.perp_fill.qty}  px={open_result.perp_fill.price}")
-    if open_result.status != "ok":
-        typer.echo(f"  errors: {open_result.errors}")
-        return
+    spot_req = OpenRequest(coin=coin, instrument=Instrument.SPOT, side=Side.LONG, qty=qty)
+    spot_pos = await executor.open_position(spot_req)
+    typer.echo(f"  spot fill — price: {spot_pos.entry_price}  qty: {spot_pos.qty}")
+
+    _hdr("=== open perp leg ===")
+    perp_req = OpenRequest(coin=coin, instrument=Instrument.PERP, side=Side.SHORT, qty=spot_pos.qty)
+    perp_pos = await executor.open_position(perp_req)
+    typer.echo(f"  perp fill — price: {perp_pos.entry_price}  qty: {perp_pos.qty}")
 
     typer.echo(f"  waiting {wait_sec}s ...")
     await asyncio.sleep(wait_sec)
 
-    pos = await executor.get_position(coin)
-    _hdr("=== position after open ===")
-    if pos is not None:
-        typer.echo(f"  pos: {pos}")
-    else:
-        typer.echo("  (zero)")
+    open_positions = await executor.get_open_positions()
+    _hdr(f"=== open positions ({len(open_positions)}) ===")
+    for p in open_positions:
+        typer.echo(f"  {p.coin} {p.instrument} {p.side} qty={p.qty}")
 
-    actual_qty = open_result.spot_fill.qty
-    ts2 = int(time.time() * 1000)
-    perp_close = OrderRequest(
-        coin=coin, leg=Leg.PERP, side=Side.BUY, qty=actual_qty,
-        client_ref=f"smoke-paired-close-perp-{ts2}",
-    )
-    spot_close = OrderRequest(
-        coin=coin, leg=Leg.SPOT, side=Side.SELL, qty=actual_qty,
-        client_ref=f"smoke-paired-close-spot-{ts2}",
-    )
+    _hdr("=== close spot leg ===")
+    closed_spot = await executor.close_position(spot_pos)
+    typer.echo(f"  spot close — status: {closed_spot.status}")
 
-    _hdr("=== close_paired ===")
-    typer.echo(f"  closing {actual_qty} {coin}")
-    close_result = await atomic.close_paired(perp_close, spot_close)
-    typer.echo(f"  status: {close_result.status}")
-    if close_result.spot_fill is not None:
-        typer.echo(f"  spot fill: qty={close_result.spot_fill.qty}  px={close_result.spot_fill.price}")
-    if close_result.perp_fill is not None:
-        typer.echo(f"  perp fill: qty={close_result.perp_fill.qty}  px={close_result.perp_fill.price}")
-    if close_result.status != "ok":
-        typer.echo(f"  errors: {close_result.errors}")
-
-    pos2 = await executor.get_position(coin)
-    _hdr("=== position after close ===")
-    if pos2 is not None:
-        typer.echo(f"  pos: {pos2}")
-    else:
-        typer.echo("  (zero)")
+    _hdr("=== close perp leg ===")
+    closed_perp = await executor.close_position(perp_pos)
+    typer.echo(f"  perp close — status: {closed_perp.status}")
 
 
 @live_smoke_app.command("paired")

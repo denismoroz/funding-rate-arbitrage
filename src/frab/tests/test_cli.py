@@ -116,7 +116,7 @@ def test_help_shows_commands():
 
 
 def test_backfill_fetches_and_writes(tmp_path, monkeypatch, mocker):
-    from frab.exchanges.base import FundingTick
+    from frab.exchanges.protocol import FundingTick
 
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{db_path}")
@@ -125,10 +125,9 @@ def test_backfill_fetches_and_writes(tmp_path, monkeypatch, mocker):
     runner.invoke(app, ["init-db"])
     runner.invoke(app, ["seed"])
 
-    base = datetime(2026, 5, 15, 4, 0, tzinfo=UTC)
     fake_hl = mocker.MagicMock()
     fake_hl.fetch_funding_history = mocker.AsyncMock(side_effect=lambda coin, since_ms: [
-        FundingTick(coin=coin, ts=base, rate=0.0001, premium=None, annualized_pct=0.876),
+        FundingTick(coin=coin, ts_ms=1_747_270_800_000, rate=0.0001, premium=0.0, annualized_pct=0.876),
     ])
     fake_hl.aclose = mocker.AsyncMock()
     mocker.patch("frab.cli.HLExchangeReader", return_value=fake_hl)
@@ -151,7 +150,7 @@ def test_backfill_fetches_and_writes(tmp_path, monkeypatch, mocker):
 
 
 def test_backfill_is_idempotent(tmp_path, monkeypatch, mocker):
-    from frab.exchanges.base import FundingTick
+    from frab.exchanges.protocol import FundingTick
 
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{db_path}")
@@ -160,10 +159,9 @@ def test_backfill_is_idempotent(tmp_path, monkeypatch, mocker):
     runner.invoke(app, ["init-db"])
     runner.invoke(app, ["seed"])
 
-    base = datetime(2026, 5, 15, 4, 0, tzinfo=UTC)
     fake_hl = mocker.MagicMock()
     fake_hl.fetch_funding_history = mocker.AsyncMock(side_effect=lambda coin, since_ms: [
-        FundingTick(coin=coin, ts=base, rate=0.0001, premium=None, annualized_pct=0.876),
+        FundingTick(coin=coin, ts_ms=1_747_270_800_000, rate=0.0001, premium=0.0, annualized_pct=0.876),
     ])
     fake_hl.aclose = mocker.AsyncMock()
     mocker.patch("frab.cli.HLExchangeReader", return_value=fake_hl)

@@ -4,8 +4,9 @@ from __future__ import annotations
 import pytest
 
 import frab.exchanges.registry as reg_mod
-from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader
-from frab.exchanges.registry import available, make_market_data, register
+from frab.exchanges.hyperliquid.exchange import HLExchange
+from frab.exchanges.protocol import Exchange
+from frab.exchanges.registry import available, get_exchange, make_market_data, register
 
 
 # ---------------------------------------------------------------------------
@@ -17,26 +18,39 @@ def test_default_registry_has_hyperliquid():
 
 
 # ---------------------------------------------------------------------------
-# 2. make_market_data returns HLExchangeReader
+# 2. get_exchange returns HLExchange
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_exchange_returns_hl_instance():
+    adapter = get_exchange("hyperliquid")
+    try:
+        assert isinstance(adapter, HLExchange)
+    finally:
+        await adapter.aclose()
+
+
+# ---------------------------------------------------------------------------
+# 3. make_market_data backward compat alias
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_make_market_data_returns_hl_instance():
     adapter = make_market_data("hyperliquid")
     try:
-        assert isinstance(adapter, HLExchangeReader)
+        assert isinstance(adapter, HLExchange)
     finally:
         await adapter.aclose()
 
 
 # ---------------------------------------------------------------------------
-# 3. kwargs propagation
+# 4. kwargs propagation
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_kwargs_propagated_to_factory():
     custom_url = "https://custom.test/info"
-    adapter = make_market_data("hyperliquid", api_url=custom_url)
+    adapter = get_exchange("hyperliquid", api_url=custom_url)
     try:
         assert adapter._api_url == custom_url
     finally:
@@ -44,57 +58,53 @@ async def test_kwargs_propagated_to_factory():
 
 
 # ---------------------------------------------------------------------------
-# 4. Unknown name raises KeyError
+# 5. Unknown name raises KeyError
 # ---------------------------------------------------------------------------
 
 def test_unknown_name_raises_key_error():
     with pytest.raises(KeyError, match="unknown exchange") as exc_info:
-        make_market_data("nope")
+        get_exchange("nope")
     assert "nope" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
-# 5. register adds new adapter
+# 6. register adds new adapter
 # ---------------------------------------------------------------------------
 
 class _DummyAdapter:
     name = "dummy"
 
-    async def fetch_funding(self, coin): ...  # pragma: no cover
-    async def fetch_funding_history(self, coin, since_ms): ...  # pragma: no cover
-    async def fetch_quote(self, coin): ...  # pragma: no cover
-    async def fetch_meta(self): ...  # pragma: no cover
+    async def get_quote(self, coin): ...
+    async def get_funding_rate(self, coin): ...
+    async def get_meta(self): ...
+    async def open_position(self, req): ...
+    async def close_position(self, pos): ...
+    async def get_open_positions(self): ...
+    async def get_accrued_funding(self, pos): ...
+    async def get_wallet(self, coin, kind): ...
+    async def transfer(self, coin, amount, from_wallet, to_wallet): ...
 
 
 def test_register_adds_new_adapter(mocker):
     mocker.patch.dict(reg_mod._REGISTRY, {})
     register("dummy", _DummyAdapter)
     assert "dummy" in available()
-    assert isinstance(make_market_data("dummy"), _DummyAdapter)
+    assert isinstance(get_exchange("dummy"), _DummyAdapter)
 
 
 # ---------------------------------------------------------------------------
-# 6. register overwrites silently
+# 7. register overwrites silently
 # ---------------------------------------------------------------------------
-
-class _AltAdapter:
-    name = "hyperliquid"
-
-    async def fetch_funding(self, coin): ...  # pragma: no cover
-    async def fetch_funding_history(self, coin, since_ms): ...  # pragma: no cover
-    async def fetch_quote(self, coin): ...  # pragma: no cover
-    async def fetch_meta(self): ...  # pragma: no cover
-
 
 def test_register_overwrites_silently(mocker):
-    mocker.patch.dict(reg_mod._REGISTRY, {"hyperliquid": HLExchangeReader})  # HLExchangeReader = HLExchange alias
-    register("hyperliquid", _AltAdapter)
-    adapter = make_market_data("hyperliquid")
-    assert isinstance(adapter, _AltAdapter)
+    mocker.patch.dict(reg_mod._REGISTRY, {"hyperliquid": HLExchange})
+    register("hyperliquid", _DummyAdapter)
+    adapter = get_exchange("hyperliquid")
+    assert isinstance(adapter, _DummyAdapter)
 
 
 # ---------------------------------------------------------------------------
-# 7. available() returns sorted
+# 8. available() returns sorted
 # ---------------------------------------------------------------------------
 
 def test_available_returns_sorted(mocker):
@@ -104,3 +114,14 @@ def test_available_returns_sorted(mocker):
     result = available()
     assert result == sorted(result)
     assert result == ["alpha", "mango", "zebra"]
+
+
+# ---------------------------------------------------------------------------
+# 9. HLExchange satisfies Exchange Protocol
+# ---------------------------------------------------------------------------
+
+def test_hl_exchange_satisfies_protocol():
+    from unittest.mock import MagicMock
+    info = MagicMock()
+    ex = HLExchange(info=info)
+    assert isinstance(ex, Exchange)

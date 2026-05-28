@@ -1,4 +1,4 @@
-"""Tests for HLExchange read methods (formerly HLExchangeReader)."""
+"""Tests for HLExchange read methods (get_quote, get_funding_rate, get_meta, fetch_funding_history)."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ import respx
 from tenacity import wait_none
 
 import frab.exchanges.hyperliquid.exchange as hl_mod
-from frab.exchanges.base import Leg, Side
 from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader, _ms_to_dt
+from frab.exchanges.protocol import FundingTick, Quote, MarketSpec
 
 BASE_URL = "https://api.hyperliquid.xyz"
 INFO_URL = f"{BASE_URL}/info"
@@ -29,43 +29,44 @@ def _make_client() -> httpx.AsyncClient:
 
 
 # ---------------------------------------------------------------------------
-# fetch_funding
+# get_funding_rate
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fetch_funding_happy_path():
+async def test_get_funding_rate_happy_path():
     record = _funding_record(ts_ms=1_700_000_000_000, rate="0.0001", premium="0.0005")
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[record])
         client = _make_client()
         md = HLExchangeReader(api_url=INFO_URL, client=client)
-        tick = await md.fetch_funding("BTC")
+        tick = await md.get_funding_rate("BTC")
 
+    assert isinstance(tick, FundingTick)
     assert tick.coin == "BTC"
-    assert tick.ts == _ms_to_dt(1_700_000_000_000)
+    assert tick.ts_ms == 1_700_000_000_000
     assert tick.rate == pytest.approx(0.0001)
     assert tick.premium == pytest.approx(0.0005)
     assert tick.annualized_pct == pytest.approx(0.0001 * 8760 * 100)
 
 
 @pytest.mark.asyncio
-async def test_fetch_funding_empty_raises():
+async def test_get_funding_rate_empty_raises():
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[])
         client = _make_client()
         md = HLExchangeReader(api_url=INFO_URL, client=client)
         with pytest.raises(ValueError, match="no recent funding"):
-            await md.fetch_funding("BTC")
+            await md.get_funding_rate("BTC")
 
 
 @pytest.mark.asyncio
-async def test_fetch_funding_parses_string_fields():
+async def test_get_funding_rate_parses_string_fields():
     record = _funding_record(rate="0.0001", premium="0.0002")
     async with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/info").respond(200, json=[record])
         client = _make_client()
         md = HLExchangeReader(api_url=INFO_URL, client=client)
-        tick = await md.fetch_funding("BTC")
+        tick = await md.get_funding_rate("BTC")
 
     assert isinstance(tick.rate, float)
     assert tick.rate == pytest.approx(0.0001)
@@ -105,16 +106,16 @@ async def test_fetch_funding_history_paginates(mocker):
         ticks = await md.fetch_funding_history("BTC", since_ms=0)
 
     assert len(ticks) == 700
-    assert ticks == sorted(ticks, key=lambda t: t.ts)
+    assert ticks == sorted(ticks, key=lambda t: t.ts_ms)
     assert call_bodies[1]["startTime"] == last_ts_page1 + 1
 
 
 # ---------------------------------------------------------------------------
-# fetch_quote
+# get_quote
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fetch_quote_combines_endpoints():
+async def test_get_quote_combines_endpoints():
     mids = {"BTC": "30000.5", "ETH": "2000.0"}
     book = {
         "coin": "BTC",
@@ -141,10 +142,11 @@ async def test_fetch_quote_combines_endpoints():
         mock.post("/info").mock(side_effect=side_effect)
         client = _make_client()
         md = HLExchangeReader(api_url=INFO_URL, client=client)
-        quote = await md.fetch_quote("BTC")
+        quote = await md.get_quote("BTC")
 
+    assert isinstance(quote, Quote)
     assert quote.coin == "BTC"
-    assert quote.ts == _ms_to_dt(1_700_000_000_000)
+    assert quote.ts_ms == 1_700_000_000_000
     assert quote.bid == pytest.approx(29999.0)
     assert quote.ask == pytest.approx(30001.0)
     assert quote.mark == pytest.approx(30000.5)
@@ -154,11 +156,11 @@ async def test_fetch_quote_combines_endpoints():
 
 
 # ---------------------------------------------------------------------------
-# fetch_meta
+# get_meta
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fetch_meta_parses_universe():
+async def test_get_meta_parses_universe():
     universe = {
         "universe": [
             {"name": "BTC", "szDecimals": 5, "maxLeverage": 50},
@@ -169,19 +171,21 @@ async def test_fetch_meta_parses_universe():
         mock.post("/info").respond(200, json=universe)
         client = _make_client()
         md = HLExchangeReader(api_url=INFO_URL, client=client)
-        specs = await md.fetch_meta()
+        specs = await md.get_meta()
 
     assert len(specs) == 2
     btc = specs[0]
+    assert isinstance(btc, MarketSpec)
     assert btc.coin == "BTC"
     assert btc.has_spot is False
     assert btc.has_perp is True
     assert btc.min_size == pytest.approx(10 ** -5)
     assert btc.tick_size == pytest.approx(10 ** -(6 - 5))  # 0.1
+    assert btc.sz_decimals == 5
 
     low = specs[1]
     assert low.min_size == pytest.approx(10 ** -3)
-    assert low.tick_size == pytest.approx(10 ** -(6 - 3))  # 0.001
+    assert low.tick_size == pytest.approx(10 ** -(6 - 3))
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +210,7 @@ async def test_retry_on_5xx(mocker):
         mock.post("/info").mock(side_effect=side_effect)
         client = _make_client()
         md = HLExchangeReader(api_url=INFO_URL, client=client)
-        tick = await md.fetch_funding("BTC")
+        tick = await md.get_funding_rate("BTC")
 
     assert tick.coin == "BTC"
     assert call_count == 3
@@ -232,7 +236,7 @@ async def test_no_retry_on_4xx(mocker):
         client = _make_client()
         md = HLExchangeReader(api_url=INFO_URL, client=client)
         with pytest.raises(httpx.HTTPStatusError):
-            await md.fetch_funding("BTC")
+            await md.get_funding_rate("BTC")
 
     assert call_count == 1
 
@@ -268,278 +272,12 @@ async def test_injected_client_not_closed():
 
 
 # ---------------------------------------------------------------------------
-# fetch_user_fills
-# ---------------------------------------------------------------------------
-
-def _fill_record(
-    coin: str,
-    time_ms: int,
-    side: str,
-    sz: str,
-    px: str,
-    fee: str,
-    fee_token: str,
-    oid: int,
-    tid: int,
-) -> dict:
-    return {
-        "coin": coin,
-        "time": time_ms,
-        "side": side,
-        "sz": sz,
-        "px": px,
-        "fee": fee,
-        "feeToken": fee_token,
-        "oid": oid,
-        "tid": tid,
-    }
-
-
-@pytest.mark.asyncio
-async def test_fetch_user_fills_parses_and_normalizes(mocker):
-    """3-fill response: spot BUY (UBTC/USDC), perp SELL (ETH), perp BUY (BTC)."""
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
-
-    # ts values: fill2 is earliest to verify sort order
-    t1_ms = 1_700_000_002_000  # spot BUY
-    t2_ms = 1_700_000_000_000  # perp SELL — earliest
-    t3_ms = 1_700_000_001_000  # perp BUY
-
-    fills_response = [
-        _fill_record("UBTC/USDC", t1_ms, "B", "0.001", "80000.0", "0.00001", "UBTC", 1001, 2001),
-        _fill_record("ETH", t2_ms, "A", "0.5", "3000.0", "0.75", "USDC", 1002, 2002),
-        _fill_record("BTC", t3_ms, "B", "0.01", "79000.0", "1.58", "USDC", 1003, 2003),
-    ]
-
-    async with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/info").respond(200, json=fills_response)
-        client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLExchangeReader(api_url=INFO_URL, client=client)
-        result = await md.fetch_user_fills("0xABCD", since_ms=0)
-
-    assert len(result) == 3
-
-    # Verify sort order: ascending by ts
-    assert result[0].ts == _ms_to_dt(t2_ms)  # ETH perp SELL
-    assert result[1].ts == _ms_to_dt(t3_ms)  # BTC perp BUY
-    assert result[2].ts == _ms_to_dt(t1_ms)  # UBTC/USDC spot BUY
-
-    # Spot BUY (UBTC/USDC → BTC)
-    spot_fill = result[2]
-    assert spot_fill.coin == "BTC"
-    assert spot_fill.leg == Leg.SPOT
-    assert spot_fill.side == Side.BUY
-    assert spot_fill.qty == pytest.approx(0.001)
-    assert spot_fill.price == pytest.approx(80000.0)
-    assert spot_fill.fee == pytest.approx(0.00001)
-    assert spot_fill.fee_token == "UBTC"
-    assert spot_fill.hl_oid == 1001
-    assert spot_fill.hl_tid == 2001
-
-    # Perp SELL (ETH)
-    perp_sell = result[0]
-    assert perp_sell.coin == "ETH"
-    assert perp_sell.leg == Leg.PERP
-    assert perp_sell.side == Side.SELL
-    assert perp_sell.qty == pytest.approx(0.5)
-    assert perp_sell.fee_token == "USDC"
-
-    # Perp BUY (BTC)
-    perp_buy = result[1]
-    assert perp_buy.coin == "BTC"
-    assert perp_buy.leg == Leg.PERP
-    assert perp_buy.side == Side.BUY
-
-
-@pytest.mark.asyncio
-async def test_fetch_user_fills_retries_on_5xx(mocker):
-    """500 on first attempt, 200 on second — retry should kick in."""
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
-
-    fill = _fill_record("BTC", 1_700_000_000_000, "B", "0.01", "50000", "0.5", "USDC", 1, 1)
-    call_count = 0
-
-    async def side_effect(request: httpx.Request) -> httpx.Response:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return httpx.Response(500)
-        return httpx.Response(200, json=[fill])
-
-    async with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/info").mock(side_effect=side_effect)
-        client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLExchangeReader(api_url=INFO_URL, client=client)
-        result = await md.fetch_user_fills("0xABCD", since_ms=0)
-
-    assert call_count == 2
-    assert len(result) == 1
-
-
-@pytest.mark.asyncio
-async def test_fetch_user_fills_empty_returns_empty_list(mocker):
-    """Empty array response → empty list, no error."""
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
-
-    async with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/info").respond(200, json=[])
-        client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLExchangeReader(api_url=INFO_URL, client=client)
-        result = await md.fetch_user_fills("0xABCD", since_ms=0)
-
-    assert result == []
-
-
-@pytest.mark.asyncio
-async def test_fetch_user_fills_unknown_spot_coin_fallback(mocker):
-    """Spot coin with no known mapping falls back to the part before the slash."""
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
-
-    fill = _fill_record("PURR/USDC", 1_700_000_000_000, "B", "100.0", "1.0", "0.1", "USDC", 1, 1)
-
-    async with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/info").respond(200, json=[fill])
-        client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLExchangeReader(api_url=INFO_URL, client=client)
-        result = await md.fetch_user_fills("0xABCD", since_ms=0)
-
-    assert len(result) == 1
-    assert result[0].coin == "PURR"
-    assert result[0].leg == Leg.SPOT
-
-
-@pytest.mark.asyncio
-async def test_fetch_user_fills_resolves_at_index_format(mocker):
-    """HL also returns spot fills as '@<idx>' — must resolve via spotMeta."""
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
-
-    # HL real format: universe name is "@N" for non-canonical pairs;
-    # base token name lives in tokens[universe[i].tokens[0]].
-    spot_meta = {
-        "universe": [
-            {"index": 142, "name": "@142", "tokens": [197, 0], "isCanonical": False},
-            {"index": 0, "name": "PURR/USDC", "tokens": [1, 0], "isCanonical": True},
-        ],
-        "tokens": [
-            {"index": 0, "name": "USDC"},
-            {"index": 1, "name": "PURR"},
-            {"index": 197, "name": "UBTC"},
-        ],
-    }
-    fill = _fill_record("@142", 1_700_000_000_000, "B", "0.00015", "76800.0", "0.00000011", "UBTC", 1, 1)
-
-    async def routed(request):
-        body = json.loads(request.content)
-        if body.get("type") == "spotMeta":
-            return httpx.Response(200, json=spot_meta)
-        if body.get("type") == "userFillsByTime":
-            return httpx.Response(200, json=[fill])
-        return httpx.Response(400)
-
-    async with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/info").mock(side_effect=routed)
-        client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLExchangeReader(api_url=INFO_URL, client=client)
-        result = await md.fetch_user_fills("0xABCD", since_ms=0)
-
-    assert len(result) == 1
-    assert result[0].coin == "BTC"
-    assert result[0].leg == Leg.SPOT
-
-
-# ---------------------------------------------------------------------------
-# fetch_user_funding
-# ---------------------------------------------------------------------------
-
-
-def _user_funding_record(coin: str, time_ms: int, usdc: str, szi: str, rate: str, hash_: str = "0xH") -> dict:
-    return {
-        "time": time_ms,
-        "hash": hash_,
-        "delta": {
-            "type": "funding",
-            "coin": coin,
-            "usdc": usdc,
-            "szi": szi,
-            "fundingRate": rate,
-            "nSamples": None,
-        },
-    }
-
-
-@pytest.mark.asyncio
-async def test_fetch_user_funding_parses_and_sorts(mocker):
-    """3 funding payments — positive and negative; sorted ascending; signs preserved."""
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
-
-    t1 = 1_700_000_002_000  # latest
-    t2 = 1_700_000_000_000  # earliest
-    t3 = 1_700_000_001_000  # middle
-
-    payments_response = [
-        _user_funding_record("BTC", t1, "0.000150", "-0.00015", "0.0000125"),
-        _user_funding_record("BTC", t2, "0.000140", "-0.00014", "0.0000125"),
-        _user_funding_record("BTC", t3, "-0.000050", "0.00015", "-0.0000045"),  # we paid
-    ]
-
-    async with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/info").respond(200, json=payments_response)
-        client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLExchangeReader(api_url=INFO_URL, client=client)
-        result = await md.fetch_user_funding("0xABCD", since_ms=0)
-
-    assert len(result) == 3
-    # Ascending by ts
-    assert result[0].ts == _ms_to_dt(t2)
-    assert result[1].ts == _ms_to_dt(t3)
-    assert result[2].ts == _ms_to_dt(t1)
-    # Sign preservation
-    assert result[1].usdc == pytest.approx(-0.000050)
-    assert result[2].usdc == pytest.approx(0.000150)
-
-
-@pytest.mark.asyncio
-async def test_fetch_user_funding_retries_on_5xx(mocker):
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
-    payments_response = [_user_funding_record("BTC", 1_700_000_000_000, "0.0001", "-0.00015", "0.0000125")]
-
-    async with respx.mock(base_url=BASE_URL) as mock:
-        route = mock.post("/info")
-        route.side_effect = [
-            httpx.Response(500, json={"error": "boom"}),
-            httpx.Response(200, json=payments_response),
-        ]
-        client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLExchangeReader(api_url=INFO_URL, client=client)
-        result = await md.fetch_user_funding("0xABCD", since_ms=0)
-
-    assert len(result) == 1
-    assert route.call_count == 2  # one retry
-
-
-@pytest.mark.asyncio
-async def test_fetch_user_funding_empty_returns_empty_list(mocker):
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
-    async with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/info").respond(200, json=[])
-        client = httpx.AsyncClient(base_url=BASE_URL)
-        md = HLExchangeReader(api_url=INFO_URL, client=client)
-        result = await md.fetch_user_funding("0xABCD", since_ms=0)
-
-    assert result == []
-
-
-# ---------------------------------------------------------------------------
 # Safety: HL EVM bridge tokens (LINK0/AAVE0/AVAX0) must NOT be aliased to the
-# canonical perp coin. They have independent price discovery. Prior incident
-# lost real money on a "supposedly hedged" LINK position.
+# canonical perp coin.
 # ---------------------------------------------------------------------------
-
 
 def test_spot_token_inverse_does_not_alias_bridge_tokens():
-    """The reverse map must contain only wrapped tokens 1:1 with their perp.
-    AVAX0/LINK0/AAVE0 are EVM bridges with independent price discovery —
-    aliasing them to AVAX/LINK/AAVE would silently break delta-neutrality."""
+    """The reverse map must contain only wrapped tokens 1:1 with their perp."""
     from frab.exchanges.hyperliquid.exchange import _SPOT_TOKEN_INVERSE
 
     assert _SPOT_TOKEN_INVERSE == {"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL"}

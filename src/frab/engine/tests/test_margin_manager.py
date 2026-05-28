@@ -37,31 +37,31 @@ def make_manager(**overrides) -> MarginManager:
 
 
 def btc_open(
-    spot_units: float = 1.0,
+    spot_qty: float = 1.0,
     short_size: float = 1.0,
-    entry_perp_price: float = 100.0,
+    perp_entry: float = 100.0,
     required_margin: float = 30.0,
 ) -> OpenPosition:
     return OpenPosition(
         coin="BTC",
-        spot_units=spot_units,
+        spot_qty=spot_qty,
         short_size=short_size,
-        entry_perp_price=entry_perp_price,
+        perp_entry=perp_entry,
         required_margin=required_margin,
     )
 
 
 def eth_open(
-    spot_units: float = 2.0,
+    spot_qty: float = 2.0,
     short_size: float = 2.0,
-    entry_perp_price: float = 100.0,
+    perp_entry: float = 100.0,
     required_margin: float = 120.0,
 ) -> OpenPosition:
     return OpenPosition(
         coin="ETH",
-        spot_units=spot_units,
+        spot_qty=spot_qty,
         short_size=short_size,
-        entry_perp_price=entry_perp_price,
+        perp_entry=perp_entry,
         required_margin=required_margin,
     )
 
@@ -201,7 +201,7 @@ class TestComputeTotalMaintenance:
     def test_one_position_known_value(self):
         # short_size=2.0, price=100.0, maint_ratio=0.01 => 2*100*0.01 = 2.0
         m = make_manager()
-        pos = btc_open(short_size=2.0, entry_perp_price=100.0)
+        pos = btc_open(short_size=2.0, perp_entry=100.0)
         result = m.compute_total_maintenance([pos], {"BTC": 100.0})
         assert result == pytest.approx(2.0)
 
@@ -234,21 +234,21 @@ class TestComputeTotalMaintenance:
 class TestComputePerpUnrealized:
     def test_price_unchanged_zero_pnl(self):
         m = make_manager()
-        pos = btc_open(short_size=1.0, entry_perp_price=100.0)
+        pos = btc_open(short_size=1.0, perp_entry=100.0)
         result = m.compute_perp_unrealized([pos], {"BTC": 100.0})
         assert result == pytest.approx(0.0)
 
     def test_price_rose_negative_pnl(self):
         # short: price went from 100 -> 110, loss = 1*(100-110) = -10
         m = make_manager()
-        pos = btc_open(short_size=1.0, entry_perp_price=100.0)
+        pos = btc_open(short_size=1.0, perp_entry=100.0)
         result = m.compute_perp_unrealized([pos], {"BTC": 110.0})
         assert result == pytest.approx(-10.0)
 
     def test_price_fell_positive_pnl(self):
         # short: price went from 100 -> 90, gain = 1*(100-90) = 10
         m = make_manager()
-        pos = btc_open(short_size=1.0, entry_perp_price=100.0)
+        pos = btc_open(short_size=1.0, perp_entry=100.0)
         result = m.compute_perp_unrealized([pos], {"BTC": 90.0})
         assert result == pytest.approx(10.0)
 
@@ -277,7 +277,7 @@ class TestComputeMarginRatio:
     def test_healthy_state(self):
         # maint = 1*100*0.01 = 1.0; unrealized = 0; ratio = 300/1 = 300
         m = make_manager()
-        pos = btc_open(short_size=1.0, entry_perp_price=100.0)
+        pos = btc_open(short_size=1.0, perp_entry=100.0)
         ratio = m.compute_margin_ratio(300.0, [pos], {"BTC": 100.0})
         assert ratio == pytest.approx(300.0)
 
@@ -286,7 +286,7 @@ class TestComputeMarginRatio:
         # unrealized = 1*(100-150) = -50
         # ratio = (10 + -50) / 1.5 = -40/1.5 = -26.667
         m = make_manager()
-        pos = btc_open(short_size=1.0, entry_perp_price=100.0)
+        pos = btc_open(short_size=1.0, perp_entry=100.0)
         ratio = m.compute_margin_ratio(10.0, [pos], {"BTC": 150.0})
         assert ratio == pytest.approx(-40.0 / 1.5)
 
@@ -404,9 +404,9 @@ class TestSelectWeakestForClose:
         )
         sol_pos = OpenPosition(
             coin="SOL",
-            spot_units=10.0,
+            spot_qty=10.0,
             short_size=10.0,
-            entry_perp_price=50.0,
+            perp_entry=50.0,
             required_margin=7.5,
         )
         signals = {"BTC": 0.8, "ETH": 0.3, "SOL": 0.05}
