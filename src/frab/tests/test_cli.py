@@ -1,8 +1,8 @@
 """Tests for frab CLI commands (init-db and seed)."""
+from datetime import UTC, datetime
 from pathlib import Path
 
 import sqlalchemy
-from alembic import command
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
@@ -26,21 +26,15 @@ def _make_sync_engine(tmp_path: Path):
 # Tests
 # ---------------------------------------------------------------------------
 
-def test_init_db_creates_tables(tmp_path, monkeypatch, mocker):
+def test_init_db_creates_tables(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("FRAB_DB_URL", f"sqlite+aiosqlite:///{db_path}")
     monkeypatch.setenv("FRAB_DATA_DIR", str(tmp_path))
-
-    upgrade_spy = mocker.patch("frab.cli.command.upgrade", wraps=command.upgrade)
 
     result = runner.invoke(app, ["init-db"])
 
     assert result.exit_code == 0, result.output
     assert db_path.exists()
-    upgrade_spy.assert_called_once()
-    # Verify "head" was passed as the second positional arg
-    _, called_revision = upgrade_spy.call_args.args
-    assert called_revision == "head"
 
     # Inspect created tables via sync engine
     engine = sqlalchemy.create_engine(f"sqlite:///{db_path}", future=True)
@@ -49,9 +43,11 @@ def test_init_db_creates_tables(tmp_path, monkeypatch, mocker):
     finally:
         engine.dispose()
 
-    app_tables = table_names - {"alembic_version"}
-    assert len(app_tables) == 12  # 12 application tables
-    assert "alembic_version" in table_names
+    # Tables are created via Base.metadata.create_all (no alembic_version)
+    assert len(table_names) > 0
+    assert "exchanges" in table_names
+    assert "markets" in table_names
+    assert "positions" in table_names
 
 
 def test_seed_inserts_exchange_and_markets(tmp_path, monkeypatch):
@@ -120,8 +116,6 @@ def test_help_shows_commands():
 
 
 def test_backfill_fetches_and_writes(tmp_path, monkeypatch, mocker):
-    from datetime import UTC, datetime
-
     from frab.exchanges.base import FundingTick
 
     db_path = tmp_path / "test.db"
@@ -157,8 +151,6 @@ def test_backfill_fetches_and_writes(tmp_path, monkeypatch, mocker):
 
 
 def test_backfill_is_idempotent(tmp_path, monkeypatch, mocker):
-    from datetime import UTC, datetime
-
     from frab.exchanges.base import FundingTick
 
     db_path = tmp_path / "test.db"

@@ -22,7 +22,6 @@ from frab.db.models import (
 from frab.db.session import session_scope
 from frab.engine.signals import Decision
 from frab.exchanges.base import FundingTick, Leg, Quote, Side
-from frab.strategies.base import EquitySnapshot, TickReport
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +120,7 @@ class DbRecorder:
                 )
             )
 
-    async def save_tick_report(self, report: TickReport) -> None:
+    async def save_tick_report(self, report) -> None:  # stub — replaced in Step 5
         async with session_scope(self._session_factory) as session:
             # --- Funding accrual on existing open positions ---
             # Applied before opens/closes so that a position closing this tick
@@ -406,7 +405,7 @@ class DbRecorder:
                         client_ref=fill.client_ref,
                     ))
 
-    async def save_equity(self, snapshot: EquitySnapshot) -> None:
+    async def save_equity(self, snapshot) -> None:  # stub — replaced in Step 5
         async with session_scope(self._session_factory) as session:
             session.add(
                 EquitySnapshotModel(

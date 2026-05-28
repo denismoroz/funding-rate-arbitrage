@@ -55,12 +55,13 @@ def _sync_db_url(async_url: str) -> str:
 
 @app.command()
 def init_db() -> None:
-    """Apply Alembic migrations to head on the configured database."""
+    """Initialise the database schema (Base.metadata.create_all)."""
     settings = get_settings()
-    cfg = Config()
-    cfg.set_main_option("script_location", str(PROJECT_ROOT / "src/frab/db/migrations"))
-    cfg.set_main_option("sqlalchemy.url", settings.db_url)
-    command.upgrade(cfg, "head")
+    from frab.db.models import Base as _Base
+    sync_url = _sync_db_url(settings.db_url)
+    engine = sqlalchemy.create_engine(sync_url, future=True)
+    _Base.metadata.create_all(bind=engine)
+    engine.dispose()
     typer.echo(f"Database initialised: {settings.db_url}")
 
 
