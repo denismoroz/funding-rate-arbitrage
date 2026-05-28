@@ -13,19 +13,13 @@ import {
 import {
   fetchStrategies,
   fetchEquity,
-  fetchPositions,
-  fetchSignals,
-  fetchEvents,
+  fetchFarbPositions,
   fetchFundingHistory,
-  fetchPositionFundingHistory,
+  fetchEvents,
   fetchAlerts,
-  fetchWallet,
-  fetchWalletHistory,
-  fetchMarginStatus,
+  tsMsToDate,
   type Alert,
-  type Fill,
-  type Position,
-  type MarginStatus,
+  type FarbPosition,
 } from "../lib/api";
 import { formatCurrency, formatCurrencyPrecise, formatQty, formatRelative, formatNumber } from "../lib/format";
 import { useNow } from "../lib/useNow";
@@ -55,9 +49,8 @@ function ErrorMsg({ message }: { message: string }) {
 // ── Equity chart tooltip ───────────────────────────────────────────────────────
 
 type ChartPoint = {
-  ts: string;
+  ts_ms: number;
   value: number;
-  // Optional sidecars (only present when the row is a strategy snapshot)
   funding_cum?: number;
   fees_cum?: number;
 };
@@ -80,7 +73,7 @@ function EquityTooltip({
       {d.fees_cum != null && (
         <p className="text-red-500">fees: {formatCurrencyPrecise(d.fees_cum)}</p>
       )}
-      <p className="text-gray-400">{new Date(d.ts).toLocaleTimeString()}</p>
+      <p className="text-gray-400">{tsMsToDate(d.ts_ms).toLocaleTimeString()}</p>
     </div>
   );
 }
@@ -95,7 +88,7 @@ const WS_DOT: Record<WsStatus, string> = {
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" }) {
+function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" | "funding" }) {
   const now = useNow();
   const strategyId = useActiveStrategyId();
   const stratQ = useQuery({
@@ -111,11 +104,11 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
 
   const strategy = stratQ.data?.find((s) => s.id === strategyId);
 
-  // Engine liveness: a tick.completed within the last 90s means the engine
-  // is alive regardless of whether the latest engine.* event happens to be
-  // a stale 'engine.stopping' from a previous process shutdown.
   const lastTick = eventsQ.data?.find((e) => e.kind === "tick.completed");
-  const lastTickAgeMs = lastTick ? now - new Date(lastTick.ts).getTime() : Infinity;
+  // WS events still carry `ts` as ISO string; DB events have ts_ms
+  const lastTickAgeMs = lastTick
+    ? now - tsMsToDate(lastTick.ts_ms).getTime()
+    : Infinity;
   const engineAlive = lastTickAgeMs <= 90_000;
   const engineEvent = engineAlive
     ? lastTick
@@ -139,6 +132,12 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
         >
           Settings
         </a>
+        <a
+          href="#/funding"
+          className={route === "funding" ? "text-white" : "text-gray-400 hover:text-gray-200"}
+        >
+          Funding
+        </a>
       </nav>
 
       {strategy && (
@@ -152,7 +151,7 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
           engine:{" "}
           <span className="text-gray-200">{engineLabel}</span>
           <span className="text-gray-500">
-            ({formatRelative(engineEvent.ts, now)})
+            ({formatRelative(engineEvent.ts_ms, now)})
           </span>
           <span
             className={`inline-block h-2 w-2 rounded-full ${WS_DOT[wsStatus]}`}
@@ -177,65 +176,34 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
 
 function EquityCard() {
   const strategyId = useActiveStrategyId();
-  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: stratData, isLoading: stratLoading, error: stratError } = useQuery({
+  const { data: stratData, isLoading, error } = useQuery({
     queryKey: ["equity", strategyId],
-    queryFn: () => fetchEquity(strategyId!, { limit: 2000, since: since24h }),
+    queryFn: () => fetchEquity(strategyId!, { limit: 2000 }),
     enabled: !!strategyId,
   });
-
-  const { data: walletHistory } = useQuery({
-    queryKey: ["wallet-history"],
-    queryFn: () => fetchWalletHistory({ limit: 2000, since: since24h }),
-    refetchInterval: 30_000,
-  });
-
-  const { data: walletData } = useQuery({
-    queryKey: ["wallet", strategyId],
-    queryFn: () => fetchWallet(strategyId!),
-    enabled: !!strategyId,
-    refetchInterval: 30_000,
-  });
-
-  // Prefer wallet history (real HL state); fall back to strategy synthetic equity.
-  const usingWallet = (walletHistory?.length ?? 0) > 0;
-  const isLoading = stratLoading;
-  const error = stratError;
 
   const slice: ChartPoint[] = useMemo(() => {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    if (usingWallet) {
-      const all = (walletHistory ?? []).map<ChartPoint>((w) => ({
-        ts: w.ts,
-        value: w.account_value,
-      }));
-      const recent = all.filter((d) => new Date(d.ts).getTime() >= cutoff);
-      return recent.length > 0 ? recent : all;
-    }
     const all = (stratData ?? []).map<ChartPoint>((s) => ({
-      ts: s.ts,
+      ts_ms: s.ts_ms,
       value: s.total_equity,
       funding_cum: s.funding_cum,
       fees_cum: s.fees_cum,
     }));
-    const recent = all.filter((d) => new Date(d.ts).getTime() >= cutoff);
+    const recent = all.filter((d) => d.ts_ms >= cutoff);
     return recent.length > 0 ? recent : all;
-  }, [usingWallet, walletHistory, stratData]);
+  }, [stratData]);
 
   const latestStrat = stratData && stratData.length > 0 ? stratData[stratData.length - 1] : undefined;
-
-  // Use wallet live total when available; fall back to local accounting equity.
-  const totalDisplay =
-    walletData != null ? walletData.total_usd : latestStrat?.total_equity;
+  const totalDisplay = latestStrat?.total_equity;
 
   const { yDecimals, yDomain, chartTitle } = useMemo(() => {
-    const prefix = usingWallet ? "Wallet" : "Equity";
     if (slice.length === 0) {
       return {
         yDecimals: 2,
         yDomain: ["auto", "auto"] as [string, string],
-        chartTitle: `${prefix} (last 24h)`,
+        chartTitle: "Equity (last 24h)",
       };
     }
     const values = slice.map((d) => d.value);
@@ -253,23 +221,23 @@ function EquityCard() {
       ? ["dataMin - 0.001", "dataMax + 0.001"]
       : ["auto", "auto"];
 
-    const firstTs = new Date(slice[0].ts).getTime();
-    const lastTs = new Date(slice[slice.length - 1].ts).getTime();
+    const firstTs = slice[0].ts_ms;
+    const lastTs = slice[slice.length - 1].ts_ms;
     const spanMs = lastTs - firstTs;
     const spanHours = spanMs / (1000 * 60 * 60);
     const spanMinutes = spanMs / (1000 * 60);
     let title: string;
     if (spanHours >= 23) {
-      title = `${prefix} (last 24h)`;
+      title = "Equity (last 24h)";
     } else if (spanHours >= 1) {
-      title = `${prefix} (last ${Math.floor(spanHours)}h)`;
+      title = `Equity (last ${Math.floor(spanHours)}h)`;
     } else {
       const mins = Math.floor(spanMinutes / 5) * 5 || Math.floor(spanMinutes);
-      title = `${prefix} (last ${mins}m)`;
+      title = `Equity (last ${mins}m)`;
     }
 
     return { yDecimals: dec, yDomain: domain, chartTitle: title };
-  }, [slice, usingWallet]);
+  }, [slice]);
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -284,9 +252,6 @@ function EquityCard() {
               <span className="text-base font-semibold text-gray-900">
                 {totalDisplay != null ? formatCurrency(totalDisplay) : "—"}
               </span>
-              {walletData != null && (
-                <span className="ml-1 text-xs text-gray-400">(wallet)</span>
-              )}
             </span>
             {latestStrat && (
               <>
@@ -308,9 +273,9 @@ function EquityCard() {
           <LineChart data={slice}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis
-              dataKey="ts"
-              tickFormatter={(v: string) =>
-                new Date(v).toLocaleTimeString([], {
+              dataKey="ts_ms"
+              tickFormatter={(v: number) =>
+                tsMsToDate(v).toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",
                 })
@@ -342,13 +307,13 @@ function EquityCard() {
   );
 }
 
-// ── Position details modal ────────────────────────────────────────────────────
+// ── FarbPosition details modal ─────────────────────────────────────────────────
 
-function PositionDetailsModal({
+function FarbPositionModal({
   position,
   onClose,
 }: {
-  position: Position;
+  position: FarbPosition;
   onClose: () => void;
 }) {
   const { data, isLoading, error } = useQuery({
@@ -356,24 +321,8 @@ function PositionDetailsModal({
     queryFn: () => fetchFundingHistory(position.coin, { limit: 200 }),
   });
 
-  const { data: accruals } = useQuery({
-    queryKey: ["funding-accruals", position.id],
-    queryFn: () => fetchPositionFundingHistory(position.id, { limit: 500 }),
-  });
-
   // API returns newest-first; reverse for chronological chart
   const chronological = (data ?? []).slice().reverse();
-
-  const realCumulative = (() => {
-    const series = [{ ts: position.opened_at, cum_funding: 0 }];
-    let acc = 0;
-    for (const a of accruals ?? []) {
-      acc += a.delta;
-      series.push({ ts: a.ts, cum_funding: acc });
-    }
-    return series;
-  })();
-  const showDots = realCumulative.length < 10;
 
   return (
     <div
@@ -387,20 +336,19 @@ function PositionDetailsModal({
         <div className="mb-4 flex items-baseline justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">
-              {position.coin} · funding history
+              {position.coin} · recent funding rates
             </h3>
             <p className="text-xs text-gray-500">
-              Opened {formatRelative(position.opened_at)} · Entry perp $
-              {formatNumber(position.entry_perp_price, 4)} · Funding so far{" "}
-              <span
-                className={
-                  position.funding_collected >= 0
-                    ? "text-green-600"
-                    : "text-red-500"
-                }
-              >
-                {formatCurrency(position.funding_collected)}
-              </span>
+              Opened {formatRelative(position.opened_at_ms)} · State{" "}
+              <span className="font-mono">{position.state}</span>
+              {position.unrealized_pnl_usdc != null && (
+                <>
+                  {" "}· Unrealized{" "}
+                  <span className={position.unrealized_pnl_usdc >= 0 ? "text-green-600" : "text-red-500"}>
+                    {formatCurrency(position.unrealized_pnl_usdc)}
+                  </span>
+                </>
+              )}
             </p>
           </div>
           <button
@@ -422,15 +370,15 @@ function PositionDetailsModal({
         {!isLoading && !error && chronological.length > 0 && (
           <>
             <h4 className="mb-1 text-xs font-medium text-gray-500">
-              Funding rate (% APR)
+              Funding rate (% APR) — last {chronological.length} ticks
             </h4>
-            <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={chronological.map((r) => ({ ts: r.ts, rate_apr: r.annualized_pct }))}>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={chronological.map((r) => ({ ts_ms: r.ts_ms, rate_apr: r.annualized_pct }))}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis
-                  dataKey="ts"
-                  tickFormatter={(v: string) =>
-                    new Date(v).toLocaleTimeString([], {
+                  dataKey="ts_ms"
+                  tickFormatter={(v: number) =>
+                    tsMsToDate(v).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
                     })
@@ -446,9 +394,7 @@ function PositionDetailsModal({
                 />
                 <Tooltip
                   formatter={(v: number) => [`${v.toFixed(3)}%`, "APR"]}
-                  labelFormatter={(v: string) =>
-                    new Date(v).toLocaleString()
-                  }
+                  labelFormatter={(v: number) => tsMsToDate(v).toLocaleString()}
                 />
                 <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />
                 <Line
@@ -461,47 +407,29 @@ function PositionDetailsModal({
               </LineChart>
             </ResponsiveContainer>
 
-            <h4 className="mb-1 mt-3 text-xs font-medium text-gray-500">
-              Cumulative funding for this position ($, since open)
-            </h4>
-            <ResponsiveContainer width="100%" height={140}>
-              <LineChart data={realCumulative}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis
-                  dataKey="ts"
-                  tickFormatter={(v: string) =>
-                    new Date(v).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  }
-                  tick={{ fontSize: 11 }}
-                  minTickGap={60}
-                />
-                <YAxis
-                  domain={["auto", "auto"]}
-                  tickFormatter={(v: number) =>
-                    Math.abs(v) >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`
-                  }
-                  tick={{ fontSize: 11 }}
-                  width={70}
-                />
-                <Tooltip
-                  formatter={(v: number) => [formatCurrency(v), "cum funding"]}
-                  labelFormatter={(v: string) =>
-                    new Date(v).toLocaleString()
-                  }
-                />
-                <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />
-                <Line
-                  type="monotone"
-                  dataKey="cum_funding"
-                  stroke="#16a34a"
-                  strokeWidth={2}
-                  dot={showDots ? { r: 3, fill: "#16a34a" } : false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs md:grid-cols-4">
+              {position.legs.spot && (
+                <>
+                  <div><span className="text-gray-500">spot qty:</span> {formatQty(position.legs.spot.qty)}</div>
+                  <div><span className="text-gray-500">spot entry:</span> {formatCurrency(position.legs.spot.entry_price)}</div>
+                </>
+              )}
+              {position.legs.perp && (
+                <>
+                  <div><span className="text-gray-500">perp qty:</span> {formatQty(position.legs.perp.qty)}</div>
+                  <div><span className="text-gray-500">perp entry:</span> {formatCurrency(position.legs.perp.entry_price)}</div>
+                </>
+              )}
+              {position.target_signal_apr != null && (
+                <div><span className="text-gray-500">target APR:</span> {formatNumber(position.target_signal_apr * 100, 2)}%</div>
+              )}
+              {position.hours_held != null && (
+                <div><span className="text-gray-500">held:</span> {formatNumber(position.hours_held, 1)}h</div>
+              )}
+              {position.consec_negative_hours != null && (
+                <div><span className="text-gray-500">consec neg hrs:</span> {position.consec_negative_hours}</div>
+              )}
+            </div>
           </>
         )}
       </div>
@@ -509,39 +437,18 @@ function PositionDetailsModal({
   );
 }
 
-// ── Open positions helpers ─────────────────────────────────────────────────────
+// ── Open FarbPositions ─────────────────────────────────────────────────────────
 
-function formatRelativeFuture(iso: string | null, nowMs: number): string {
-  if (!iso) return "—";
-  const diffMs = new Date(iso).getTime() - nowMs;
-  if (diffMs <= 0) return "passed";
-  const days = Math.floor(diffMs / (24 * 3600 * 1000));
-  const hours = Math.floor((diffMs % (24 * 3600 * 1000)) / (3600 * 1000));
-  if (days >= 1) return `in ${days}d ${hours}h`;
-  if (hours >= 1) return `in ${hours}h`;
-  const mins = Math.floor(diffMs / (60 * 1000));
-  return `in ${mins}m`;
-}
-
-function beColor(iso: string | null, nowMs: number): string {
-  if (!iso) return "text-gray-500";
-  const diffMs = new Date(iso).getTime() - nowMs;
-  if (diffMs <= 0) return "text-gray-500";
-  if (diffMs < 7 * 24 * 3600 * 1000) return "text-amber-600";
-  return "text-gray-700";
-}
-
-// ── Open positions ─────────────────────────────────────────────────────────────
-
-function OpenPositions() {
+function OpenFarbPositions() {
   const now = useNow();
   const strategyId = useActiveStrategyId();
-  const [selected, setSelected] = useState<Position | null>(null);
+  const [selected, setSelected] = useState<FarbPosition | null>(null);
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["positions-open", strategyId],
-    queryFn: () =>
-      fetchPositions({ strategyId: strategyId!, status: "open" }),
+    queryKey: ["farb-positions-open", strategyId],
+    queryFn: () => fetchFarbPositions(strategyId!, "open"),
     enabled: !!strategyId,
+    refetchInterval: 30_000,
   });
 
   return (
@@ -561,15 +468,12 @@ function OpenPositions() {
               <tr className="border-b border-gray-100 text-left text-gray-500">
                 <th className="pb-1 pr-3">Coin</th>
                 <th className="pb-1 pr-3">Opened</th>
-                <th className="pb-1 pr-3 text-right">Spot entry</th>
-                <th className="pb-1 pr-3 text-right">Perp entry</th>
-                <th className="pb-1 pr-3 text-right">Spot now</th>
-                <th className="pb-1 pr-3 text-right">Perp unreal</th>
-                <th className="pb-1 pr-3 text-right">Funding</th>
-                <th className="pb-1 pr-3 text-right">Fees</th>
-                <th className="pb-1 pr-3 text-right">Slip</th>
-                <th className="pb-1 pr-3 text-right">Net P/L</th>
-                <th className="pb-1 text-right">BE date</th>
+                <th className="pb-1 pr-3 text-right">Spot qty</th>
+                <th className="pb-1 pr-3 text-right">Perp qty</th>
+                <th className="pb-1 pr-3 text-right">Held (h)</th>
+                <th className="pb-1 pr-3 text-right">Target APR</th>
+                <th className="pb-1 pr-3 text-right">Consec neg</th>
+                <th className="pb-1 text-right">Unrealized</th>
               </tr>
             </thead>
             <tbody>
@@ -584,64 +488,43 @@ function OpenPositions() {
                 >
                   <td className="py-1 pr-3 font-medium">{p.coin}</td>
                   <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(p.opened_at, now)}
+                    {formatRelative(p.opened_at_ms, now)}
+                  </td>
+                  <td className="py-1 pr-3 text-right font-mono">
+                    {p.legs.spot ? formatQty(p.legs.spot.qty) : "—"}
+                  </td>
+                  <td className="py-1 pr-3 text-right font-mono">
+                    {p.legs.perp ? formatQty(p.legs.perp.qty) : "—"}
                   </td>
                   <td className="py-1 pr-3 text-right">
-                    {formatCurrency(p.spot_units * p.entry_spot_price)}
+                    {p.hours_held != null ? formatNumber(p.hours_held, 1) : "—"}
                   </td>
-                  <td className="py-1 pr-3 text-right">
-                    {formatCurrency(Math.abs(p.perp_units) * p.entry_perp_price)}
-                  </td>
-                  <td className="py-1 pr-3 text-right">
-                    {p.spot_value_now != null
-                      ? formatCurrency(p.spot_value_now)
+                  <td className="py-1 pr-3 text-right text-indigo-600">
+                    {p.target_signal_apr != null
+                      ? `${formatNumber(p.target_signal_apr * 100, 2)}%`
                       : "—"}
                   </td>
+                  <td className="py-1 pr-3 text-right">
+                    {p.consec_negative_hours != null ? (
+                      <span className={p.consec_negative_hours > 24 ? "text-amber-600 font-semibold" : "text-gray-700"}>
+                        {p.consec_negative_hours}
+                      </span>
+                    ) : "—"}
+                  </td>
                   <td
-                    className={`py-1 pr-3 text-right ${
-                      p.perp_unrealized == null
+                    className={`py-1 text-right ${
+                      p.unrealized_pnl_usdc == null
                         ? "text-gray-400"
-                        : p.perp_unrealized > 0
+                        : p.unrealized_pnl_usdc > 0
                           ? "text-green-600"
-                          : p.perp_unrealized < 0
+                          : p.unrealized_pnl_usdc < 0
                             ? "text-red-500"
                             : "text-gray-400"
                     }`}
                   >
-                    {p.perp_unrealized != null
-                      ? formatCurrency(p.perp_unrealized)
+                    {p.unrealized_pnl_usdc != null
+                      ? formatCurrency(p.unrealized_pnl_usdc)
                       : "—"}
-                  </td>
-                  <td
-                    className={`py-1 pr-3 text-right ${
-                      p.funding_collected >= 0
-                        ? "text-green-600"
-                        : "text-red-500"
-                    }`}
-                  >
-                    {formatCurrencyPrecise(p.funding_collected)}
-                  </td>
-                  <td className="py-1 pr-3 text-right text-red-500">
-                    {formatCurrencyPrecise(p.fees_paid)}
-                  </td>
-                  <td className="py-1 pr-3 text-right text-red-500">
-                    {p.slippage_cost !== null ? formatCurrency(p.slippage_cost) : "—"}
-                  </td>
-                  <td
-                    className={`py-1 pr-3 text-right ${
-                      p.net_mtm == null
-                        ? "text-gray-400"
-                        : p.net_mtm > 0
-                          ? "text-green-600"
-                          : p.net_mtm < 0
-                            ? "text-red-500"
-                            : "text-gray-400"
-                    }`}
-                  >
-                    {p.net_mtm != null ? formatCurrency(p.net_mtm) : "—"}
-                  </td>
-                  <td className={`py-1 text-right ${beColor(p.breakeven_at, now)}`}>
-                    {formatRelativeFuture(p.breakeven_at, now)}
                   </td>
                 </tr>
               ))}
@@ -650,7 +533,7 @@ function OpenPositions() {
         </div>
       )}
       {selected && (
-        <PositionDetailsModal
+        <FarbPositionModal
           position={selected}
           onClose={() => setSelected(null)}
         />
@@ -659,158 +542,67 @@ function OpenPositions() {
   );
 }
 
-// ── Recent signals ─────────────────────────────────────────────────────────────
+// ── Active (in-flight) FarbPositions ─────────────────────────────────────────
 
-const ACTION_COLOR: Record<string, string> = {
-  OPEN: "text-green-600",
-  CLOSE: "text-red-500",
-  NONE: "text-gray-400",
+const STATE_COLOR: Record<string, string> = {
+  CHECK_MARGIN: "text-yellow-600",
+  OPENING_MARGIN: "text-blue-600",
+  MARGIN_RESERVED: "text-blue-500",
+  OPENING_LONG: "text-blue-600",
+  LONG_OPENED: "text-blue-500",
+  OPENING_SHORT: "text-blue-600",
+  CLOSING_SHORT: "text-orange-600",
+  SHORT_CLOSED: "text-orange-500",
+  CLOSING_LONG: "text-orange-600",
+  LONG_CLOSED: "text-orange-500",
+  RELEASING_MARGIN: "text-orange-500",
 };
 
-function RecentSignals() {
+function ActiveFarbPositions() {
   const now = useNow();
   const strategyId = useActiveStrategyId();
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["signals", strategyId],
-    queryFn: () => fetchSignals({ strategyId: strategyId!, limit: 20 }),
+    queryKey: ["farb-positions-active", strategyId],
+    queryFn: () => fetchFarbPositions(strategyId!, "active"),
     enabled: !!strategyId,
+    refetchInterval: 15_000,
   });
 
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-sm font-semibold text-gray-700">
-        Recent Signals
-      </h2>
-      {isLoading && <Skeleton rows={3} />}
-      {error instanceof Error && <ErrorMsg message={error.message} />}
-      {!isLoading && !error && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-gray-100 text-left text-gray-500">
-                <th className="pb-1 pr-3">Time</th>
-                <th className="pb-1 pr-3">Coin</th>
-                <th className="pb-1 pr-3">Action</th>
-                <th className="pb-1 pr-3 text-right">Value</th>
-                <th className="pb-1 text-right">Regime</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(data ?? []).map((s, idx) => (
-                <tr
-                  key={s.id}
-                  className={`border-b border-gray-50 hover:bg-gray-100 ${
-                    idx % 2 === 0 ? "bg-white" : "bg-gray-50"
-                  }`}
-                >
-                  <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(s.ts, now)}
-                  </td>
-                  <td className="py-1 pr-3 font-medium">{s.coin}</td>
-                  <td
-                    className={`py-1 pr-3 font-semibold ${ACTION_COLOR[s.action] ?? ""}`}
-                  >
-                    {s.action}
-                  </td>
-                  <td className="py-1 pr-3 text-right font-mono">
-                    {formatNumber(s.signal_value, 4)}
-                  </td>
-                  <td className="py-1 text-right">
-                    {s.regime_pass ? (
-                      <span className="text-green-600">pass</span>
-                    ) : (
-                      <span className="text-red-400">fail</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Recent fills ───────────────────────────────────────────────────────────────
-
-function RecentFills() {
-  const now = useNow();
-  const strategyId = useActiveStrategyId();
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["positions-recent", strategyId],
-    queryFn: () => fetchPositions({ strategyId: strategyId!, limit: 10 }),
-    enabled: !!strategyId,
-  });
-
-  const fills: (Fill & { coin: string })[] = (data ?? [])
-    .flatMap((p) => p.fills.map((f) => ({ ...f, coin: p.coin })))
-    .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
-    .slice(0, 20);
+  if (isLoading) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <Skeleton rows={2} />
+      </div>
+    );
+  }
+  if (error instanceof Error) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <ErrorMsg message={error.message} />
+      </div>
+    );
+  }
+  if (!data || data.length === 0) return null;
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-sm font-semibold text-gray-700">
-        Recent Fills
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+      <h2 className="mb-2 text-sm font-semibold text-amber-800">
+        In-Flight ({data.length})
       </h2>
-      {isLoading && <Skeleton rows={4} />}
-      {error instanceof Error && <ErrorMsg message={error.message} />}
-      {!isLoading && !error && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-gray-100 text-left text-gray-500">
-                <th className="pb-1 pr-3">Time</th>
-                <th className="pb-1 pr-3">Coin</th>
-                <th className="pb-1 pr-3">Leg</th>
-                <th className="pb-1 pr-3">Side</th>
-                <th className="pb-1 pr-3 text-right">Qty</th>
-                <th className="pb-1 pr-3 text-right">Price</th>
-                <th className="pb-1 text-right">Fee</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fills.map((f, idx) => (
-                <tr
-                  key={f.id}
-                  className={`border-b border-gray-50 hover:bg-gray-100 ${
-                    idx % 2 === 0 ? "bg-white" : "bg-gray-50"
-                  }`}
-                >
-                  <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(f.ts, now)}
-                  </td>
-                  <td className="py-1 pr-3 font-medium">{f.coin}</td>
-                  <td className="py-1 pr-3">{f.leg}</td>
-                  <td
-                    className={`py-1 pr-3 font-semibold ${
-                      f.side === "BUY" ? "text-green-600" : "text-red-500"
-                    }`}
-                  >
-                    {f.side}
-                  </td>
-                  <td className="py-1 pr-3 text-right font-mono">
-                    {formatQty(f.qty)}
-                  </td>
-                  <td className="py-1 pr-3 text-right">
-                    {formatCurrency(f.price)}
-                  </td>
-                  <td className="py-1 text-right text-red-400">
-                    {formatCurrencyPrecise(f.fee)}
-                  </td>
-                </tr>
-              ))}
-              {fills.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="py-2 text-center text-gray-400">
-                    No fills yet
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="space-y-1">
+        {data.map((p) => (
+          <div key={p.id} className="flex items-center gap-3 text-xs">
+            <span className="font-medium text-gray-800 w-12">{p.coin}</span>
+            <span className={`font-mono font-semibold ${STATE_COLOR[p.state] ?? "text-gray-600"}`}>
+              {p.state}
+            </span>
+            <span className="text-gray-500">
+              {formatRelative(p.opened_at_ms, now)}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -859,7 +651,7 @@ function RecentEvents() {
                   }`}
                 >
                   <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(e.ts, now)}
+                    {formatRelative(e.ts_ms, now)}
                   </td>
                   <td
                     className={`py-1 pr-3 font-semibold ${LEVEL_COLOR[e.level] ?? "text-gray-600"}`}
@@ -886,7 +678,7 @@ function RecentEvents() {
 function AlertBanner() {
   const strategyId = useActiveStrategyId();
   const now = useNow();
-  const [open, setOpen] = useState<boolean | null>(null); // null = use default
+  const [open, setOpen] = useState<boolean | null>(null);
 
   const { data, isError } = useQuery({
     queryKey: ["alerts", strategyId],
@@ -898,7 +690,6 @@ function AlertBanner() {
   if (isError || !data || data.length === 0) return null;
 
   const hasError = data.some((a: Alert) => a.severity === "ERROR");
-  // Default: expanded if any ERROR, collapsed if only WARNINGs
   const isOpen = open !== null ? open : hasError;
 
   const containerCls = hasError
@@ -956,199 +747,6 @@ function AlertBanner() {
 
 export { Header };
 
-// ── Margin status card ────────────────────────────────────────────────────────
-
-function ratioColor(ratio: number | null, trigger: number | null, healthy: number | null) {
-  if (ratio == null) return "text-gray-400";
-  if (trigger == null || healthy == null) return "text-gray-700";
-  if (ratio >= healthy) return "text-green-600";
-  if (ratio >= trigger) return "text-yellow-600";
-  if (ratio >= 1.0) return "text-orange-500";
-  return "text-red-600";
-}
-
-function ratioBarColor(ratio: number | null, trigger: number | null, healthy: number | null) {
-  if (ratio == null || trigger == null || healthy == null) return "bg-gray-300";
-  if (ratio >= healthy) return "bg-green-500";
-  if (ratio >= trigger) return "bg-yellow-500";
-  if (ratio >= 1.0) return "bg-orange-500";
-  return "bg-red-500";
-}
-
-function MarginCard() {
-  const strategyId = useActiveStrategyId();
-  const now = useNow();
-  const [showRaw, setShowRaw] = useState(false);
-  const { data, isLoading, error } = useQuery<MarginStatus>({
-    queryKey: ["margin", strategyId],
-    queryFn: () => fetchMarginStatus(strategyId!),
-    enabled: !!strategyId,
-    refetchInterval: 15_000,
-  });
-
-  if (isLoading) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <Skeleton rows={3} />
-      </div>
-    );
-  }
-  if (error instanceof Error) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <ErrorMsg message={error.message} />
-      </div>
-    );
-  }
-  if (!data) return null;
-
-  if (!data.margin_manager_enabled) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-sm font-semibold text-gray-700">Margin</h2>
-          <span className="text-xs text-gray-400">
-            not configured ({data.n_open_positions}/{data.concurrency_cap} slots)
-          </span>
-        </div>
-        <p className="mt-2 text-xs text-gray-500">
-          Set <code className="rounded bg-gray-100 px-1">FRAB_PER_COIN_PARAMS_JSON</code> to
-          enable margin watchdog.
-        </p>
-      </div>
-    );
-  }
-
-  const ratio = data.margin_ratio;
-  const trigger = data.top_up_trigger;
-  const healthy = data.healthy_ratio;
-  const ratioText = ratio == null ? "—" : ratio.toFixed(2);
-  const ratioCls = ratioColor(ratio, trigger, healthy);
-  const barCls = ratioBarColor(ratio, trigger, healthy);
-  // Bar capped at 4.0x for visual scaling
-  const barPct = ratio == null ? 0 : Math.min(100, (ratio / 4.0) * 100);
-
-  const cap = data.budget_cap_usd ?? 0;
-  const committed = data.budget_committed;
-  const budgetPct = cap > 0 ? Math.min(100, (committed / cap) * 100) : 0;
-  const budgetCls =
-    budgetPct >= 95 ? "bg-red-500" : budgetPct >= 75 ? "bg-yellow-500" : "bg-indigo-500";
-
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold text-gray-700">Margin</h2>
-        <span className="text-xs text-gray-500">
-          {data.n_open_positions}/{data.concurrency_cap} slots ·
-          {" "}buf {trigger != null && healthy != null
-            ? `trigger ${trigger.toFixed(2)} · healthy ${healthy.toFixed(2)}`
-            : "—"}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {/* Margin ratio */}
-        <div>
-          <div className="flex items-baseline gap-2">
-            <span className={`text-2xl font-semibold ${ratioCls}`}>{ratioText}</span>
-            <span className="text-xs text-gray-500">margin ratio</span>
-          </div>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded bg-gray-100">
-            <div className={`h-full ${barCls}`} style={{ width: `${barPct}%` }} />
-          </div>
-          <div className="mt-1 flex justify-between text-[10px] text-gray-400">
-            <span>1.0</span>
-            {trigger != null && <span>trigger {trigger.toFixed(2)}</span>}
-            {healthy != null && <span>healthy {healthy.toFixed(2)}</span>}
-            <span>4.0+</span>
-          </div>
-        </div>
-
-        {/* Budget committed */}
-        <div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-semibold text-gray-900">
-              {formatCurrency(committed)}
-            </span>
-            <span className="text-xs text-gray-500">
-              / {formatCurrency(cap)} budget
-            </span>
-          </div>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded bg-gray-100">
-            <div className={`h-full ${budgetCls}`} style={{ width: `${budgetPct}%` }} />
-          </div>
-          <div className="mt-1 text-[10px] text-gray-400">
-            {budgetPct.toFixed(1)}% committed
-          </div>
-        </div>
-
-        {/* Skipped + last event */}
-        <div className="text-xs">
-          <div>
-            <span className="text-gray-500">skipped opens (no capital):</span>{" "}
-            <span
-              className={`font-semibold ${
-                data.n_skipped_opens_capital > 0 ? "text-orange-600" : "text-gray-700"
-              }`}
-            >
-              {data.n_skipped_opens_capital}
-            </span>
-          </div>
-          <div className="mt-1">
-            <span className="text-gray-500">last watchdog:</span>{" "}
-            {data.last_event ? (
-              <span
-                className={
-                  data.last_event.level === "ERROR"
-                    ? "text-red-600"
-                    : "text-yellow-700"
-                }
-              >
-                {data.last_event.kind.replace("margin.", "")}
-                {data.last_event.coin ? ` ${data.last_event.coin}` : ""}
-                {" · "}
-                <span className="text-gray-500">
-                  {formatRelative(data.last_event.ts, now)}
-                </span>
-              </span>
-            ) : (
-              <span className="text-gray-400">none</span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setShowRaw((v) => !v)}
-        className="mt-3 text-[11px] text-gray-400 hover:text-gray-700"
-      >
-        {showRaw ? "− hide raw" : "+ show raw"}
-      </button>
-      {showRaw && (
-        <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-600 md:grid-cols-4">
-          <div>
-            <span className="text-gray-400">perp_cash:</span>{" "}
-            {formatCurrencyPrecise(data.perp_cash)}
-          </div>
-          <div>
-            <span className="text-gray-400">unrealized:</span>{" "}
-            {formatCurrencyPrecise(data.perp_unrealized)}
-          </div>
-          <div>
-            <span className="text-gray-400">effective:</span>{" "}
-            {formatCurrencyPrecise(data.effective_equity)}
-          </div>
-          <div>
-            <span className="text-gray-400">maintenance:</span>{" "}
-            {formatCurrencyPrecise(data.total_maintenance)}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function Dashboard() {
   const strategyId = useActiveStrategyId();
   const { status } = useLiveEvents(strategyId);
@@ -1158,15 +756,9 @@ export default function Dashboard() {
       <Header wsStatus={status} route="dashboard" />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <AlertBanner />
+        <ActiveFarbPositions />
         <EquityCard />
-        <MarginCard />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="md:col-span-2">
-            <OpenPositions />
-          </div>
-          <RecentSignals />
-        </div>
-        <RecentFills />
+        <OpenFarbPositions />
         <RecentEvents />
       </main>
     </div>

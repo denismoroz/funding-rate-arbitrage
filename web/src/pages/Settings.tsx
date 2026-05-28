@@ -1,16 +1,15 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchStrategyParams,
-  deployStrategyParams,
-  forceHourTick,
-  type HotFieldSpec,
+  fetchStrategy,
+  patchStrategyParams,
+  type ParamValue,
 } from "../lib/api";
 import { useLiveEvents } from "../lib/useLiveEvents";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Header } from "./Dashboard";
 
-// ── Field components ──────────────────────────────────────────────────────────
+// ── Field layout helper ───────────────────────────────────────────────────────
 
 function FieldRow({
   label,
@@ -67,35 +66,210 @@ function NumberInput({
   );
 }
 
-// ── Validation helper ─────────────────────────────────────────────────────────
+function TextInput({
+  value,
+  onChange,
+  placeholder,
+  hasError,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  hasError?: boolean;
+}) {
+  return (
+    <input
+      type="text"
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+      className={`rounded border px-3 py-1.5 bg-gray-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+        hasError ? "border-red-500" : "border-gray-600"
+      }`}
+    />
+  );
+}
+
+// ── Field definitions for TwoPhaseParams ─────────────────────────────────────
+
+type FieldType = "float" | "int" | "coins";
+
+interface FieldDef {
+  key: string;
+  label: string;
+  type: FieldType;
+  helper?: string;
+  min?: number;
+  max?: number;
+  step?: string;
+  group: "capital" | "entry_exit" | "phase1" | "phase2";
+}
+
+const FIELD_DEFS: FieldDef[] = [
+  // Capital
+  {
+    key: "position_size_usdc",
+    label: "Position size (USDC)",
+    type: "float",
+    min: 0,
+    step: "100",
+    helper: "Notional per spot leg",
+    group: "capital",
+  },
+  {
+    key: "budget_cap_usdc",
+    label: "Budget cap (USDC)",
+    type: "float",
+    min: 0,
+    step: "1000",
+    helper: "Max total committed capital across open + pending positions",
+    group: "capital",
+  },
+  {
+    key: "perp_leverage",
+    label: "Perp leverage",
+    type: "float",
+    min: 1,
+    step: "0.5",
+    helper: "Leverage used for perp leg margin calculation",
+    group: "capital",
+  },
+  {
+    key: "margin_buffer_factor",
+    label: "Margin buffer factor",
+    type: "float",
+    min: 1,
+    step: "0.5",
+    helper: "Perp margin = size / leverage × buffer",
+    group: "capital",
+  },
+  {
+    key: "concurrency_cap",
+    label: "Concurrency cap (K)",
+    type: "int",
+    min: 1,
+    step: "1",
+    helper: "Max simultaneous open FarbPositions",
+    group: "capital",
+  },
+  // Entry / Exit
+  {
+    key: "coins",
+    label: "Coins (comma-separated)",
+    type: "coins",
+    helper: "e.g. BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE",
+    group: "entry_exit",
+  },
+  {
+    key: "entry_threshold_apr",
+    label: "Entry threshold APR",
+    type: "float",
+    min: 0,
+    max: 1,
+    step: "0.01",
+    helper: "Enter when smoothed signal APR > this (e.g. 0.10 = 10%)",
+    group: "entry_exit",
+  },
+  {
+    key: "signal_window_hours",
+    label: "Signal window (hours)",
+    type: "int",
+    min: 1,
+    step: "1",
+    helper: "Rolling window for smoothed funding signal",
+    group: "entry_exit",
+  },
+  // Phase 1
+  {
+    key: "base_min_hold_hours",
+    label: "Base min hold (hours)",
+    type: "int",
+    min: 1,
+    step: "1",
+    helper: "Floor on dynamic min-hold duration",
+    group: "phase1",
+  },
+  {
+    key: "cap_min_hold_hours",
+    label: "Cap min hold (hours)",
+    type: "int",
+    min: 1,
+    step: "24",
+    helper: "Ceiling on dynamic min-hold duration",
+    group: "phase1",
+  },
+  {
+    key: "safety_mult",
+    label: "Safety multiplier",
+    type: "float",
+    min: 1,
+    step: "0.5",
+    helper: "Breakeven-based min-hold multiplier",
+    group: "phase1",
+  },
+  {
+    key: "phase1_negative_patience",
+    label: "Phase1 negative patience (hours)",
+    type: "int",
+    min: 1,
+    step: "1",
+    helper: "Hours of consecutive negative signal before phase1 exit",
+    group: "phase1",
+  },
+  {
+    key: "phase1_breakeven_cap_hours",
+    label: "Phase1 breakeven cap (hours)",
+    type: "int",
+    min: 1,
+    step: "24",
+    helper: "If hours-to-breakeven > this → exit phase1",
+    group: "phase1",
+  },
+  // Phase 2
+  {
+    key: "phase2_exit_threshold",
+    label: "Phase2 exit threshold APR",
+    type: "float",
+    min: -1,
+    max: 0,
+    step: "0.01",
+    helper: "Exit (phase2) when smoothed signal APR < this (e.g. -0.10 = -10%)",
+    group: "phase2",
+  },
+];
+
+const GROUP_LABELS: Record<string, string> = {
+  capital: "Capital & Sizing",
+  entry_exit: "Entry / Exit Signal",
+  phase1: "Phase 1 — Hold Logic",
+  phase2: "Phase 2 — Exit",
+};
+
+// ── Validation ────────────────────────────────────────────────────────────────
 
 function validateField(
-  _key: string,
+  def: FieldDef,
   raw: string,
-  spec: HotFieldSpec,
-): { val: number; error: null } | { val: null; error: string } {
-  const num = spec.type === "int" ? parseInt(raw, 10) : parseFloat(raw);
+): { val: number | string[]; error: null } | { val: null; error: string } {
+  if (def.type === "coins") {
+    const parts = raw.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    if (parts.length === 0) {
+      return { val: null, error: "At least one coin required" };
+    }
+    return { val: parts, error: null };
+  }
+
+  const num = def.type === "int" ? parseInt(raw, 10) : parseFloat(raw);
   if (!isFinite(num)) {
-    return { val: null, error: `Invalid ${spec.type}` };
+    return { val: null, error: `Invalid ${def.type}` };
   }
-  if (spec.min_value !== null) {
-    if (spec.exclusive_min ? num <= spec.min_value : num < spec.min_value) {
-      return {
-        val: null,
-        error: `Must be ${spec.exclusive_min ? ">" : ">="} ${spec.min_value}`,
-      };
-    }
+  if (def.min != null && num < def.min) {
+    return { val: null, error: `Must be >= ${def.min}` };
   }
-  if (spec.max_value !== null) {
-    if (spec.exclusive_max ? num >= spec.max_value : num > spec.max_value) {
-      return {
-        val: null,
-        error: `Must be ${spec.exclusive_max ? "<" : "<="} ${spec.max_value}`,
-      };
-    }
+  if (def.max != null && num > def.max) {
+    return { val: null, error: `Must be <= ${def.max}` };
   }
-  // For int, require actual integer value
-  if (spec.type === "int" && !Number.isInteger(num)) {
+  if (def.type === "int" && !Number.isInteger(num)) {
     return { val: null, error: "Must be an integer" };
   }
   return { val: num, error: null };
@@ -108,33 +282,38 @@ export default function Settings() {
   const { status } = useLiveEvents(strategyId);
   const queryClient = useQueryClient();
 
-  const paramsQ = useQuery({
-    queryKey: ["strategy-params", strategyId],
-    queryFn: () => fetchStrategyParams(strategyId!),
+  const stratQ = useQuery({
+    queryKey: ["strategy", strategyId],
+    queryFn: () => fetchStrategy(strategyId!),
     enabled: !!strategyId,
   });
 
-  // Local form state: string values to allow partial editing
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // Sync server → form when data loads or strategy changes
+  // Sync server → form when data loads
   useEffect(() => {
-    if (!paramsQ.data) return;
+    if (!stratQ.data) return;
+    const params = stratQ.data.params_json;
     const init: Record<string, string> = {};
-    for (const key of Object.keys(paramsQ.data.hot_schema)) {
-      init[key] = String(paramsQ.data.params[key] ?? "");
+    for (const def of FIELD_DEFS) {
+      const v = params[def.key];
+      if (def.type === "coins") {
+        init[def.key] = Array.isArray(v) ? (v as string[]).join(", ") : String(v ?? "");
+      } else {
+        init[def.key] = v != null ? String(v) : "";
+      }
     }
     setFormValues(init);
     setFormErrors({});
-  }, [paramsQ.data]);
+  }, [stratQ.data]);
 
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const deployMutation = useMutation({
-    mutationFn: (body: Record<string, number>) =>
-      deployStrategyParams(strategyId!, body),
+  const patchMutation = useMutation({
+    mutationFn: (body: Record<string, ParamValue>) =>
+      patchStrategyParams(strategyId!, { params: body }),
     onSuccess: (data) => {
       const now = new Date();
       const hms = now.toLocaleTimeString([], {
@@ -142,35 +321,28 @@ export default function Settings() {
         minute: "2-digit",
         second: "2-digit",
       });
-      setSuccessMsg(`Deployed at ${hms}`);
+      setSuccessMsg(
+        `Params updated at ${hms} — restart engine for changes to take effect`,
+      );
       setErrorMsg(null);
       // Sync form to returned params
-      if (paramsQ.data) {
-        const updated: Record<string, string> = {};
-        for (const key of Object.keys(paramsQ.data.hot_schema)) {
-          updated[key] = String(data.params[key] ?? "");
+      const returned = data.params_json;
+      const updated: Record<string, string> = {};
+      for (const def of FIELD_DEFS) {
+        const v = returned[def.key];
+        if (def.type === "coins") {
+          updated[def.key] = Array.isArray(v) ? (v as string[]).join(", ") : String(v ?? "");
+        } else {
+          updated[def.key] = v != null ? String(v) : "";
         }
-        setFormValues(updated);
-        setFormErrors({});
       }
-      void queryClient.invalidateQueries({ queryKey: ["strategy-params", strategyId] });
-      void queryClient.invalidateQueries({ queryKey: ["events"] });
-      void queryClient.invalidateQueries({ queryKey: ["events-header"] });
+      setFormValues(updated);
+      setFormErrors({});
+      void queryClient.invalidateQueries({ queryKey: ["strategy", strategyId] });
+      void queryClient.invalidateQueries({ queryKey: ["strategies"] });
     },
     onError: (e: Error) => {
       setErrorMsg(e.message);
-      setSuccessMsg(null);
-    },
-  });
-
-  const forceTickMutation = useMutation({
-    mutationFn: () => forceHourTick(strategyId!),
-    onSuccess: (data) => {
-      setSuccessMsg(data.message);
-      setErrorMsg(null);
-    },
-    onError: (err: Error) => {
-      setErrorMsg(err.message);
       setSuccessMsg(null);
     },
   });
@@ -182,53 +354,59 @@ export default function Settings() {
   }
 
   function handleSubmit() {
-    if (!paramsQ.data) return;
-    const schema = paramsQ.data.hot_schema;
-    const body: Record<string, number> = {};
+    const body: Record<string, ParamValue> = {};
     const errors: Record<string, string> = {};
 
-    for (const [key, spec] of Object.entries(schema)) {
-      const raw = formValues[key] ?? "";
-      const result = validateField(key, raw, spec);
+    for (const def of FIELD_DEFS) {
+      const raw = formValues[def.key] ?? "";
+      const result = validateField(def, raw);
       if (result.error !== null) {
-        errors[key] = result.error;
+        errors[def.key] = result.error;
       } else {
-        body[key] = result.val;
+        body[def.key] = result.val;
       }
     }
 
     setFormErrors(errors);
     if (Object.keys(errors).length === 0) {
-      if (!window.confirm("Apply new params to running strategy?")) return;
-      deployMutation.mutate(body);
+      patchMutation.mutate(body);
     }
   }
 
-  // Dirty check: any hot field differs from server value
+  // Dirty check
   const isDirty = (() => {
-    if (!paramsQ.data) return false;
-    for (const key of Object.keys(paramsQ.data.hot_schema)) {
-      if (formValues[key] !== String(paramsQ.data.params[key] ?? "")) {
-        return true;
-      }
+    if (!stratQ.data) return false;
+    const params = stratQ.data.params_json;
+    for (const def of FIELD_DEFS) {
+      const server = params[def.key];
+      const serverStr = def.type === "coins"
+        ? Array.isArray(server) ? (server as string[]).join(", ") : String(server ?? "")
+        : server != null ? String(server) : "";
+      if (formValues[def.key] !== serverStr) return true;
     }
     return false;
   })();
 
   const hasFieldErrors = Object.keys(formErrors).length > 0;
-
-  const deployDisabled =
+  const submitDisabled =
     !strategyId ||
-    paramsQ.isLoading ||
+    stratQ.isLoading ||
     !isDirty ||
     hasFieldErrors ||
-    deployMutation.isPending;
+    patchMutation.isPending;
 
-  const hotSchema = paramsQ.data?.hot_schema ?? {};
-  const hotSchemaKeys = Object.keys(hotSchema);
-  const coldParams = paramsQ.data
-    ? Object.entries(paramsQ.data.params).filter(([k]) => !hotSchemaKeys.includes(k))
-    : [];
+  // Per-position footprint preview
+  const footprintPreview = (() => {
+    const size = parseFloat(formValues["position_size_usdc"] ?? "");
+    const lev = parseFloat(formValues["perp_leverage"] ?? "");
+    const buf = parseFloat(formValues["margin_buffer_factor"] ?? "");
+    if (!isFinite(size) || !isFinite(lev) || !isFinite(buf) || lev === 0) return null;
+    const margin = (size / lev) * buf;
+    return size + margin;
+  })();
+
+  // Group fields
+  const groups = ["capital", "entry_exit", "phase1", "phase2"] as const;
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -237,127 +415,110 @@ export default function Settings() {
       <main className="mx-auto max-w-2xl p-6 space-y-6">
         <h1 className="text-xl font-bold text-white">Strategy Settings</h1>
 
-        {paramsQ.isLoading && (
+        {stratQ.isLoading && (
           <div className="animate-pulse space-y-3">
-            {Array.from({ length: 5 }).map((_, i) => (
+            {Array.from({ length: 8 }).map((_, i) => (
               <div key={i} className="h-10 rounded bg-gray-700" />
             ))}
           </div>
         )}
 
-        {paramsQ.error instanceof Error && (
+        {stratQ.error instanceof Error && (
           <p className="rounded border border-red-600 bg-red-900/30 p-3 text-sm text-red-400">
-            {paramsQ.error.message}
+            {stratQ.error.message}
           </p>
         )}
 
-        {paramsQ.data && (
+        {stratQ.data && (
           <>
-            {hotSchemaKeys.length === 0 ? (
-              /* Unknown/legacy strategy — read-only view */
-              <section className="space-y-3">
-                <p className="text-sm text-amber-400">
-                  ⚠️ No hot-deployable params for this strategy.
-                </p>
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
-                  Params (read-only)
-                </h2>
-                <pre className="rounded border border-gray-700 bg-gray-800 p-3 text-xs text-gray-300 overflow-auto">
-                  {JSON.stringify(paramsQ.data.params, null, 2)}
-                </pre>
-              </section>
-            ) : (
-              <>
-                {/* Hot params section */}
-                <section className="space-y-4">
-                  <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
-                    Hot Params
-                  </h2>
+            {/* Strategy info banner */}
+            <div className="rounded border border-gray-700 bg-gray-800 px-4 py-2 text-xs text-gray-400 flex items-center gap-4">
+              <span className="font-semibold text-gray-200">{stratQ.data.name}</span>
+              <span>v{stratQ.data.version}</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                  stratQ.data.status === "running"
+                    ? "bg-green-800 text-green-200"
+                    : "bg-gray-700 text-gray-400"
+                }`}
+              >
+                {stratQ.data.status}
+              </span>
+            </div>
 
-                  {hotSchemaKeys.map((key) => {
-                    const spec = hotSchema[key];
-                    return (
-                      <FieldRow
-                        key={key}
-                        label={spec.label}
-                        helper={spec.description || undefined}
-                        error={formErrors[key]}
-                      >
-                        <NumberInput
-                          value={formValues[key] ?? ""}
-                          onChange={(v) => handleFieldChange(key, v)}
-                          step={spec.type === "int" ? "1" : "0.001"}
-                          min={spec.min_value ?? undefined}
-                          max={spec.max_value ?? undefined}
-                          hasError={!!formErrors[key]}
-                        />
-                      </FieldRow>
-                    );
-                  })}
-                </section>
-
-                {/* Cold params section */}
-                {coldParams.length > 0 && (
-                  <>
-                    <hr className="border-gray-700" />
-                    <section className="space-y-4">
-                      <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
-                        Cold Params
-                        <span className="ml-2 text-xs normal-case font-normal text-gray-500">
-                          (requires server restart)
-                        </span>
-                      </h2>
-                      {coldParams.map(([key, val]) => (
-                        <div key={key} className="flex flex-col gap-1">
-                          <span className="text-sm font-medium text-gray-500">{key}</span>
-                          <span className="rounded border border-gray-700 px-3 py-1.5 bg-gray-800 text-gray-400 text-sm break-all">
-                            {Array.isArray(val) ? (val as unknown[]).join(", ") : String(val)}
-                          </span>
-                        </div>
-                      ))}
-                    </section>
-                  </>
-                )}
-
-                {/* Deploy button + feedback */}
-                <div className="flex flex-col gap-3 pt-2">
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={handleSubmit}
-                      disabled={deployDisabled}
-                      className={`rounded px-4 py-2 text-sm font-semibold transition-colors ${
-                        deployDisabled
-                          ? "bg-gray-700 text-gray-500 cursor-not-allowed"
-                          : "bg-indigo-600 text-white hover:bg-indigo-500"
-                      }`}
-                    >
-                      {deployMutation.isPending ? "Deploying…" : "Deploy"}
-                    </button>
-                    <button
-                      onClick={() => forceTickMutation.mutate()}
-                      disabled={forceTickMutation.isPending || !strategyId}
-                      title="Schedule an hour-tick on the next minute boundary (≤60s) — runs funding fetch + open/close decisions without waiting for the real hourly boundary."
-                      className={`rounded px-4 py-2 text-sm font-semibold transition-colors ${
-                        forceTickMutation.isPending
-                          ? "bg-gray-700 text-gray-500 cursor-not-allowed"
-                          : "border border-gray-600 bg-gray-800 text-gray-200 hover:bg-gray-700"
-                      }`}
-                    >
-                      {forceTickMutation.isPending ? "Scheduling…" : "Force Hour Tick"}
-                    </button>
-                  </div>
-
-                  {successMsg && (
-                    <p className="text-sm text-green-400">{successMsg}</p>
-                  )}
-                  {errorMsg && (
-                    <p className="rounded border border-red-600 bg-red-900/30 p-2 text-sm text-red-400">
-                      {errorMsg}
-                    </p>
-                  )}
-                </div>
-              </>
+            {/* Per-position footprint preview */}
+            {footprintPreview != null && (
+              <div className="rounded border border-indigo-700 bg-indigo-900/30 px-4 py-2 text-xs text-indigo-300">
+                1 position consumes{" "}
+                <span className="font-semibold text-indigo-200">
+                  ${footprintPreview.toFixed(2)} USDC
+                </span>{" "}
+                (spot ${parseFloat(formValues["position_size_usdc"] ?? "0").toFixed(2)} + margin $
+                {(footprintPreview - parseFloat(formValues["position_size_usdc"] ?? "0")).toFixed(2)})
+              </div>
             )}
+
+            {/* Grouped param sections */}
+            {groups.map((group) => {
+              const fields = FIELD_DEFS.filter((f) => f.group === group);
+              return (
+                <section key={group} className="space-y-4">
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400 border-b border-gray-700 pb-1">
+                    {GROUP_LABELS[group]}
+                  </h2>
+                  {fields.map((def) => (
+                    <FieldRow
+                      key={def.key}
+                      label={def.label}
+                      helper={def.helper}
+                      error={formErrors[def.key]}
+                    >
+                      {def.type === "coins" ? (
+                        <TextInput
+                          value={formValues[def.key] ?? ""}
+                          onChange={(v) => handleFieldChange(def.key, v)}
+                          placeholder="BTC, ETH, SOL, ..."
+                          hasError={!!formErrors[def.key]}
+                        />
+                      ) : (
+                        <NumberInput
+                          value={formValues[def.key] ?? ""}
+                          onChange={(v) => handleFieldChange(def.key, v)}
+                          step={def.step}
+                          min={def.min}
+                          max={def.max}
+                          hasError={!!formErrors[def.key]}
+                        />
+                      )}
+                    </FieldRow>
+                  ))}
+                </section>
+              );
+            })}
+
+            {/* Submit */}
+            <div className="flex flex-col gap-3 pt-2">
+              <button
+                onClick={handleSubmit}
+                disabled={submitDisabled}
+                className={`rounded px-4 py-2 text-sm font-semibold transition-colors w-fit ${
+                  submitDisabled
+                    ? "bg-gray-700 text-gray-500 cursor-not-allowed"
+                    : "bg-indigo-600 text-white hover:bg-indigo-500"
+                }`}
+              >
+                {patchMutation.isPending ? "Saving…" : "Save Params"}
+              </button>
+
+              {successMsg && (
+                <p className="text-sm text-green-400">{successMsg}</p>
+              )}
+              {errorMsg && (
+                <p className="rounded border border-red-600 bg-red-900/30 p-2 text-sm text-red-400">
+                  {errorMsg}
+                </p>
+              )}
+            </div>
           </>
         )}
       </main>

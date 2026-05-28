@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
+import Funding from "./pages/Funding";
 
-type Route = "dashboard" | "settings";
+type Route = "dashboard" | "settings" | "funding";
 
 function readHash(): Route {
   const hash = window.location.hash;
   if (hash === "#/settings") return "settings";
+  if (hash === "#/funding") return "funding";
   return "dashboard";
 }
 
@@ -22,5 +24,7 @@ function useHashRoute(): Route {
 
 export default function App() {
   const route = useHashRoute();
-  return route === "settings" ? <Settings /> : <Dashboard />;
+  if (route === "settings") return <Settings />;
+  if (route === "funding") return <Funding />;
+  return <Dashboard />;
 }

@@ -49,11 +49,10 @@ export function useLiveEvents(strategyId?: number): { status: WsStatus; lastEven
 
       if (kind === "position.opened" || kind === "position.closed") {
         invalidate([
-          ["positions-open", sid],
-          ["positions-recent", sid],
+          ["farb-positions-open", sid],
+          ["farb-positions-active", sid],
           ["events"],
           ["equity", sid],
-          ["wallet", sid],
         ]);
         return;
       }
@@ -64,8 +63,6 @@ export function useLiveEvents(strategyId?: number): { status: WsStatus; lastEven
         // so RecentEvents and the Header pill pick up the new row.
         const keys: unknown[][] = [
           ["equity", sid],
-          ["wallet", sid],
-          ["signals", sid],
           ["events"],
           ["events-header"],
         ];
@@ -74,8 +71,8 @@ export function useLiveEvents(strategyId?: number): { status: WsStatus; lastEven
         const closedCoins = (payload_json?.closed_coins as string[] | undefined) ?? [];
 
         if (openedCoins.length > 0 || closedCoins.length > 0) {
-          keys.push(["positions-open", sid]);
-          keys.push(["positions-recent", sid]);
+          keys.push(["farb-positions-open", sid]);
+          keys.push(["farb-positions-active", sid]);
         }
 
         invalidate(keys);

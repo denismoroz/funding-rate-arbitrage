@@ -8,9 +8,9 @@ async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function apiPostJson<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
+async function apiPatchJson<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
   const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -29,30 +29,12 @@ async function apiPostJson<TReq, TRes>(path: string, body: TReq): Promise<TRes> 
   return res.json() as Promise<TRes>;
 }
 
+// Convert epoch ms (integer) to Date — backend sends ts_ms not ts.
+export function tsMsToDate(ms: number): Date {
+  return new Date(ms);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-export interface HotFieldSpec {
-  type: "float" | "int";
-  label: string;
-  min_value: number | null;
-  max_value: number | null;
-  exclusive_min: boolean;
-  exclusive_max: boolean;
-  description: string;
-}
-
-export interface StrategyParamsResponse {
-  strategy_name: string;
-  version: string;
-  params: Record<string, unknown>;
-  hot_schema: Record<string, HotFieldSpec>;
-}
-
-export interface DeployResponse {
-  strategy_name: string;
-  version: string;
-  params: Record<string, unknown>;
-}
 
 export type Strategy = {
   id: number;
@@ -60,14 +42,14 @@ export type Strategy = {
   version: string;
   params_json: Record<string, unknown>;
   status: string;
-  started_at: string | null;
-  stopped_at: string | null;
+  started_at_ms: number | null;
+  stopped_at_ms: number | null;
 };
 
 export type EquitySnapshot = {
   id: number;
   strategy_id: number;
-  ts: string;
+  ts_ms: number;
   total_equity: number;
   cash: number;
   spot_value: number;
@@ -77,74 +59,33 @@ export type EquitySnapshot = {
   fees_cum: number;
 };
 
-export type WalletSnapshot = {
+export type Leg = {
   id: number;
-  ts: string;
-  account_value: number;
-  perp_equity: number;
-  spot_equity: number;
-  withdrawable: number;
-};
-
-export type Fill = {
-  id: number;
-  position_id: number;
-  ts: string;
-  leg: "SPOT" | "PERP";
-  side: "BUY" | "SELL";
   qty: number;
-  price: number;
-  fee: number;
-  slippage_bps: number;
-  is_paper: boolean;
-};
+  entry_price: number;
+} | null;
 
-export type Position = {
+export type FarbPosition = {
   id: number;
   strategy_id: number;
-  market_id: number;
   coin: string;
-  mode: string;
-  status: "OPEN" | "CLOSED";
-  opened_at: string;
-  closed_at: string | null;
-  spot_units: number;
-  perp_units: number;
-  entry_spot_price: number;
-  entry_perp_price: number;
-  exit_spot_price: number | null;
-  exit_perp_price: number | null;
-  realized_pnl: number;
-  funding_collected: number;
-  fees_paid: number;
-  fills: Fill[];
-  // MTM fields (may be null if price unavailable):
-  current_mark: number | null;
-  spot_value_now: number | null;
-  perp_unrealized: number | null;
-  notional_at_entry: number | null;
-  net_mtm: number | null;
-  // Cost/projection fields:
-  slippage_cost: number | null;
-  breakeven_at: string | null;     // ISO datetime or null
-};
-
-export type Signal = {
-  id: number;
-  strategy_id: number;
-  market_id: number;
-  coin: string;
-  ts: string;
-  signal_value: number;
-  regime_pass: boolean;
-  action: "NONE" | "OPEN" | "CLOSE";
+  state: string;
+  state_data: Record<string, unknown>;
+  opened_at_ms: number;
+  closed_at_ms: number | null;
+  legs: { collateral: Leg; spot: Leg; perp: Leg };
+  hours_held: number | null;
+  target_signal_apr: number | null;
+  exit_signal_apr: number | null;
+  consec_negative_hours: number | null;
+  unrealized_pnl_usdc: number | null;
 };
 
 export type FundingRate = {
   id: number;
-  market_id: number;
+  exchange_id: number;
   coin: string;
-  ts: string;
+  ts_ms: number;
   rate: number;
   premium: number | null;
   annualized_pct: number;
@@ -152,19 +93,12 @@ export type FundingRate = {
 
 export type Event = {
   id: number;
-  ts: string;
+  ts_ms: number;
   level: string;
   source: string;
   kind: string;
   message: string;
   payload_json: Record<string, unknown> | null;
-};
-
-export type PositionFundingAccrual = {
-  id: number;
-  position_id: number;
-  ts: string;
-  delta: number;
 };
 
 export type Alert = {
@@ -177,159 +111,81 @@ export type Alert = {
   payload: Record<string, unknown> | null;
 };
 
-export type SpotBalanceItem = {
-  coin: string;
-  qty: number;
-  mark: number;
-  usd_value: number;
+export type StrategyParamsPatch = {
+  params: Record<string, number | string | boolean | string[] | null>;
 };
 
-export type WalletBalance = {
-  perp_account_value: number;
-  perp_unrealized_pnl: number;
-  spot_balances: SpotBalanceItem[];
-  usdc_spot: number;
-  total_usd: number;
+export type StrategyParamsPatchResponse = {
+  id: number;
+  params_json: Record<string, unknown>;
+  restart_required: boolean;
+  note?: string;
 };
 
-// ── Fetch helpers ─────────────────────────────────────────────────────────────
+// ── Fetchers ──────────────────────────────────────────────────────────────────
 
 export function fetchStrategies(): Promise<Strategy[]> {
   return apiFetch<Strategy[]>("/strategies");
 }
 
+export function fetchStrategy(id: number): Promise<Strategy> {
+  return apiFetch<Strategy>(`/strategies/${id}`);
+}
+
 export function fetchEquity(
   strategyId: number,
-  opts?: { limit?: number; since?: string },
+  opts?: { limit?: number },
 ): Promise<EquitySnapshot[]> {
   const params = new URLSearchParams({ strategy_id: String(strategyId) });
   if (opts?.limit != null) params.set("limit", String(opts.limit));
-  if (opts?.since != null) params.set("since", opts.since);
   return apiFetch<EquitySnapshot[]>(`/equity?${params}`);
 }
 
-export function fetchWalletHistory(
-  opts?: { limit?: number; since?: string },
-): Promise<WalletSnapshot[]> {
-  const params = new URLSearchParams();
-  if (opts?.limit != null) params.set("limit", String(opts.limit));
-  if (opts?.since != null) params.set("since", opts.since);
-  const qs = params.toString();
-  return apiFetch<WalletSnapshot[]>(`/equity/wallet-history${qs ? "?" + qs : ""}`);
+export function fetchFarbPositions(
+  strategyId: number,
+  status?: string,
+): Promise<FarbPosition[]> {
+  const params = new URLSearchParams({ strategy_id: String(strategyId) });
+  if (status != null) params.set("status", status);
+  return apiFetch<FarbPosition[]>(`/farb-positions?${params}`);
 }
 
-export function fetchPositions(opts?: {
-  strategyId?: number;
-  status?: string;
-  limit?: number;
-}): Promise<Position[]> {
-  const params = new URLSearchParams();
-  if (opts?.strategyId != null)
-    params.set("strategy_id", String(opts.strategyId));
-  if (opts?.status != null) params.set("status", opts.status);
-  if (opts?.limit != null) params.set("limit", String(opts.limit));
-  return apiFetch<Position[]>(`/positions?${params}`);
-}
-
-export function fetchSignals(opts?: {
-  strategyId?: number;
-  limit?: number;
-}): Promise<Signal[]> {
-  const params = new URLSearchParams();
-  if (opts?.strategyId != null)
-    params.set("strategy_id", String(opts.strategyId));
-  if (opts?.limit != null) params.set("limit", String(opts.limit));
-  return apiFetch<Signal[]>(`/signals?${params}`);
+export function fetchFarbPosition(id: number): Promise<FarbPosition> {
+  return apiFetch<FarbPosition>(`/farb-positions/${id}`);
 }
 
 export function fetchFundingHistory(
   coin: string,
-  opts?: { limit?: number; since?: string },
+  opts?: { limit?: number; exchangeId?: number },
 ): Promise<FundingRate[]> {
   const params = new URLSearchParams();
   if (opts?.limit != null) params.set("limit", String(opts.limit));
-  if (opts?.since != null) params.set("since", opts.since);
+  if (opts?.exchangeId != null) params.set("exchange_id", String(opts.exchangeId));
   const qs = params.toString();
   return apiFetch<FundingRate[]>(`/funding/${coin}${qs ? `?${qs}` : ""}`);
 }
 
-export function fetchEvents(opts?: { limit?: number }): Promise<Event[]> {
+export function fetchEvents(opts?: { limit?: number; level?: string }): Promise<Event[]> {
   const params = new URLSearchParams();
   if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.level != null) params.set("level", opts.level);
   return apiFetch<Event[]>(`/events?${params}`);
 }
 
-export function fetchAlerts(opts: {
-  strategyId: number;
-  since?: string;
-}): Promise<Alert[]> {
+export function fetchAlerts(opts: { strategyId: number }): Promise<Alert[]> {
   const params = new URLSearchParams({ strategy_id: String(opts.strategyId) });
-  if (opts.since != null) params.set("since", opts.since);
   return apiFetch<Alert[]>(`/alerts?${params}`);
 }
 
-export function fetchPositionFundingHistory(
-  positionId: number,
-  opts?: { limit?: number },
-): Promise<PositionFundingAccrual[]> {
-  const params = new URLSearchParams();
-  if (opts?.limit != null) params.set("limit", String(opts.limit));
-  const qs = params.toString();
-  return apiFetch<PositionFundingAccrual[]>(
-    `/positions/${positionId}/funding-history${qs ? `?${qs}` : ""}`,
-  );
-}
-
-export function fetchWallet(strategyId: number): Promise<WalletBalance> {
-  const params = new URLSearchParams({ strategy_id: String(strategyId) });
-  return apiFetch<WalletBalance>(`/equity/wallet?${params}`);
-}
-
-export type MarginEventBrief = {
-  ts: string;
-  kind: string;
-  level: string;
-  coin: string | null;
-  amount_transferred: number;
-  ratio: number;
-};
-
-export type MarginStatus = {
-  margin_manager_enabled: boolean;
-  perp_cash: number;
-  perp_unrealized: number;
-  effective_equity: number;
-  total_maintenance: number;
-  margin_ratio: number | null;
-  top_up_trigger: number | null;
-  healthy_ratio: number | null;
-  budget_committed: number;
-  budget_cap_usd: number | null;
-  n_open_positions: number;
-  concurrency_cap: number;
-  n_skipped_opens_capital: number;
-  last_event: MarginEventBrief | null;
-};
-
-export function fetchMarginStatus(strategyId: number): Promise<MarginStatus> {
-  const params = new URLSearchParams({ strategy_id: String(strategyId) });
-  return apiFetch<MarginStatus>(`/equity/margin?${params}`);
-}
-
-export function fetchStrategyParams(id: number): Promise<StrategyParamsResponse> {
-  return apiFetch<StrategyParamsResponse>(`/strategies/${id}/params`);
-}
-
-export function deployStrategyParams(
+export function patchStrategyParams(
   id: number,
-  body: Record<string, number>,
-): Promise<DeployResponse> {
-  return apiPostJson<Record<string, number>, DeployResponse>(`/strategies/${id}/deploy`, body);
-}
-
-export function forceHourTick(id: number): Promise<{ status: string; message: string }> {
-  return apiPostJson<Record<string, never>, { status: string; message: string }>(
-    `/strategies/${id}/force-tick`,
-    {},
+  patch: StrategyParamsPatch,
+): Promise<StrategyParamsPatchResponse> {
+  return apiPatchJson<StrategyParamsPatch, StrategyParamsPatchResponse>(
+    `/strategies/${id}/params`,
+    patch,
   );
 }
+
+// Alias for StrategyParamsPatch value type — exported for use in consumers.
+export type ParamValue = number | string | boolean | string[] | null;

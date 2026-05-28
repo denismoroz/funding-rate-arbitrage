@@ -36,8 +36,8 @@ export function formatQty(n: number): string {
   return `${intPart}.${keepMin4}${rest}`;
 }
 
-export function formatRelative(iso: string, now: number = Date.now()): string {
-  const diffMs = now - new Date(iso).getTime();
+export function formatRelative(ts: string | number, now: number = Date.now()): string {
+  const diffMs = now - (typeof ts === "number" ? ts : new Date(ts).getTime());
   const diffSec = Math.floor(diffMs / 1000);
   if (diffSec < 10) return "just now";
   if (diffSec < 60) return `${diffSec}s ago`;
