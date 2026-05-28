@@ -613,11 +613,14 @@ async def test_close_position_writes_closing_fill(mocker, seeded_session_factory
 
 
 # ---------------------------------------------------------------------------
-# 26. get_wallet writes wallet_snapshots row, returns balance
+# 26. get_wallet writes wallet_snapshots row with TOTAL balance
 # ---------------------------------------------------------------------------
 
 async def test_get_wallet_writes_snapshot(mocker, seeded_session_factory):
-    """get_wallet: inserts WalletSnapshot row; return value matches balance."""
+    """get_wallet: inserts WalletSnapshot row with TOTAL (perp+spot) balance.
+
+    Return value is per-kind (PERP accountValue); snapshot balance is the sum.
+    """
     ex, info, _ = _make_executor(mocker, session_factory=seeded_session_factory)
 
     perp_state = {"marginSummary": {"accountValue": "2500.75"}, "assetPositions": []}
@@ -629,37 +632,29 @@ async def test_get_wallet_writes_snapshot(mocker, seeded_session_factory):
     mocker.patch("asyncio.gather", side_effect=_fake_gather)
 
     balance = await ex.get_wallet("USDC", WalletKind.PERP)
+    # Return value is per-kind (PERP accountValue = 2500.75)
     assert balance == pytest.approx(2500.75)
 
     async with session_scope(seeded_session_factory) as s:
         rows = (await s.execute(select(DBWalletSnapshot))).scalars().all()
     assert len(rows) == 1
-    assert rows[0].balance == pytest.approx(2500.75)
+    # Snapshot stores the TOTAL (2500.75 + 100.0 = 2600.75)
+    assert rows[0].balance == pytest.approx(2600.75)
     assert rows[0].coin == "USDC"
-    assert rows[0].source == "hl_account_state"
+    assert rows[0].source == "hl_account_total"
 
 
 # ---------------------------------------------------------------------------
-# 27. transfer writes wallet_snapshot rows after success
+# 27. transfer writes ONE wallet_snapshot row with TOTAL balance after success
 # ---------------------------------------------------------------------------
 
 async def test_transfer_writes_wallet_snapshots(mocker, seeded_session_factory):
-    """transfer: after success writes perp+spot WalletSnapshot rows."""
+    """transfer: after success writes ONE WalletSnapshot row with the total balance."""
     ex, info, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
 
     transfer_resp = _ok_transfer_resp()
     perp_state = {"marginSummary": {"accountValue": "600.0"}, "assetPositions": []}
     spot_state = {"balances": [{"coin": "USDC", "total": "400.0"}]}
-
-    call_count = {"n": 0}
-
-    async def _fake_to_thread(fn, *args, **kwargs):
-        call_count["n"] += 1
-        if call_count["n"] == 1:
-            # The usd_class_transfer call
-            return transfer_resp
-        # Subsequent calls are info.user_state / info.spot_user_state
-        return fn(*args, **kwargs)
 
     # asyncio.gather is used inside transfer for post-transfer balance fetch
     async def _fake_gather(*coros):
@@ -672,14 +667,11 @@ async def test_transfer_writes_wallet_snapshots(mocker, seeded_session_factory):
 
     async with session_scope(seeded_session_factory) as s:
         rows = (await s.execute(select(DBWalletSnapshot))).scalars().all()
-    assert len(rows) == 2
-    sources = {r.source for r in rows}
-    assert "hl_post_transfer_perp" in sources
-    assert "hl_post_transfer_spot" in sources
-    perp_row = next(r for r in rows if r.source == "hl_post_transfer_perp")
-    spot_row = next(r for r in rows if r.source == "hl_post_transfer_spot")
-    assert perp_row.balance == pytest.approx(600.0)
-    assert spot_row.balance == pytest.approx(400.0)
+    # ONE row with the total post-transfer balance (perp 600 + spot 400 = 1000)
+    assert len(rows) == 1
+    assert rows[0].source == "hl_account_total"
+    assert rows[0].balance == pytest.approx(1000.0)
+    assert rows[0].coin == "USDC"
 
 
 # ---------------------------------------------------------------------------
@@ -758,3 +750,46 @@ async def test_get_accrued_funding_writes_and_is_idempotent(mocker, seeded_sessi
             select(DBFundingAccrual).where(DBFundingAccrual.position_id == pos_id)
         )).scalars().all()
     assert len(rows2) == 2, "Second call must NOT duplicate accrual rows"
+
+
+# ---------------------------------------------------------------------------
+# 29. get_wallet writes TOTAL balance regardless of requested kind
+# ---------------------------------------------------------------------------
+
+async def test_get_wallet_writes_total_balance(mocker, seeded_session_factory):
+    """get_wallet: snapshot stores perp+spot total; return value is per-kind.
+
+    - Called with kind=PERP: returns perp accountValue (10), snapshot=60
+    - Called again with kind=SPOT: returns spot balance (50), snapshot=60
+    """
+    ex, info, _ = _make_executor(mocker, session_factory=seeded_session_factory)
+
+    perp_state = {"marginSummary": {"accountValue": "10.0"}, "assetPositions": []}
+    spot_state = {"balances": [{"coin": "USDC", "total": "50.0"}]}
+
+    async def _fake_gather(*coros):
+        return (perp_state, spot_state)
+
+    mocker.patch("asyncio.gather", side_effect=_fake_gather)
+
+    # First call: kind=PERP — return value = perp accountValue
+    balance_perp = await ex.get_wallet("USDC", WalletKind.PERP)
+    assert balance_perp == pytest.approx(10.0)
+
+    async with session_scope(seeded_session_factory) as s:
+        rows = (await s.execute(select(DBWalletSnapshot))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].balance == pytest.approx(60.0)   # 10 + 50
+    assert rows[0].source == "hl_account_total"
+
+    # Second call: kind=SPOT — return value = spot balance (50), snapshot total=60
+    balance_spot = await ex.get_wallet("USDC", WalletKind.SPOT)
+    assert balance_spot == pytest.approx(50.0)
+
+    async with session_scope(seeded_session_factory) as s:
+        rows2 = (await s.execute(select(DBWalletSnapshot))).scalars().all()
+    # Two rows now (one per call), both with balance=60
+    assert len(rows2) == 2
+    for row in rows2:
+        assert row.balance == pytest.approx(60.0)
+        assert row.source == "hl_account_total"

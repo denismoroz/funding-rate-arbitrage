@@ -13,6 +13,11 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 import pytest_asyncio
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from frab.db.models import Exchange as ExchangeRow, FundingRate as FundingRateRow, Price as PriceRow
+from frab.db.session import init_db, make_session_factory, session_scope
 from frab.engine.loop import EngineLoop, utcnow_ms
 from frab.events.bus import EventBus
 from frab.exchanges.protocol import FundingTick, Quote, WalletKind
@@ -332,3 +337,91 @@ async def test_stop_cancels_and_subsequent_stop_is_noop(
 
     # Subsequent stop must not raise
     await loop.stop()
+
+
+# ─── DB fixtures for idempotency tests ───────────────────────────────────────
+
+@pytest.fixture
+async def db_engine():
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:", future=True, echo=False)
+    await init_db(eng)
+    yield eng
+    await eng.dispose()
+
+
+@pytest.fixture
+async def db_session_factory(db_engine):
+    return make_session_factory(db_engine)
+
+
+@pytest.fixture
+async def seeded_db_session_factory(db_session_factory):
+    """Session factory with the 'hyperliquid' exchange row seeded."""
+    async with session_scope(db_session_factory) as s:
+        s.add(ExchangeRow(
+            name="hyperliquid",
+            funding_interval_h=1,
+            spot_taker_bps=7.0,
+            perp_taker_bps=3.5,
+        ))
+    return db_session_factory
+
+
+# ─── 9. _save_funding is idempotent on duplicate ts_ms ────────────────────────
+
+@pytest.mark.asyncio
+async def test_save_funding_idempotent_on_duplicate_ts(
+    mock_exchange, mock_strategy, mock_ledger, seeded_db_session_factory,
+):
+    """Pre-insert a funding rate row, then call _save_funding with the same
+    (exchange_id, coin, ts_ms) — must not raise IntegrityError and must not
+    create a duplicate row."""
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, seeded_db_session_factory)
+    # Force exchange_id resolution
+    await loop._resolve_exchange_id()
+
+    tick = FundingTick(coin="BTC", ts_ms=1_700_000_000_000, rate=0.0001, premium=0.0001, annualized_pct=8.76)
+
+    # First insert — baseline
+    await loop._save_funding([tick], now_ms=tick.ts_ms)
+
+    async with session_scope(seeded_db_session_factory) as s:
+        rows_before = (await s.execute(select(FundingRateRow))).scalars().all()
+    assert len(rows_before) == 1
+
+    # Second insert with same (exchange_id, coin, ts_ms) — must be a no-op
+    await loop._save_funding([tick], now_ms=tick.ts_ms)
+
+    async with session_scope(seeded_db_session_factory) as s:
+        rows_after = (await s.execute(select(FundingRateRow))).scalars().all()
+    assert len(rows_after) == 1, "_save_funding must not create duplicate rows on restart"
+
+
+# ─── 10. _save_prices is idempotent on duplicate ts_ms ────────────────────────
+
+@pytest.mark.asyncio
+async def test_save_prices_idempotent_on_duplicate_ts(
+    mock_exchange, mock_strategy, mock_ledger, seeded_db_session_factory,
+):
+    """Pre-insert a price row, then call _save_prices with the same
+    (exchange_id, coin, ts_ms) — must not raise IntegrityError and must not
+    create a duplicate row."""
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, seeded_db_session_factory)
+    await loop._resolve_exchange_id()
+
+    quote = Quote(coin="ETH", mark=3000.0, spot=2990.0, bid=2995.0, ask=3005.0, ts_ms=1_700_000_060_000)
+    now_ms = quote.ts_ms
+
+    # First insert
+    await loop._save_prices([quote], now_ms=now_ms)
+
+    async with session_scope(seeded_db_session_factory) as s:
+        rows_before = (await s.execute(select(PriceRow))).scalars().all()
+    assert len(rows_before) == 1
+
+    # Second insert with same (exchange_id, coin, ts_ms) — must be a no-op
+    await loop._save_prices([quote], now_ms=now_ms)
+
+    async with session_scope(seeded_db_session_factory) as s:
+        rows_after = (await s.execute(select(PriceRow))).scalars().all()
+    assert len(rows_after) == 1, "_save_prices must not create duplicate rows on restart"

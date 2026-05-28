@@ -681,8 +681,8 @@ class HLExchange:
         )
 
         now_ms = _dt_to_ms(self._clock_fn())
-        balance = 0.0
 
+        # Per-kind balance (returned to caller; state-machine code uses this)
         if kind == WalletKind.PERP:
             margin = perp_state.get("marginSummary", {})
             if coin in ("USDC", "USD"):
@@ -692,9 +692,32 @@ class HLExchange:
                 balance = 0.0
         else:  # SPOT
             spot_coin = self._spot_token_map.get(coin, coin)
+            balance = 0.0
             for bal in spot_state.get("balances", []):
                 if bal.get("coin") == spot_coin or bal.get("coin") == coin:
                     balance = float(bal.get("total", 0.0))
+                    break
+
+        # Total balance across BOTH sub-wallets (equity-relevant quantity).
+        # On HL all wallets belong to one account; the ledger needs the total.
+        # For USDC: perp accountValue + spot USDC balance.
+        # For non-USDC coins (e.g. BTC): only spot balance is relevant.
+        if coin in ("USDC", "USD"):
+            perp_value = float(perp_state.get("marginSummary", {}).get("accountValue", 0.0))
+            spot_coin = self._spot_token_map.get(coin, coin)
+            spot_value = 0.0
+            for bal in spot_state.get("balances", []):
+                if bal.get("coin") == spot_coin or bal.get("coin") == coin:
+                    spot_value = float(bal.get("total", 0.0))
+                    break
+            total_balance = perp_value + spot_value
+        else:
+            # Non-USDC: only spot balance matters for this strategy
+            spot_coin = self._spot_token_map.get(coin, coin)
+            total_balance = 0.0
+            for bal in spot_state.get("balances", []):
+                if bal.get("coin") == spot_coin or bal.get("coin") == coin:
+                    total_balance = float(bal.get("total", 0.0))
                     break
 
         async with session_scope(self._session_factory) as s:
@@ -703,8 +726,8 @@ class HLExchange:
                 exchange_id=exchange_id,
                 coin=coin,
                 ts_ms=now_ms,
-                balance=balance,
-                source="hl_account_state",
+                balance=total_balance,
+                source="hl_account_total",
             ))
 
         return balance
@@ -764,21 +787,22 @@ class HLExchange:
                         spot_balance = float(bal.get("total", 0.0))
                         break
 
+                # Write ONE snapshot with the post-transfer TOTAL balance.
+                # Same semantics as get_wallet: equity-relevant quantity is the
+                # account total, not the per-sub-wallet split.
+                if coin in ("USDC", "USD"):
+                    total_balance = perp_balance + spot_balance
+                else:
+                    total_balance = spot_balance
+
                 async with session_scope(self._session_factory) as s:
                     exchange_id = await self._get_exchange_id(s)
                     s.add(DBWalletSnapshot(
                         exchange_id=exchange_id,
                         coin=coin,
                         ts_ms=now_ms,
-                        balance=perp_balance,
-                        source="hl_post_transfer_perp",
-                    ))
-                    s.add(DBWalletSnapshot(
-                        exchange_id=exchange_id,
-                        coin=coin,
-                        ts_ms=now_ms,
-                        balance=spot_balance,
-                        source="hl_post_transfer_spot",
+                        balance=total_balance,
+                        source="hl_account_total",
                     ))
 
     # ------------------------------------------------------------------

@@ -20,6 +20,7 @@ import traceback
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import Exchange as ExchangeRow, FundingRate as FundingRateRow, Price as PriceRow
@@ -226,30 +227,42 @@ class EngineLoop:
         exchange_id = await self._resolve_exchange_id()
         async with session_scope(self._sf) as s:
             for quote in quotes:
-                row = PriceRow(
-                    exchange_id=exchange_id,
-                    coin=quote.coin,
-                    ts_ms=now_ms,
-                    mark=quote.mark,
-                    spot=quote.spot,
-                    bid=quote.bid,
-                    ask=quote.ask,
+                stmt = (
+                    sqlite_insert(PriceRow)
+                    .values(
+                        exchange_id=exchange_id,
+                        coin=quote.coin,
+                        ts_ms=now_ms,
+                        mark=quote.mark,
+                        spot=quote.spot,
+                        bid=quote.bid,
+                        ask=quote.ask,
+                    )
+                    .on_conflict_do_nothing(
+                        index_elements=["exchange_id", "coin", "ts_ms"]
+                    )
                 )
-                s.add(row)
+                await s.execute(stmt)
 
     async def _save_funding(self, ticks, now_ms: int) -> None:
         exchange_id = await self._resolve_exchange_id()
         async with session_scope(self._sf) as s:
             for tick in ticks:
-                row = FundingRateRow(
-                    exchange_id=exchange_id,
-                    coin=tick.coin,
-                    ts_ms=tick.ts_ms if tick.ts_ms else now_ms,
-                    rate=tick.rate,
-                    premium=tick.premium,
-                    annualized_pct=tick.annualized_pct,
+                stmt = (
+                    sqlite_insert(FundingRateRow)
+                    .values(
+                        exchange_id=exchange_id,
+                        coin=tick.coin,
+                        ts_ms=tick.ts_ms if tick.ts_ms else now_ms,
+                        rate=tick.rate,
+                        premium=tick.premium,
+                        annualized_pct=tick.annualized_pct,
+                    )
+                    .on_conflict_do_nothing(
+                        index_elements=["exchange_id", "coin", "ts_ms"]
+                    )
                 )
-                s.add(row)
+                await s.execute(stmt)
 
     async def _refresh_wallet_snapshots(self, now_ms: int) -> None:
         """Refresh wallet balance snapshots. Exchange.get_wallet writes to DB internally."""
