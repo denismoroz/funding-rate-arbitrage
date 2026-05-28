@@ -208,6 +208,11 @@ class TwoPhaseStrategy:
         required = self.params.required_margin()
         balance = await self.exchange.get_wallet("USDC", WalletKind.SPOT)
         if balance < required:
+            logger.warning(
+                "check_margin failed farb_position_id=%s coin=%s "
+                "required=%.4f available=%.4f → FAILED",
+                fp.id, fp.coin, required, balance,
+            )
             await self.farb_repo.mark_failed(
                 fp.id,
                 reason=f"insufficient_margin: need {required:.4f}, have {balance:.4f}",
