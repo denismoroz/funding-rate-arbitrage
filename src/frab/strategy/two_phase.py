@@ -24,6 +24,7 @@ from frab.db.models import Exchange as ExchangeRow
 from frab.db.models import FundingRate as FundingRateRow
 from frab.db.session import session_scope
 from frab.domain import FarbPosition, FarbState, Instrument, Position, Side
+from frab.constants import PERP_TAKER, SPOT_TAKER
 from frab.engine.two_phase_signals import (
     TwoPhaseDecision,
     compute_position_min_hold,
@@ -279,7 +280,6 @@ class TwoPhaseStrategy:
             cap_min_hold_hours=self.params.cap_min_hold_hours,
         )
         # total_fees_paid: round-trip fees at entry (perp taker + spot taker, both sides)
-        from frab.engine.margin_manager import PERP_TAKER, SPOT_TAKER
         total_fees_paid = self.params.position_size_usdc * (PERP_TAKER + SPOT_TAKER) * 2
         await self.farb_repo.transition(
             fp.id,
