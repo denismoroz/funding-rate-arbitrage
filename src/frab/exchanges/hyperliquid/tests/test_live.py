@@ -5,10 +5,13 @@ from datetime import UTC, datetime
 
 import pytest
 from hyperliquid.utils import constants
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from frab.db.models import Fill as DBFill
+from frab.db.models import FundingAccrual as DBFundingAccrual
 from frab.db.models import Position as DBPosition
+from frab.db.models import WalletSnapshot as DBWalletSnapshot
 from frab.db.session import init_db, make_session_factory, session_scope
 from frab.domain import Instrument, PositionStatus, Side
 from frab.exchanges.hyperliquid.exchange import HLExchange as LiveHLExecutor, HLTransferError, PartialFillError
@@ -507,3 +510,251 @@ async def test_open_position_requires_session_factory(mocker):
     req = OpenRequest(coin="BTC", instrument=Instrument.PERP, side=Side.SHORT, qty=0.5)
     with pytest.raises(RuntimeError, match="session_factory required"):
         await ex.open_position(req)
+
+
+# ---------------------------------------------------------------------------
+# 23. open_position COLLATERAL writes Position row, no Fill
+# ---------------------------------------------------------------------------
+
+async def test_open_position_collateral_writes_position_no_fill(mocker, seeded_session_factory):
+    """COLLATERAL open: Position row written, no Fill row created."""
+    ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+
+    # transfer call needs to be mocked (COLLATERAL → calls self.transfer internally)
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_ok_transfer_resp()))
+
+    # Also patch get_wallet calls that transfer makes for wallet snapshots.
+    # transfer checks self._address is not None; our executor has address set.
+    # After transfer, it reads perp/spot state — patch info calls.
+    ex._info.user_state.return_value = {"marginSummary": {"accountValue": "1000.0"}, "assetPositions": []}
+    ex._info.spot_user_state.return_value = {"balances": []}
+
+    req = OpenRequest(coin="USDC", instrument=Instrument.COLLATERAL, side=Side.NONE, qty=600.0)
+    pos = await ex.open_position(req)
+
+    assert pos.instrument == Instrument.COLLATERAL
+    assert pos.side == Side.NONE
+    assert pos.qty == pytest.approx(600.0)
+    assert pos.entry_price == pytest.approx(1.0)
+    assert pos.status == PositionStatus.OPEN
+    assert pos.id is not None
+
+    async with session_scope(seeded_session_factory) as s:
+        db_pos = await s.get(DBPosition, pos.id)
+        assert db_pos is not None
+        assert db_pos.instrument == Instrument.COLLATERAL.value
+        assert db_pos.qty == pytest.approx(600.0)
+
+        fills = (await s.execute(select(DBFill).where(DBFill.position_id == pos.id))).scalars().all()
+        assert len(fills) == 0, "COLLATERAL open must NOT write a Fill row"
+
+
+# ---------------------------------------------------------------------------
+# 24. open_position SPOT writes Position + Fill
+# ---------------------------------------------------------------------------
+
+async def test_open_position_spot_writes_position_and_fill(mocker, seeded_session_factory):
+    """SPOT open: both Position row and Fill row are written to DB."""
+    ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(
+        return_value=_filled_resp(qty=0.001, px=80000.0, fee=5.6)
+    ))
+
+    req = OpenRequest(coin="BTC", instrument=Instrument.SPOT, side=Side.LONG, qty=0.001)
+    pos = await ex.open_position(req)
+
+    assert pos.instrument == Instrument.SPOT
+    assert pos.id is not None
+
+    async with session_scope(seeded_session_factory) as s:
+        db_pos = await s.get(DBPosition, pos.id)
+        assert db_pos is not None
+        assert db_pos.instrument == Instrument.SPOT.value
+        assert db_pos.qty == pytest.approx(0.001)
+
+        fills = (await s.execute(select(DBFill).where(DBFill.position_id == pos.id))).scalars().all()
+        assert len(fills) == 1
+        assert fills[0].price == pytest.approx(80000.0)
+        assert fills[0].fee == pytest.approx(5.6)
+        assert fills[0].side == Side.LONG.value
+
+
+# ---------------------------------------------------------------------------
+# 25. close_position writes closing Fill (PERP)
+# ---------------------------------------------------------------------------
+
+async def test_close_position_writes_closing_fill(mocker, seeded_session_factory):
+    """close_position PERP: DB position updated to CLOSED + closing Fill inserted."""
+    ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.5, px=30000.0, fee=0.1)))
+
+    # Open first
+    req = OpenRequest(coin="BTC", instrument=Instrument.PERP, side=Side.SHORT, qty=0.5)
+    pos = await ex.open_position(req)
+
+    # Now close
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.5, px=28000.0, fee=0.08)))
+    closed = await ex.close_position(pos)
+
+    assert closed.status == PositionStatus.CLOSED
+    assert closed.closed_at is not None
+
+    async with session_scope(seeded_session_factory) as s:
+        db_pos = await s.get(DBPosition, pos.id)
+        assert db_pos.status == PositionStatus.CLOSED.value
+        assert db_pos.closed_at is not None
+
+        fills = (await s.execute(select(DBFill).where(DBFill.position_id == pos.id))).scalars().all()
+        # Opening fill + closing fill = 2
+        assert len(fills) == 2
+        closing_fill = next(f for f in fills if f.price == pytest.approx(28000.0))
+        assert closing_fill.side == Side.LONG.value  # closing a SHORT → LONG fill
+        assert closing_fill.fee == pytest.approx(0.08)
+
+
+# ---------------------------------------------------------------------------
+# 26. get_wallet writes wallet_snapshots row, returns balance
+# ---------------------------------------------------------------------------
+
+async def test_get_wallet_writes_snapshot(mocker, seeded_session_factory):
+    """get_wallet: inserts WalletSnapshot row; return value matches balance."""
+    ex, info, _ = _make_executor(mocker, session_factory=seeded_session_factory)
+
+    perp_state = {"marginSummary": {"accountValue": "2500.75"}, "assetPositions": []}
+    spot_state = {"balances": [{"coin": "USDC", "total": "100.0"}]}
+
+    async def _fake_gather(*coros):
+        return (perp_state, spot_state)
+
+    mocker.patch("asyncio.gather", side_effect=_fake_gather)
+
+    balance = await ex.get_wallet("USDC", WalletKind.PERP)
+    assert balance == pytest.approx(2500.75)
+
+    async with session_scope(seeded_session_factory) as s:
+        rows = (await s.execute(select(DBWalletSnapshot))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].balance == pytest.approx(2500.75)
+    assert rows[0].coin == "USDC"
+    assert rows[0].source == "hl_account_state"
+
+
+# ---------------------------------------------------------------------------
+# 27. transfer writes wallet_snapshot rows after success
+# ---------------------------------------------------------------------------
+
+async def test_transfer_writes_wallet_snapshots(mocker, seeded_session_factory):
+    """transfer: after success writes perp+spot WalletSnapshot rows."""
+    ex, info, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+
+    transfer_resp = _ok_transfer_resp()
+    perp_state = {"marginSummary": {"accountValue": "600.0"}, "assetPositions": []}
+    spot_state = {"balances": [{"coin": "USDC", "total": "400.0"}]}
+
+    call_count = {"n": 0}
+
+    async def _fake_to_thread(fn, *args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # The usd_class_transfer call
+            return transfer_resp
+        # Subsequent calls are info.user_state / info.spot_user_state
+        return fn(*args, **kwargs)
+
+    # asyncio.gather is used inside transfer for post-transfer balance fetch
+    async def _fake_gather(*coros):
+        return (perp_state, spot_state)
+
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=transfer_resp))
+    mocker.patch("asyncio.gather", side_effect=_fake_gather)
+
+    await ex.transfer("USDC", 100.0, WalletKind.SPOT, WalletKind.PERP)
+
+    async with session_scope(seeded_session_factory) as s:
+        rows = (await s.execute(select(DBWalletSnapshot))).scalars().all()
+    assert len(rows) == 2
+    sources = {r.source for r in rows}
+    assert "hl_post_transfer_perp" in sources
+    assert "hl_post_transfer_spot" in sources
+    perp_row = next(r for r in rows if r.source == "hl_post_transfer_perp")
+    spot_row = next(r for r in rows if r.source == "hl_post_transfer_spot")
+    assert perp_row.balance == pytest.approx(600.0)
+    assert spot_row.balance == pytest.approx(400.0)
+
+
+# ---------------------------------------------------------------------------
+# 28. get_accrued_funding inserts funding_accruals and is idempotent
+# ---------------------------------------------------------------------------
+
+async def test_get_accrued_funding_writes_and_is_idempotent(mocker, seeded_session_factory):
+    """get_accrued_funding: inserts FundingAccrual rows idempotently."""
+    ex, info, _ = _make_executor(mocker, session_factory=seeded_session_factory)
+
+    # Seed a PERP position in DB first
+    async with session_scope(seeded_session_factory) as s:
+        from frab.db.models import Exchange as DBExchange
+        exc_row = (await s.execute(select(DBExchange).where(DBExchange.name == "hyperliquid"))).scalar_one()
+        pos_row = DBPosition(
+            exchange_id=exc_row.id,
+            coin="BTC",
+            instrument=Instrument.PERP.value,
+            side=Side.SHORT.value,
+            qty=0.5,
+            entry_price=30000.0,
+            opened_at=int(_FIXED_DT.timestamp() * 1000),
+            closed_at=None,
+            status=PositionStatus.OPEN.value,
+            farb_position_id=None,
+        )
+        s.add(pos_row)
+        await s.flush()
+        pos_id = pos_row.id
+
+    from frab.domain.position import Position as DomainPosition
+    domain_pos = DomainPosition(
+        id=pos_id,
+        exchange_name="hyperliquid",
+        coin="BTC",
+        instrument=Instrument.PERP,
+        side=Side.SHORT,
+        qty=0.5,
+        entry_price=30000.0,
+        opened_at=_FIXED_DT,
+        closed_at=None,
+        status=PositionStatus.OPEN,
+        farb_position_id=None,
+    )
+
+    # Mock HL API response: 2 funding accrual records
+    base_ms = int(_FIXED_DT.timestamp() * 1000)
+    funding_data = [
+        {"time": str(base_ms + 3600_000), "delta": {"coin": "BTC", "usdc": "1.5", "type": "funding"}},
+        {"time": str(base_ms + 7200_000), "delta": {"coin": "BTC", "usdc": "2.0", "type": "funding"}},
+        {"time": str(base_ms + 7200_000), "delta": {"coin": "ETH", "usdc": "0.5", "type": "funding"}},  # different coin — skip
+    ]
+
+    async def _fake_post(body):
+        if body.get("type") == "userFunding":
+            return funding_data
+        return {}
+
+    ex._post = _fake_post  # type: ignore[assignment]
+
+    total = await ex.get_accrued_funding(domain_pos)
+    assert total == pytest.approx(3.5)
+
+    async with session_scope(seeded_session_factory) as s:
+        rows = (await s.execute(
+            select(DBFundingAccrual).where(DBFundingAccrual.position_id == pos_id)
+        )).scalars().all()
+    assert len(rows) == 2
+
+    # Call again — idempotent: no duplicate rows
+    total2 = await ex.get_accrued_funding(domain_pos)
+    assert total2 == pytest.approx(3.5)
+
+    async with session_scope(seeded_session_factory) as s:
+        rows2 = (await s.execute(
+            select(DBFundingAccrual).where(DBFundingAccrual.position_id == pos_id)
+        )).scalars().all()
+    assert len(rows2) == 2, "Second call must NOT duplicate accrual rows"
