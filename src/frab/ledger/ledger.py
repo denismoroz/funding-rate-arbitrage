@@ -1,0 +1,395 @@
+"""Ledger — stateless equity aggregator.
+
+Reads DB, computes an EquitySnapshot. NO writes during compute_equity.
+Only save_snapshot / compute_and_save write to the DB.
+
+Cash semantics:
+    cash = SUM of the *latest* wallet_snapshot balance per (exchange_id, coin)
+           where coin IN ('USDC', 'USDT').
+    Rationale: USDC and USDT are the settlement stablecoins used by this
+    strategy. Non-stablecoin spot balances (e.g. BTC held in spot wallet)
+    are already captured by spot_value; other stablecoins (BUSD etc.) are
+    not relevant to this implementation. Step 7 may broaden this list.
+
+Total-equity formula:
+    total_equity = cash + spot_value + perp_unrealized + funding_cum
+
+    perp_realized_cum and fees_cum are surfaced as *visibility counters only*.
+    They are NOT added to total_equity because in live mode realized P&L and
+    fees both flow through wallet balance movements that are already reflected
+    in cash. Adding them would double-count.
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+
+from frab.db.models import (
+    EquitySnapshot as EquitySnapshotRow,
+    Exchange as ExchangeRow,
+    FarbPosition as FarbPositionRow,
+    Fill as FillRow,
+    FundingAccrual as FundingAccrualRow,
+    Position as PositionRow,
+    WalletSnapshot as WalletSnapshotRow,
+)
+from frab.db.session import session_scope
+from frab.domain.enums import Instrument, PositionStatus, Side
+from frab.exchanges.protocol import Quote
+
+logger = logging.getLogger(__name__)
+
+# Stablecoins treated as cash.  See module-level docstring for rationale.
+_CASH_COINS = frozenset({"USDC", "USDT"})
+
+
+def _now_ms() -> int:
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+@dataclass(frozen=True)
+class EquitySnapshot:
+    strategy_id: int
+    ts_ms: int
+    total_equity: float
+    cash: float
+    spot_value: float
+    perp_unrealized: float
+    perp_realized_cum: float
+    funding_cum: float
+    fees_cum: float
+
+
+class Ledger:
+    """Stateless equity aggregator.
+
+    Constructor takes a session_factory (async_sessionmaker).  No other state.
+    compute_equity is read-only.  save_snapshot is the only write method.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._sf = session_factory
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def compute_equity(
+        self,
+        strategy_id: int,
+        quotes: dict[str, Quote],
+    ) -> EquitySnapshot:
+        """Compute equity snapshot from DB + quotes.  Read-only — no DB writes.
+
+        Parameters
+        ----------
+        strategy_id:
+            The strategy whose equity is being computed.
+        quotes:
+            Mapping coin → fresh Quote.  For coins with open positions that are
+            absent from this dict, the position's contribution is treated as 0
+            and a WARN event is logged.
+
+        Returns
+        -------
+        EquitySnapshot
+            All counters populated.  ts_ms = now.
+        """
+        ts_ms = _now_ms()
+
+        async with self._sf() as session:
+            cash = await self._compute_cash(session, strategy_id)
+            spot_value, perp_unrealized = await self._compute_position_values(
+                session, strategy_id, quotes
+            )
+            perp_realized_cum = await self._compute_perp_realized(session, strategy_id)
+            funding_cum = await self._compute_funding_cum(session, strategy_id)
+            fees_cum = await self._compute_fees_cum(session, strategy_id)
+
+        # total_equity: cash is the settled base; spot and unrealized perp add
+        # on top.  funding_cum is already flowing into cash in live mode, but
+        # we also add it here because wallet_snapshots may lag the last
+        # funding epoch — i.e. un-yet-settled funding.  See note below.
+        #
+        # NOTE: In live Hyperliquid mode, funding payments are immediately
+        # reflected in the perp-wallet balance.  wallet_snapshots captures
+        # this balance, so funding_cum would double-count if wallet_snapshots
+        # is always up-to-date.  However, Ledger does not know the cadence of
+        # wallet snapshot refreshes.  The conservative approach for now:
+        # follow the formula in the spec verbatim.  Step 7 / real trading will
+        # clarify whether wallet_snapshots is refreshed on every funding epoch.
+        total_equity = cash + spot_value + perp_unrealized + funding_cum
+
+        return EquitySnapshot(
+            strategy_id=strategy_id,
+            ts_ms=ts_ms,
+            total_equity=total_equity,
+            cash=cash,
+            spot_value=spot_value,
+            perp_unrealized=perp_unrealized,
+            perp_realized_cum=perp_realized_cum,
+            funding_cum=funding_cum,
+            fees_cum=fees_cum,
+        )
+
+    async def save_snapshot(self, snapshot: EquitySnapshot) -> None:
+        """INSERT a row into equity_snapshots.  Separate from compute so the
+        caller controls cadence (e.g. hourly vs. on-demand)."""
+        async with session_scope(self._sf) as session:
+            row = EquitySnapshotRow(
+                strategy_id=snapshot.strategy_id,
+                ts_ms=snapshot.ts_ms,
+                total_equity=snapshot.total_equity,
+                cash=snapshot.cash,
+                spot_value=snapshot.spot_value,
+                perp_unrealized=snapshot.perp_unrealized,
+                perp_realized_cum=snapshot.perp_realized_cum,
+                funding_cum=snapshot.funding_cum,
+                fees_cum=snapshot.fees_cum,
+            )
+            session.add(row)
+
+    async def compute_and_save(
+        self,
+        strategy_id: int,
+        quotes: dict[str, Quote],
+    ) -> EquitySnapshot:
+        """Convenience: compute then save.  Returns the snapshot."""
+        snapshot = await self.compute_equity(strategy_id, quotes)
+        await self.save_snapshot(snapshot)
+        return snapshot
+
+    # ------------------------------------------------------------------
+    # Private helpers — each uses the provided session (no new session)
+    # ------------------------------------------------------------------
+
+    async def _compute_cash(
+        self,
+        session: AsyncSession,
+        strategy_id: int,
+    ) -> float:
+        """SUM of latest wallet_snapshot balance per (exchange_id, coin)
+        for all exchanges linked to this strategy, restricted to
+        cash-equivalent coins (USDC, USDT).
+
+        We use a NOT-EXISTS correlated subquery to find the 'latest' row per
+        (exchange_id, coin): a row is 'latest' if there is no newer row for
+        the same (exchange_id, coin).  This is SQLite-compatible.
+
+        The strategy does not own exchanges directly; wallet_snapshots are
+        scoped by exchange_id.  We sum across ALL exchanges registered in the
+        DB for now (Step 7 will scope by strategy config if needed).
+        """
+        # Alias to avoid clash with domain-level Exchange name
+        ws = WalletSnapshotRow
+        ws_newer = WalletSnapshotRow.__table__.alias("ws_newer")
+
+        # Subquery: ws row is the latest for its (exchange_id, coin) if no
+        # newer row exists for the same (exchange_id, coin).
+        not_exists_newer = ~(
+            select(ws_newer.c.id)
+            .where(
+                ws_newer.c.exchange_id == ws.exchange_id,
+                ws_newer.c.coin == ws.coin,
+                ws_newer.c.ts_ms > ws.ts_ms,
+            )
+            .correlate(ws)
+            .exists()
+        )
+
+        stmt = select(func.coalesce(func.sum(ws.balance), 0.0)).where(
+            ws.coin.in_(list(_CASH_COINS)),
+            not_exists_newer,
+        )
+        result = await session.execute(stmt)
+        return float(result.scalar())
+
+    async def _compute_position_values(
+        self,
+        session: AsyncSession,
+        strategy_id: int,
+        quotes: dict[str, Quote],
+    ) -> tuple[float, float]:
+        """Return (spot_value, perp_unrealized) for all OPEN positions
+        linked to this strategy via farb_positions.
+
+        COLLATERAL positions are intentionally excluded: their value is
+        already captured in cash (wallet_snapshots reflects perp-wallet USDC
+        which includes the collateral reservation).
+
+        For coins missing from quotes, contribution = 0 and a WARN is logged.
+        """
+        # Fetch all OPEN, non-COLLATERAL positions linked to this strategy.
+        stmt = (
+            select(PositionRow)
+            .join(
+                FarbPositionRow,
+                PositionRow.farb_position_id == FarbPositionRow.id,
+            )
+            .where(
+                FarbPositionRow.strategy_id == strategy_id,
+                PositionRow.status == PositionStatus.OPEN.value,
+                PositionRow.instrument != Instrument.COLLATERAL.value,
+            )
+        )
+        result = await session.execute(stmt)
+        open_positions = result.scalars().all()
+
+        spot_value = 0.0
+        perp_unrealized = 0.0
+        warned_coins: set[str] = set()
+
+        for pos in open_positions:
+            coin = pos.coin
+            instrument = Instrument(pos.instrument)
+            side = Side(pos.side)
+
+            if coin not in quotes:
+                if coin not in warned_coins:
+                    logger.warning(
+                        "compute_equity: open %s %s position for coin %r has no quote; "
+                        "contribution treated as 0",
+                        instrument.value,
+                        side.value,
+                        coin,
+                    )
+                    warned_coins.add(coin)
+                continue
+
+            quote = quotes[coin]
+
+            if instrument == Instrument.SPOT:
+                # Prefer spot price; fall back to mark
+                price = quote.spot if quote.spot is not None else quote.mark
+                spot_value += pos.qty * price
+
+            elif instrument == Instrument.PERP:
+                mark = quote.mark
+                if side == Side.LONG:
+                    perp_unrealized += (mark - pos.entry_price) * pos.qty
+                elif side == Side.SHORT:
+                    perp_unrealized += (pos.entry_price - mark) * pos.qty
+                # Side.NONE should not appear for PERP, but if it does: skip
+
+        return spot_value, perp_unrealized
+
+    async def _compute_perp_realized(
+        self,
+        session: AsyncSession,
+        strategy_id: int,
+    ) -> float:
+        """SUM realized P&L for CLOSED PERP positions linked to this strategy.
+
+        Computed from closing fills (the fill recorded when a position is
+        closed has the opposite side from the opening fill).
+
+        Implementation: SUM all fills' (signed_qty * price) for PERP positions
+        minus total fees, where sign = +1 for BUY fills, -1 for SELL fills.
+
+        Actually simpler: realized P&L = (exit_price - entry_price) * qty for
+        LONG, (entry_price - exit_price) * qty for SHORT, minus fees.
+
+        We compute this directly from the CLOSED PERP position rows using
+        stored entry_price, then look up the closing fill price per position.
+
+        Alternative (and simpler): use the 'net cash flow' approach from fills:
+            P&L = SUM over all closing fills of:
+                  fill_qty * fill_price * side_sign  - fee
+        where side_sign = +1 for sells (closing a LONG) and -1 for buys
+        (closing a SHORT).
+
+        We use the position-based approach (entry_price + closing fill price)
+        as it directly maps to the spec language.
+        """
+        # Fetch CLOSED PERP positions for this strategy
+        stmt = (
+            select(PositionRow)
+            .join(
+                FarbPositionRow,
+                PositionRow.farb_position_id == FarbPositionRow.id,
+            )
+            .where(
+                FarbPositionRow.strategy_id == strategy_id,
+                PositionRow.status == PositionStatus.CLOSED.value,
+                PositionRow.instrument == Instrument.PERP.value,
+            )
+        )
+        result = await session.execute(stmt)
+        closed_perp_positions = result.scalars().all()
+
+        total_realized = 0.0
+
+        for pos in closed_perp_positions:
+            # Find the closing fill: the fill whose side is opposite to the
+            # position's opening side.
+            # Opening LONG → closing fill side = "short"
+            # Opening SHORT → closing fill side = "long"
+            side = Side(pos.side)
+            if side == Side.LONG:
+                closing_fill_side = Side.SHORT.value
+            elif side == Side.SHORT:
+                closing_fill_side = Side.LONG.value
+            else:
+                continue  # NONE side on PERP — skip
+
+            # Aggregate closing fills for this position
+            close_fill_stmt = select(
+                func.coalesce(func.sum(FillRow.price * FillRow.qty), 0.0),
+                func.coalesce(func.sum(FillRow.qty), 0.0),
+                func.coalesce(func.sum(FillRow.fee), 0.0),
+            ).where(
+                FillRow.position_id == pos.id,
+                FillRow.side == closing_fill_side,
+            )
+            fill_result = await session.execute(close_fill_stmt)
+            price_x_qty, close_qty, close_fees = fill_result.one()
+
+            if close_qty == 0.0:
+                # No closing fill recorded — skip (shouldn't happen for CLOSED)
+                continue
+
+            avg_exit_price = price_x_qty / close_qty
+
+            if side == Side.LONG:
+                pnl = (avg_exit_price - pos.entry_price) * close_qty
+            else:  # SHORT
+                pnl = (pos.entry_price - avg_exit_price) * close_qty
+
+            total_realized += pnl - close_fees
+
+        return total_realized
+
+    async def _compute_funding_cum(
+        self,
+        session: AsyncSession,
+        strategy_id: int,
+    ) -> float:
+        """SUM of funding_accruals.amount for all positions linked to
+        this strategy (via positions.farb_position_id → farb_positions.strategy_id)."""
+        stmt = (
+            select(func.coalesce(func.sum(FundingAccrualRow.amount), 0.0))
+            .join(PositionRow, FundingAccrualRow.position_id == PositionRow.id)
+            .join(FarbPositionRow, PositionRow.farb_position_id == FarbPositionRow.id)
+            .where(FarbPositionRow.strategy_id == strategy_id)
+        )
+        result = await session.execute(stmt)
+        return float(result.scalar())
+
+    async def _compute_fees_cum(
+        self,
+        session: AsyncSession,
+        strategy_id: int,
+    ) -> float:
+        """SUM of fills.fee for all positions linked to this strategy."""
+        stmt = (
+            select(func.coalesce(func.sum(FillRow.fee), 0.0))
+            .join(PositionRow, FillRow.position_id == PositionRow.id)
+            .join(FarbPositionRow, PositionRow.farb_position_id == FarbPositionRow.id)
+            .where(FarbPositionRow.strategy_id == strategy_id)
+        )
+        result = await session.execute(stmt)
+        return float(result.scalar())
