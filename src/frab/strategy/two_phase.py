@@ -59,6 +59,7 @@ class TwoPhaseParams:
     signal_window_hours: int = 12           # rolling MA window (funding ticks)
     concurrency_cap: int = 3               # K: max simultaneous open positions
     position_size_usdc: float = 1000.0      # notional per spot leg
+    budget_cap_usdc: float = 10000.0        # max total committed capital (spot notional + margin) across open + pending FarbPositions
     margin_buffer_factor: float = 3.0       # perp margin = size/leverage * buffer
     perp_leverage: float = 5.0             # perp leverage for margin calculation
     # Two-phase exit params
@@ -75,6 +76,10 @@ class TwoPhaseParams:
     def required_margin(self) -> float:
         """USDC to transfer to perp wallet when opening a new position."""
         return (self.position_size_usdc / self.perp_leverage) * self.margin_buffer_factor
+
+    def per_position_footprint(self) -> float:
+        """Total USDC committed by one FarbPosition: spot notional + reserved margin."""
+        return self.position_size_usdc + self.required_margin()
 
 
 # ─── Strategy ────────────────────────────────────────────────────────────────
@@ -376,6 +381,21 @@ class TwoPhaseStrategy:
         slots = p.concurrency_cap - non_terminal_count
         if slots <= 0:
             return
+
+        # Budget cap: further constrain slots by available committed capital
+        footprint = p.per_position_footprint()
+        committed_usdc = non_terminal_count * footprint
+        remaining_budget = p.budget_cap_usdc - committed_usdc
+        slots_by_budget = int(remaining_budget // footprint) if footprint > 0 else 0
+        if slots_by_budget <= 0:
+            logger.info(
+                "budget_cap blocks new entries: committed=%.2f cap=%.2f remaining=%.2f",
+                committed_usdc,
+                p.budget_cap_usdc,
+                remaining_budget,
+            )
+            return
+        slots = min(slots, slots_by_budget)
 
         # Evaluate each coin for entry
         candidates: list[tuple[str, float]] = []

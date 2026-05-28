@@ -1041,3 +1041,101 @@ def test_params_required_margin():
         margin_buffer_factor=3.0,
     )
     assert params.required_margin() == pytest.approx(600.0)  # 1000/5 * 3 = 600
+
+
+def test_per_position_footprint_calculation():
+    """per_position_footprint = position_size_usdc + required_margin()."""
+    params = TwoPhaseParams(
+        position_size_usdc=1000.0,
+        perp_leverage=5.0,
+        margin_buffer_factor=3.0,
+    )
+    # footprint = 1000 + (1000/5 * 3) = 1000 + 600 = 1600
+    assert params.per_position_footprint() == pytest.approx(1600.0)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_entries_blocks_when_budget_cap_reached(
+    session_factory, farb_repo, strategy_id, exchange_id
+):
+    """Budget cap fully consumed by existing open FPs → no new FarbPositions created
+    even when concurrency_cap has room and signals qualify.
+    """
+    exchange = _make_exchange()
+    # footprint = 1000 + 600 = 1600; cap = 1600 means exactly 1 position fits.
+    # Pre-create 1 OPEN FarbPosition to consume the full budget.
+    strat = _make_strategy(
+        exchange, farb_repo, session_factory,
+        coins=["BTC", "ETH"],
+        concurrency_cap=3,          # concurrency would allow 2 more
+        signal_window_hours=3,
+        budget_cap_usdc=1600.0,     # cap = exactly 1 position footprint
+    )
+    strat.strategy_id = strategy_id
+
+    # Pre-create an OPEN position to consume the cap entirely
+    await farb_repo.create(strategy_id=strategy_id, coin="SOL",
+                           initial_state=FarbState.OPEN)
+
+    # Seed qualifying signals for BTC and ETH
+    rate_per_hour = 0.20 / 8760
+    await _seed_funding_rates(session_factory, exchange_id, "BTC", [rate_per_hour] * 3)
+    await _seed_funding_rates(session_factory, exchange_id, "ETH", [rate_per_hour] * 3)
+
+    await strat._evaluate_entries(now_ms=_NOW_MS)
+
+    from frab.db.models import FarbPosition as FarbPositionRow
+    from sqlalchemy import select as sa_select
+    async with session_scope(session_factory) as s:
+        result = await s.execute(
+            sa_select(FarbPositionRow).where(FarbPositionRow.strategy_id == strategy_id)
+        )
+        fps = result.scalars().all()
+
+    # Only the pre-existing SOL OPEN position; no new BTC/ETH ones created
+    assert len(fps) == 1
+    assert fps[0].coin == "SOL"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_entries_respects_partial_budget(
+    session_factory, farb_repo, strategy_id, exchange_id
+):
+    """Budget cap allows exactly 1 more position; 2 coins qualify → exactly 1 FP created."""
+    exchange = _make_exchange()
+    # footprint = 1600; 1 existing OPEN → committed = 1600; cap = 3200 → remaining = 1600 → 1 slot
+    strat = _make_strategy(
+        exchange, farb_repo, session_factory,
+        coins=["BTC", "ETH"],
+        concurrency_cap=5,          # concurrency would allow 4 more
+        signal_window_hours=3,
+        budget_cap_usdc=3200.0,     # cap = 2 position footprints
+    )
+    strat.strategy_id = strategy_id
+
+    # Pre-create 1 OPEN position for a different coin
+    await farb_repo.create(strategy_id=strategy_id, coin="SOL",
+                           initial_state=FarbState.OPEN)
+
+    # Both BTC and ETH qualify; BTC has stronger signal so it should be picked
+    rate_btc = 0.50 / 8760
+    rate_eth = 0.20 / 8760
+    await _seed_funding_rates(session_factory, exchange_id, "BTC", [rate_btc] * 3)
+    await _seed_funding_rates(session_factory, exchange_id, "ETH", [rate_eth] * 3)
+
+    await strat._evaluate_entries(now_ms=_NOW_MS)
+
+    from frab.db.models import FarbPosition as FarbPositionRow
+    from sqlalchemy import select as sa_select
+    async with session_scope(session_factory) as s:
+        result = await s.execute(
+            sa_select(FarbPositionRow).where(
+                FarbPositionRow.strategy_id == strategy_id,
+                FarbPositionRow.state == FarbState.CHECK_MARGIN.value,
+            )
+        )
+        new_fps = result.scalars().all()
+
+    # Exactly 1 new FP created (budget limited), and it must be BTC (stronger signal)
+    assert len(new_fps) == 1
+    assert new_fps[0].coin == "BTC"
