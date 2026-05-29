@@ -696,6 +696,48 @@ class HLExchange:
         return total
 
     # ------------------------------------------------------------------
+    # Spot mids from HL (authoritative spot prices in USDC)
+    # ------------------------------------------------------------------
+
+    async def get_spot_mids_by_coin(self) -> dict[str, float]:
+        """Return {canonical_coin: spot_mid_USDC} for spot pairs we support.
+
+        Uses HL allMids: keys like "@142" identify spot pairs; we resolve them
+        to "UBTC/USDC", "UETH/USDC", "USOL/USDC" via the spot index map and
+        map the wrapped base back to the canonical perp coin (UBTC→BTC, etc.).
+        Missing/unknown pairs are skipped silently.
+        """
+        try:
+            mids = await self._post({"type": "allMids"})
+        except Exception as exc:
+            logger.warning("get_spot_mids_by_coin: allMids failed: %s", exc)
+            return {}
+        if not isinstance(mids, dict):
+            return {}
+        await self._load_spot_idx_map()
+        idx_to_name = self._spot_idx_to_name or {}
+        out: dict[str, float] = {}
+        for key, val in mids.items():
+            if not key.startswith("@"):
+                continue
+            try:
+                idx = int(key[1:])
+            except ValueError:
+                continue
+            name = idx_to_name.get(idx)
+            if not name or "/" not in name:
+                continue
+            wrapped = name.split("/")[0]
+            canonical = _SPOT_TOKEN_INVERSE.get(wrapped)
+            if canonical is None:
+                continue
+            try:
+                out[canonical] = float(val)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    # ------------------------------------------------------------------
     # Perp unrealized PnL from HL (authoritative)
     # ------------------------------------------------------------------
 

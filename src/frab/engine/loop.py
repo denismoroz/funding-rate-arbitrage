@@ -155,19 +155,28 @@ class EngineLoop:
         await self._strategy.on_minute_tick(now_ms=now_ms)
 
         quote_map = {q.coin: q for q in quotes}
-        # Pull authoritative unrealized PnL from the exchange when available
-        # (HL: assetPositions[].unrealizedPnl). Fallback handled by Ledger.
+        # Pull authoritative state from the exchange when available
+        # (HL: assetPositions[].unrealizedPnl + allMids for spot pairs).
+        # Ledger falls back to local computation if either is missing.
         perp_unrealized_by_coin: dict[str, float] | None = None
-        getter = getattr(self._exchange, "get_perp_unrealized_by_coin", None)
-        if getter is not None:
+        spot_mids_by_coin: dict[str, float] | None = None
+        perp_getter = getattr(self._exchange, "get_perp_unrealized_by_coin", None)
+        if perp_getter is not None:
             try:
-                perp_unrealized_by_coin = await getter()
+                perp_unrealized_by_coin = await perp_getter()
             except Exception as exc:  # noqa: BLE001
                 await self._log_error("perp_unrealized_fetch_failed", exc)
+        spot_getter = getattr(self._exchange, "get_spot_mids_by_coin", None)
+        if spot_getter is not None:
+            try:
+                spot_mids_by_coin = await spot_getter()
+            except Exception as exc:  # noqa: BLE001
+                await self._log_error("spot_mids_fetch_failed", exc)
         await self._ledger.compute_and_save(
             self._strategy.strategy_id,
             quote_map,
             perp_unrealized_by_coin=perp_unrealized_by_coin,
+            spot_mids_by_coin=spot_mids_by_coin,
         )
 
     # ── Hour tick ─────────────────────────────────────────────────────────────

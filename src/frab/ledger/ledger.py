@@ -84,6 +84,7 @@ class Ledger:
         quotes: dict[str, Quote],
         *,
         perp_unrealized_by_coin: dict[str, float] | None = None,
+        spot_mids_by_coin: dict[str, float] | None = None,
     ) -> EquitySnapshot:
         """Compute equity snapshot from DB + quotes.  Read-only — no DB writes.
 
@@ -114,6 +115,7 @@ class Ledger:
             spot_value, perp_unrealized = await self._compute_position_values(
                 session, strategy_id, quotes,
                 perp_unrealized_by_coin=perp_unrealized_by_coin,
+                spot_mids_by_coin=spot_mids_by_coin,
             )
             perp_realized_cum = await self._compute_perp_realized(session, strategy_id)
             funding_cum = await self._compute_funding_cum(session, strategy_id)
@@ -168,11 +170,13 @@ class Ledger:
         quotes: dict[str, Quote],
         *,
         perp_unrealized_by_coin: dict[str, float] | None = None,
+        spot_mids_by_coin: dict[str, float] | None = None,
     ) -> EquitySnapshot:
         """Convenience: compute then save.  Returns the snapshot."""
         snapshot = await self.compute_equity(
             strategy_id, quotes,
             perp_unrealized_by_coin=perp_unrealized_by_coin,
+            spot_mids_by_coin=spot_mids_by_coin,
         )
         await self.save_snapshot(snapshot)
         return snapshot
@@ -229,6 +233,7 @@ class Ledger:
         quotes: dict[str, Quote],
         *,
         perp_unrealized_by_coin: dict[str, float] | None = None,
+        spot_mids_by_coin: dict[str, float] | None = None,
     ) -> tuple[float, float]:
         """Return (spot_value, perp_unrealized) for all OPEN positions
         linked to this strategy via farb_positions.
@@ -279,8 +284,13 @@ class Ledger:
             quote = quotes[coin]
 
             if instrument == Instrument.SPOT:
-                # Prefer spot price; fall back to mark
-                price = quote.spot if quote.spot is not None else quote.mark
+                # Prefer authoritative HL spot mid, then quote.spot, then mark.
+                if spot_mids_by_coin is not None and coin in spot_mids_by_coin:
+                    price = spot_mids_by_coin[coin]
+                elif quote.spot is not None:
+                    price = quote.spot
+                else:
+                    price = quote.mark
                 spot_value += pos.qty * price
 
             elif instrument == Instrument.PERP:
