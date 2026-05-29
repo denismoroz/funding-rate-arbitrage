@@ -170,19 +170,30 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
       </nav>
 
       {strategy && (
-        <span className="inline-flex items-center rounded-full bg-indigo-700 px-2.5 py-0.5 text-xs font-medium text-white">
-          {strategy.name} {strategy.version} ·&nbsp;
-          <span className={strategy.status === "paused" ? "text-amber-300" : "text-white"}>
-            {strategy.status}
-          </span>
+        <span className="inline-flex items-center gap-2 text-xs font-medium text-white">
+          <span className="text-gray-200">{strategy.name} {strategy.version}</span>
+          <span className="text-gray-500">·</span>
           <button
             type="button"
-            className="ml-1.5 px-1.5 py-0 rounded bg-indigo-900 hover:bg-indigo-800 text-white text-[10px] leading-tight disabled:opacity-50"
+            role="switch"
+            aria-checked={strategy.status === "active"}
             disabled={toggleMutation.isPending}
             onClick={() => toggleMutation.mutate()}
             title={strategy.status === "paused" ? "Resume strategy" : "Pause strategy"}
+            className={[
+              "relative inline-flex h-[22px] w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent",
+              "transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/75",
+              strategy.status === "active" ? "bg-emerald-500" : "bg-slate-600",
+              toggleMutation.isPending ? "opacity-50 cursor-not-allowed" : "",
+            ].join(" ")}
           >
-            {toggleMutation.isPending ? "…" : strategy.status === "paused" ? "▶" : "⏸"}
+            <span
+              className={[
+                "pointer-events-none inline-block h-[18px] w-[18px] rounded-full bg-white shadow-sm",
+                "transform transition-transform duration-200",
+                strategy.status === "active" ? "translate-x-[18px]" : "translate-x-0",
+              ].join(" ")}
+            />
           </button>
         </span>
       )}
