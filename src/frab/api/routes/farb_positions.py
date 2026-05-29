@@ -96,6 +96,7 @@ def _fp_to_dict(
     hours_held: float | None,
     unrealized_pnl: float | None,
     margin_used_by_coin: dict[str, float] | None = None,
+    leverage_by_coin: dict[str, int] | None = None,
 ) -> dict:
     """Serialize a FarbPositionRow to the response shape."""
     sd = fp.state_data or {}
@@ -129,6 +130,24 @@ def _fp_to_dict(
     if is_open and margin_used_by_coin is not None:
         locked_margin = margin_used_by_coin.get(fp.coin, 0.0)
 
+    # leverage: use live HL value for OPEN positions; fall back to state_data
+    # historical record for CLOSED/FAILED (what was set at open time).
+    if is_open and leverage_by_coin is not None:
+        leverage = leverage_by_coin.get(fp.coin)
+    else:
+        leverage = sd.get("leverage")
+
+    # capital_usdc: spot leg value (entry_price basis) + reserved margin.
+    # Answers "how much capital does this position occupy" without mark drift.
+    spot_leg = legs.get("spot")
+    spot_value = (
+        float(spot_leg["qty"]) * float(spot_leg["entry_price"])
+        if spot_leg and spot_leg.get("qty") is not None and spot_leg.get("entry_price") is not None
+        else 0.0
+    )
+    reserved = float(sd.get("required_margin") or 0)
+    capital_usdc = spot_value + reserved
+
     return {
         "id": fp.id,
         "strategy_id": fp.strategy_id,
@@ -148,7 +167,8 @@ def _fp_to_dict(
         "fees_usdc": fees_usdc,
         "breakeven_hours_remaining": breakeven_hours,
         "locked_margin_usdc": locked_margin,
-        "leverage": sd.get("leverage"),
+        "leverage": leverage,
+        "capital_usdc": capital_usdc,
     }
 
 
@@ -156,6 +176,7 @@ async def _enrich(
     session: AsyncSession,
     fp: FarbPositionRow,
     margin_used_by_coin: dict[str, float] | None = None,
+    leverage_by_coin: dict[str, int] | None = None,
 ) -> dict:
     """Load legs + compute hours_held + compute unrealized PnL for a single FarbPositionRow."""
     collateral = await _load_leg(session, fp.margin_position_id)
@@ -171,7 +192,7 @@ async def _enrich(
 
     unrealized_pnl = await _compute_unrealized_pnl(session, fp, spot, perp)
 
-    return _fp_to_dict(fp, legs, hours_held, unrealized_pnl, margin_used_by_coin)
+    return _fp_to_dict(fp, legs, hours_held, unrealized_pnl, margin_used_by_coin, leverage_by_coin)
 
 
 @router.get("")
@@ -214,8 +235,9 @@ async def list_farb_positions(
     result = await session.execute(stmt)
     rows = result.scalars().all()
 
-    # Fetch HL margin data once per request (best-effort; falls back to empty)
+    # Fetch HL account state once per request (best-effort; falls back to empty)
     margin_used_by_coin: dict[str, float] = {}
+    leverage_by_coin: dict[str, int] = {}
     exchange = getattr(request.app.state, "exchange", None)
     if exchange is not None:
         try:
@@ -232,8 +254,14 @@ async def list_farb_positions(
                 continue
             if coin:
                 margin_used_by_coin[coin] = m
+            lev = (p.get("leverage") or {}).get("value")
+            if coin and lev is not None:
+                try:
+                    leverage_by_coin[coin] = int(lev)
+                except (TypeError, ValueError):
+                    pass
 
-    return [await _enrich(session, fp, margin_used_by_coin) for fp in rows]
+    return [await _enrich(session, fp, margin_used_by_coin, leverage_by_coin) for fp in rows]
 
 
 @router.get("/{farb_position_id}")
@@ -246,8 +274,9 @@ async def get_farb_position(
     if fp is None:
         raise HTTPException(status_code=404, detail="FarbPosition not found")
 
-    # Fetch HL margin data best-effort for single FP
+    # Fetch HL account state best-effort for single FP
     margin_used_by_coin: dict[str, float] = {}
+    leverage_by_coin: dict[str, int] = {}
     exchange = getattr(request.app.state, "exchange", None)
     if exchange is not None:
         try:
@@ -264,5 +293,11 @@ async def get_farb_position(
                 continue
             if coin:
                 margin_used_by_coin[coin] = m
+            lev = (p.get("leverage") or {}).get("value")
+            if coin and lev is not None:
+                try:
+                    leverage_by_coin[coin] = int(lev)
+                except (TypeError, ValueError):
+                    pass
 
-    return await _enrich(session, fp, margin_used_by_coin)
+    return await _enrich(session, fp, margin_used_by_coin, leverage_by_coin)

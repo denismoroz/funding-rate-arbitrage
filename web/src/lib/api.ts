@@ -102,6 +102,7 @@ export type FarbPosition = {
   breakeven_hours_remaining: number | null;
   locked_margin_usdc: number;
   leverage: number | null;
+  capital_usdc: number;
 };
 
 export type FundingRate = {

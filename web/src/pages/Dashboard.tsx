@@ -482,7 +482,9 @@ function FarbPositionCard({
   now: number;
   onSelect: (fp: FarbPosition) => void;
 }) {
-  const leverage = p.leverage ?? (typeof p.state_data?.leverage === "number" ? p.state_data.leverage : null);
+  const [expanded, setExpanded] = useState(false);
+
+  const leverage = p.leverage;
 
   const pnlColor =
     p.unrealized_pnl_usdc == null
@@ -501,13 +503,17 @@ function FarbPositionCard({
     p.legs.collateral ? p.legs.collateral.qty : null;
 
   return (
-    <div
-      className="rounded-lg border border-gray-200 bg-white shadow-sm cursor-pointer hover:border-gray-300"
-      onClick={() => onSelect(p)}
-      title="Click to see funding history"
-    >
-      {/* ── Card header strip ─────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-gray-100 bg-gray-50 px-3 py-2 rounded-t-lg">
+    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+      {/* ── Header strip — always visible, click to expand ─── */}
+      <div
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-lg cursor-pointer hover:bg-gray-50"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {/* chevron */}
+        <span className="text-gray-400 text-[10px] select-none w-3 shrink-0">
+          {expanded ? "▼" : "▶"}
+        </span>
+
         {/* coin + state + held + leverage */}
         <span className="font-semibold text-gray-900 text-sm">{p.coin}</span>
         <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-indigo-700">
@@ -525,26 +531,15 @@ function FarbPositionCard({
           </span>
         )}
 
+        {/* capital */}
+        {p.capital_usdc > 0 && (
+          <span className="font-semibold text-gray-800 text-xs">
+            cap {formatCurrency(p.capital_usdc)}
+          </span>
+        )}
+
         {/* spacer */}
         <span className="flex-1" />
-
-        {/* signal APRs */}
-        <span className="text-xs">
-          <span className="text-gray-400">target </span>
-          <span className="text-indigo-600">
-            {p.target_signal_apr != null ? `${formatNumber(p.target_signal_apr * 100, 2)}%` : "—"}
-          </span>
-          <span className="text-gray-400 mx-1">/</span>
-          <span className="text-gray-400">exit </span>
-          <span className="text-rose-500">
-            {p.exit_signal_apr != null ? `${formatNumber(p.exit_signal_apr * 100, 2)}%` : "—"}
-          </span>
-          <span className="text-gray-400 mx-1">/</span>
-          <span className="text-gray-400">now </span>
-          <span className="text-emerald-600">
-            {p.current_signal_apr != null ? `${formatNumber(p.current_signal_apr * 100, 2)}%` : "—"}
-          </span>
-        </span>
 
         {/* pnl + funding + fees + break-even */}
         <span className={`font-mono text-xs ${pnlColor}`}>
@@ -573,80 +568,124 @@ function FarbPositionCard({
         )}
       </div>
 
-      {/* ── Inner leg table ──────────────────────────────────── */}
-      <div className="px-3 py-2">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-gray-100 text-left text-[11px] text-gray-400">
-              <th className="pb-1 pr-3 font-medium">Leg</th>
-              <th className="pb-1 pr-3 text-right font-medium">Qty</th>
-              <th className="pb-1 pr-3 text-right font-medium">Entry</th>
-              <th className="pb-1 pr-3 text-right font-medium">Value</th>
-              <th className="pb-1 font-medium">Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {/* spot long */}
-            <tr className="border-t border-gray-50">
-              <td className="py-0.5 pr-3">
-                <span className="text-indigo-500 font-medium">long</span>
-                <span className="text-gray-400 ml-1">spot</span>
-              </td>
-              <td className="py-0.5 pr-3 text-right font-mono text-gray-700">
-                {p.legs.spot ? formatQty(p.legs.spot.qty) : "—"}
-              </td>
-              <td className="py-0.5 pr-3 text-right text-gray-500">
-                {p.legs.spot ? formatCurrency(p.legs.spot.entry_price) : "—"}
-              </td>
-              <td className="py-0.5 pr-3 text-right text-gray-700">
-                {spotValue != null ? formatCurrency(spotValue) : "—"}
-              </td>
-              <td className="py-0.5 text-gray-400" />
-            </tr>
-
-            {/* perp short */}
-            <tr className="border-t border-gray-50">
-              <td className="py-0.5 pr-3">
-                <span className="text-rose-500 font-medium">short</span>
-                <span className="text-gray-400 ml-1">perp</span>
-              </td>
-              <td className="py-0.5 pr-3 text-right font-mono text-gray-700">
-                {p.legs.perp ? formatQty(p.legs.perp.qty) : "—"}
-              </td>
-              <td className="py-0.5 pr-3 text-right text-gray-500">
-                {p.legs.perp ? formatCurrency(p.legs.perp.entry_price) : "—"}
-              </td>
-              <td className="py-0.5 pr-3 text-right text-gray-700">
-                {perpValue != null ? formatCurrency(perpValue) : "—"}
-              </td>
-              <td className="py-0.5 text-gray-500 text-[11px]">
-                {leverage != null && (
-                  <span className="mr-2">leverage {leverage}×</span>
+      {/* ── Expanded: APR sub-line + leg table ───────────────── */}
+      {expanded && (
+        <div className="border-t border-gray-100 px-3 py-2">
+          {/* APR triplet sub-line */}
+          <p className="mb-2 text-xs text-gray-500">
+            <span className="text-gray-400">target </span>
+            <span className="text-indigo-600">
+              {p.target_signal_apr != null ? `${formatNumber(p.target_signal_apr * 100, 2)}%` : "—"}
+            </span>
+            <span className="text-gray-400 mx-1">/</span>
+            <span className="text-gray-400">exit </span>
+            <span className="text-rose-500">
+              {p.exit_signal_apr != null ? `${formatNumber(p.exit_signal_apr * 100, 2)}%` : "—"}
+            </span>
+            <span className="text-gray-400 mx-1">/</span>
+            <span className="text-gray-400">now </span>
+            <span className="text-emerald-600">
+              {p.current_signal_apr != null ? `${formatNumber(p.current_signal_apr * 100, 2)}%` : "—"}
+            </span>
+            {p.breakeven_hours_remaining != null && (
+              <>
+                <span className="text-gray-400 mx-1">·</span>
+                <span className="text-gray-400">BE </span>
+                {p.breakeven_hours_remaining <= 0 ? (
+                  <span className="text-green-600 font-semibold">done</span>
+                ) : (
+                  <span className="text-gray-700">{formatNumber(p.breakeven_hours_remaining, 1)}h</span>
                 )}
-                {p.locked_margin_usdc > 0 && (
-                  <span>locked {formatCurrency(p.locked_margin_usdc)}</span>
-                )}
-              </td>
-            </tr>
+              </>
+            )}
+            <span className="text-gray-400 mx-1">·</span>
+            <span className="text-gray-400">consec_neg </span>
+            <span className="text-gray-700">{p.consec_negative_hours ?? 0}</span>
+          </p>
 
-            {/* collateral / margin */}
-            <tr className="border-t border-gray-50">
-              <td className="py-0.5 pr-3">
-                <span className="text-sky-500 font-medium">margin</span>
-                <span className="text-gray-400 ml-1">usdc</span>
-              </td>
-              <td className="py-0.5 pr-3 text-right font-mono text-gray-700">
-                {p.legs.collateral ? formatCurrency(p.legs.collateral.qty) : "—"}
-              </td>
-              <td className="py-0.5 pr-3 text-right text-gray-400">$1.00</td>
-              <td className="py-0.5 pr-3 text-right text-gray-700">
-                {collateralValue != null ? formatCurrency(collateralValue) : "—"}
-              </td>
-              <td className="py-0.5 text-gray-400 text-[11px]">reserved buffer</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+          {/* Leg table */}
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-100 text-left text-[11px] text-gray-400">
+                <th className="pb-1 pr-3 font-medium">Leg</th>
+                <th className="pb-1 pr-3 text-right font-medium">Qty</th>
+                <th className="pb-1 pr-3 text-right font-medium">Entry</th>
+                <th className="pb-1 pr-3 text-right font-medium">Value</th>
+                <th className="pb-1 font-medium">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* spot long */}
+              <tr className="border-t border-gray-50">
+                <td className="py-0.5 pr-3">
+                  <span className="text-indigo-500 font-medium">long</span>
+                  <span className="text-gray-400 ml-1">spot</span>
+                </td>
+                <td className="py-0.5 pr-3 text-right font-mono text-gray-700">
+                  {p.legs.spot ? formatQty(p.legs.spot.qty) : "—"}
+                </td>
+                <td className="py-0.5 pr-3 text-right text-gray-500">
+                  {p.legs.spot ? formatCurrency(p.legs.spot.entry_price) : "—"}
+                </td>
+                <td className="py-0.5 pr-3 text-right text-gray-700">
+                  {spotValue != null ? formatCurrency(spotValue) : "—"}
+                </td>
+                <td className="py-0.5 text-gray-400" />
+              </tr>
+
+              {/* perp short */}
+              <tr className="border-t border-gray-50">
+                <td className="py-0.5 pr-3">
+                  <span className="text-rose-500 font-medium">short</span>
+                  <span className="text-gray-400 ml-1">perp</span>
+                </td>
+                <td className="py-0.5 pr-3 text-right font-mono text-gray-700">
+                  {p.legs.perp ? formatQty(p.legs.perp.qty) : "—"}
+                </td>
+                <td className="py-0.5 pr-3 text-right text-gray-500">
+                  {p.legs.perp ? formatCurrency(p.legs.perp.entry_price) : "—"}
+                </td>
+                <td className="py-0.5 pr-3 text-right text-gray-700">
+                  {perpValue != null ? formatCurrency(perpValue) : "—"}
+                </td>
+                <td className="py-0.5 text-gray-500 text-[11px]">
+                  {leverage != null && (
+                    <span className="mr-2">leverage {leverage}×</span>
+                  )}
+                  {p.locked_margin_usdc > 0 && (
+                    <span>locked {formatCurrency(p.locked_margin_usdc)}</span>
+                  )}
+                </td>
+              </tr>
+
+              {/* collateral / margin */}
+              <tr className="border-t border-gray-50">
+                <td className="py-0.5 pr-3">
+                  <span className="text-sky-500 font-medium">margin</span>
+                  <span className="text-gray-400 ml-1">usdc</span>
+                </td>
+                <td className="py-0.5 pr-3 text-right font-mono text-gray-700">
+                  {p.legs.collateral ? formatCurrency(p.legs.collateral.qty) : "—"}
+                </td>
+                <td className="py-0.5 pr-3 text-right text-gray-400">$1.00</td>
+                <td className="py-0.5 pr-3 text-right text-gray-700">
+                  {collateralValue != null ? formatCurrency(collateralValue) : "—"}
+                </td>
+                <td className="py-0.5 text-gray-400 text-[11px]">reserved buffer</td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* Funding history trigger */}
+          <button
+            type="button"
+            className="mt-2 text-[11px] text-indigo-500 hover:text-indigo-700 underline"
+            onClick={(e) => { e.stopPropagation(); onSelect(p); }}
+          >
+            funding history ↗
+          </button>
+        </div>
+      )}
     </div>
   );
 }
