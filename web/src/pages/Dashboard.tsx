@@ -515,11 +515,11 @@ function OpenFarbPositions() {
                       ? `${formatNumber(p.target_signal_apr * 100, 2)}%`
                       : "—"}
                   </td>
-                  <td className="py-1 pr-3 text-right text-green-600">
-                    {formatCurrencyPrecise(p.funding_usdc)}
+                  <td className="py-1 pr-3 text-right text-green-600 font-mono">
+                    ${p.funding_usdc.toFixed(6)}
                   </td>
-                  <td className="py-1 pr-3 text-right text-gray-500">
-                    {formatCurrencyPrecise(p.fees_usdc)}
+                  <td className="py-1 pr-3 text-right text-gray-500 font-mono">
+                    ${p.fees_usdc.toFixed(6)}
                   </td>
                   <td className="py-1 pr-3 text-right">
                     {p.breakeven_hours_remaining == null ? (
