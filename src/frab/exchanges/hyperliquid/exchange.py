@@ -30,6 +30,7 @@ from frab.db.models import (
 )
 from frab.db.session import session_scope
 from frab.domain import Instrument, Position, PositionStatus, Side
+from frab.exchanges.hyperliquid.actions.open_position import OpenPositionAction, PartialFillError
 from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
 from frab.exchanges.hyperliquid.symbols import HLSymbols, SPOT_TOKEN_INVERSE
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
@@ -44,7 +45,7 @@ from frab.exchanges.protocol import (
 
 logger = logging.getLogger(__name__)
 
-# Re-export so existing importers of HLTransferError from exchange.py still work.
+# Re-export so existing importers of HLTransferError / PartialFillError from exchange.py still work.
 __all__ = ["HLExchange", "HLTransferError", "PartialFillError", "BRIDGE_TOKEN_BLACKLIST", "SPOT_TOKEN_INVERSE"]
 
 # Backward-compat alias: code that imported _SPOT_TOKEN_INVERSE from exchange.py keeps working.
@@ -71,19 +72,6 @@ def _base_url(network: Literal["testnet", "mainnet"]) -> str:
     if network == "mainnet":
         return constants.MAINNET_API_URL
     raise ValueError(f"unsupported network: {network!r}")
-
-
-class PartialFillError(RuntimeError):
-    """Raised when HL filled less than the requested qty beyond tolerance."""
-
-    def __init__(self, requested_qty: float, filled_qty: float, fill_price: float) -> None:
-        super().__init__(
-            f"partial fill: requested {requested_qty}, filled {filled_qty} "
-            f"({filled_qty / requested_qty * 100:.1f}%)"
-        )
-        self.requested_qty = requested_qty
-        self.filled_qty = filled_qty
-        self.fill_price = fill_price
 
 
 class HLExchange:
@@ -155,6 +143,20 @@ class HLExchange:
         self._slippage = slippage
         self._partial_fill_tolerance = partial_fill_tolerance
         self._clock_fn = clock_fn if clock_fn is not None else lambda: datetime.now(UTC)
+
+        if session_factory is not None:
+            self._open_action: OpenPositionAction | None = OpenPositionAction(
+                client=self._hl_client,
+                symbols=self._symbols,
+                session_factory=session_factory,
+                exchange_name=self.name,
+                address=self._address,
+                slippage=self._slippage,
+                partial_fill_tolerance=self._partial_fill_tolerance,
+                clock_fn=self._clock_fn,
+            )
+        else:
+            self._open_action = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -270,117 +272,9 @@ class HLExchange:
 
     async def open_position(self, req: OpenRequest) -> Position:
         """Open a position on HL and write it to DB. Returns domain Position."""
-        now = self._clock_fn()
-        now_ms = _dt_to_ms(now)
-
-        if req.instrument == Instrument.COLLATERAL:
-            # HL cross-margin reserves spot USDC automatically when the perp
-            # leg is opened — no spot→perp transfer needed. We still record a
-            # COLLATERAL Position row so the FP has a tracked margin obligation
-            # (qty = USDC reserved; entry_price = 1.0).
-            if self._session_factory is None:
-                raise RuntimeError("session_factory required for open_position")
-            async with session_scope(self._session_factory) as s:
-                exchange_id = await self._get_exchange_id(s)
-                row = DBPosition(
-                    exchange_id=exchange_id,
-                    coin=req.coin,
-                    instrument=Instrument.COLLATERAL.value,
-                    side=Side.NONE.value,
-                    qty=req.qty,
-                    entry_price=1.0,
-                    opened_at=now_ms,
-                    closed_at=None,
-                    status=PositionStatus.OPEN.value,
-                    farb_position_id=req.farb_position_id,
-                )
-                s.add(row)
-                await s.flush()
-                pos = self._db_pos_to_domain(row)
-            return pos
-
-        # SPOT or PERP
-        self._require_exchange()
-
-        # Floor qty to coin's szDecimals
-        wire_qty = await self.round_qty(req.coin, req.qty)
-        if wire_qty <= 0:
-            raise RuntimeError(
-                f"qty {req.qty} rounds to 0 at szDecimals for coin={req.coin}"
-            )
-
-        if req.instrument == Instrument.SPOT:
-            is_buy = req.side == Side.LONG
-            spot_name = self._symbols.make_spot_name(req.coin)
-            order_resp = await self._hl_client.market_open(spot_name, is_buy, wire_qty, self._slippage)
-        else:  # PERP
-            if req.leverage is not None:
-                await self._set_leverage(req.coin, req.leverage)
-            is_buy = req.side == Side.LONG
-            order_resp = await self._hl_client.market_open(req.coin, is_buy, wire_qty, self._slippage)
-
-        status0 = order_resp.first
-
-        if status0.filled is not None:
-            filled = status0.filled
-            qty_filled = filled.qty
-            fill_price = filled.price
-            oid = filled.oid
-            taker = SPOT_TAKER if req.instrument == Instrument.SPOT else PERP_TAKER
-            estimate = qty_filled * fill_price * taker
-            if filled.fee_usdc is not None:
-                fee = filled.fee_usdc
-            else:
-                real_fee = (
-                    await self._fetch_real_fee_usdc(oid, since_ms=now_ms - 5_000)
-                    if oid else None
-                )
-                fee = real_fee if real_fee is not None else estimate
-        elif status0.error is not None:
-            raise RuntimeError(f"HL order error: {status0.error!r}")
-        elif status0.resting_oid is not None:
-            raise RuntimeError(f"HL market order unexpectedly resting: oid={status0.resting_oid!r}")
-        else:
-            raise RuntimeError(f"HL order unrecognized status: {status0!r}")
-
-        if qty_filled < wire_qty * (1 - self._partial_fill_tolerance):
-            raise PartialFillError(
-                requested_qty=wire_qty,
-                filled_qty=qty_filled,
-                fill_price=fill_price,
-            )
-
-        if self._session_factory is None:
+        if self._open_action is None:
             raise RuntimeError("session_factory required for open_position")
-        async with session_scope(self._session_factory) as s:
-            exchange_id = await self._get_exchange_id(s)
-            row = DBPosition(
-                exchange_id=exchange_id,
-                coin=req.coin,
-                instrument=req.instrument.value,
-                side=req.side.value,
-                qty=qty_filled,
-                entry_price=fill_price,
-                opened_at=now_ms,
-                closed_at=None,
-                status=PositionStatus.OPEN.value,
-                farb_position_id=req.farb_position_id,
-            )
-            s.add(row)
-            await s.flush()
-            fill_row = DBFill(
-                position_id=row.id,
-                ts_ms=now_ms,
-                side=req.side.value,
-                qty=qty_filled,
-                price=fill_price,
-                fee=fee,
-                slippage_bps=self._slippage * 1e4,
-                is_paper=False,
-            )
-            s.add(fill_row)
-            pos = self._db_pos_to_domain(row)
-        return pos
+        return await self._open_action.execute(req)
 
     # ------------------------------------------------------------------
     # Protocol: close_position
@@ -715,41 +609,17 @@ class HLExchange:
         attempts: int = 3,
         sleep_s: float = 0.5,
     ) -> float | None:
-        """Look up the fee for a specific oid from HL userFillsByTime."""
-        address = self._require_address()
-        end_ms = _dt_to_ms(self._clock_fn()) + 60_000
-        for i in range(attempts):
-            try:
-                fills = await self._hl_client.user_fills_by_time(address, since_ms, end_ms)
-            except Exception as exc:
-                logger.warning("user_fills_by_time failed (attempt %d): %s", i + 1, exc)
-                fills = []
-            match = self._match_hl_fill_by_oid(fills, oid)
-            if match is not None:
-                fee_raw = match.fee_raw
-                fee_token = match.fee_token
-                if fee_token in ("USDC", "USD"):
-                    return fee_raw
-                px = match.px
-                if fee_token in SPOT_TOKEN_INVERSE and px > 0:
-                    return fee_raw * px
-                logger.warning(
-                    "unknown feeToken %r oid=%s — skipping conversion", fee_token, oid
-                )
-                return fee_raw
-            if i + 1 < attempts:
-                await asyncio.sleep(sleep_s)
-        logger.warning("fee for oid=%s not found in userFillsByTime after %d attempts",
-                       oid, attempts)
-        return None
-
-    @staticmethod
-    def _match_hl_fill_by_oid(fills: list[HLUserFill], oid: int) -> HLUserFill | None:
-        """Find an HLUserFill by oid."""
-        for f in fills:
-            if f.oid == oid:
-                return f
-        return None
+        """Delegate to the stateless fee-lookup helper in actions._fees."""
+        from frab.exchanges.hyperliquid.actions._fees import fetch_real_fee_usdc
+        return await fetch_real_fee_usdc(
+            client=self._hl_client,
+            address=self._require_address(),
+            oid=oid,
+            since_ms=since_ms,
+            clock_fn=self._clock_fn,
+            attempts=attempts,
+            sleep_s=sleep_s,
+        )
 
     async def backfill_fill_fees(self, strategy_id: int) -> int:
         """Update DB fills whose fee == 0 with the real fee from HL userFills."""
