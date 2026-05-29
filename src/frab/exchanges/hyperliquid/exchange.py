@@ -27,6 +27,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from frab.constants import PERP_TAKER, SPOT_TAKER
 from frab.db.models import (
     Exchange as DBExchange,
     Fill as DBFill,
@@ -425,10 +426,17 @@ class HLExchange:
             filled = status0["filled"]
             qty_filled = float(filled["totalSz"])
             fill_price = float(filled["avgPx"])
-            # HL market_open response doesn't include fee; estimate from the
-            # taker rate (matches actual within ~1% absent tier discounts).
+            oid = int(filled.get("oid", 0)) or None
             taker = SPOT_TAKER if req.instrument == Instrument.SPOT else PERP_TAKER
-            fee = float(filled.get("fee", qty_filled * fill_price * taker))
+            estimate = qty_filled * fill_price * taker
+            if "fee" in filled:
+                fee = float(filled["fee"])
+            else:
+                real_fee = (
+                    await self._fetch_real_fee_usdc(oid, since_ms=now_ms - 5_000)
+                    if oid else None
+                )
+                fee = real_fee if real_fee is not None else estimate
         elif "error" in status0:
             raise RuntimeError(f"HL order error: {status0['error']!r}")
         elif "resting" in status0:
@@ -523,9 +531,17 @@ class HLExchange:
             filled = status0["filled"]
             qty_filled = float(filled["totalSz"])
             fill_price = float(filled["avgPx"])
-            # HL response omits fee; estimate from taker rate per leg.
+            oid = int(filled.get("oid", 0)) or None
             taker = SPOT_TAKER if pos.instrument == Instrument.SPOT else PERP_TAKER
-            fee = float(filled.get("fee", qty_filled * fill_price * taker))
+            estimate = qty_filled * fill_price * taker
+            if "fee" in filled:
+                fee = float(filled["fee"])
+            else:
+                real_fee = (
+                    await self._fetch_real_fee_usdc(oid, since_ms=now_ms - 5_000)
+                    if oid else None
+                )
+                fee = real_fee if real_fee is not None else estimate
         elif "error" in status0:
             raise RuntimeError(f"HL close error: {status0['error']!r}")
         else:
@@ -678,6 +694,153 @@ class HLExchange:
             total = sum(row for (row,) in result.all())
 
         return total
+
+    # ------------------------------------------------------------------
+    # Fees from HL userFills (authoritative)
+    # ------------------------------------------------------------------
+
+    async def _fetch_real_fee_usdc(
+        self,
+        oid: int,
+        *,
+        since_ms: int,
+        attempts: int = 3,
+        sleep_s: float = 0.5,
+    ) -> float | None:
+        """Look up the fee for a specific oid from HL userFillsByTime.
+
+        Returns the fee converted to USDC (multiplies wrapped-token fees by the
+        fill price). Returns None if the fill has not appeared after `attempts`
+        polls — caller should fall back to a taker-rate estimate.
+        """
+        address = self._require_address()
+        end_ms = _dt_to_ms(self._clock_fn()) + 60_000
+        for i in range(attempts):
+            try:
+                fills = await asyncio.to_thread(
+                    self._info.user_fills_by_time, address, since_ms, end_ms
+                )
+            except Exception as exc:
+                logger.warning("user_fills_by_time failed (attempt %d): %s", i + 1, exc)
+                fills = []
+            if not isinstance(fills, list):
+                return None
+            for f in fills:
+                if not isinstance(f, dict) or int(f.get("oid", 0)) != oid:
+                    continue
+                fee_raw = float(f.get("fee", 0))
+                fee_token = str(f.get("feeToken") or "USDC").upper()
+                if fee_token in ("USDC", "USD"):
+                    return fee_raw
+                # Wrapped spot tokens: fee is in the base asset; convert to USDC
+                # using the fill price (px is in USDC per base unit).
+                px = float(f.get("px", 0))
+                if fee_token in _SPOT_TOKEN_INVERSE and px > 0:
+                    return fee_raw * px
+                logger.warning(
+                    "unknown feeToken %r oid=%s — skipping conversion", fee_token, oid
+                )
+                return fee_raw
+            if i + 1 < attempts:
+                await asyncio.sleep(sleep_s)
+        logger.warning("fee for oid=%s not found in userFillsByTime after %d attempts",
+                       oid, attempts)
+        return None
+
+    async def backfill_fill_fees(self, strategy_id: int) -> int:
+        """Update DB fills whose fee == 0 with the real fee from HL userFills.
+
+        Matches HL fills to DB fills by (coin canonical, ts_ms ± 30s, qty, side).
+        Returns the number of rows updated. Used at startup to fix historical
+        fills that were written before the real-fee capture was wired up.
+        """
+        from frab.db.models import FarbPosition as DBFarbPosition
+
+        if self._session_factory is None:
+            raise RuntimeError("session_factory required for backfill_fill_fees")
+        address = self._require_address()
+
+        async with session_scope(self._session_factory) as s:
+            result = await s.execute(
+                select(DBFill, DBPosition).join(
+                    DBPosition, DBFill.position_id == DBPosition.id
+                ).join(
+                    DBFarbPosition, DBPosition.farb_position_id == DBFarbPosition.id
+                ).where(
+                    DBFarbPosition.strategy_id == strategy_id,
+                    DBFill.fee == 0.0,
+                )
+            )
+            zero_fee_fills = result.all()
+
+        if not zero_fee_fills:
+            return 0
+
+        min_ts = min(f.ts_ms for f, _ in zero_fee_fills) - 60_000
+        try:
+            hl_fills = await asyncio.to_thread(
+                self._info.user_fills_by_time, address, min_ts
+            )
+        except Exception as exc:
+            logger.warning("backfill_fill_fees: user_fills_by_time failed: %s", exc)
+            return 0
+
+        updated = 0
+        for fill_row, pos_row in zero_fee_fills:
+            match = self._match_hl_fill(hl_fills, fill_row, pos_row)
+            if match is None:
+                continue
+            fee_raw = float(match.get("fee", 0))
+            fee_token = str(match.get("feeToken") or "USDC").upper()
+            if fee_token in ("USDC", "USD"):
+                fee_usdc = fee_raw
+            elif fee_token in _SPOT_TOKEN_INVERSE:
+                px = float(match.get("px", 0))
+                fee_usdc = fee_raw * px
+            else:
+                fee_usdc = fee_raw
+            if fee_usdc <= 0:
+                continue
+            async with session_scope(self._session_factory) as s:
+                row = await s.get(DBFill, fill_row.id)
+                if row is not None:
+                    row.fee = fee_usdc
+                    updated += 1
+            logger.info(
+                "backfill_fill_fees: fill_id=%d coin=%s qty=%s → fee=%.6f USDC",
+                fill_row.id, pos_row.coin, fill_row.qty, fee_usdc,
+            )
+        return updated
+
+    @staticmethod
+    def _match_hl_fill(hl_fills: list[dict], db_fill: Any, db_pos: Any) -> dict | None:
+        """Find an HL fill matching a DB (fill, position) row by side/qty/time."""
+        # HL side: "B" = buy, "A" = ask/sell. DB side: "long" or "short".
+        want_side = "B" if db_fill.side == Side.LONG.value else "A"
+        for f in hl_fills or []:
+            if f.get("side") != want_side:
+                continue
+            try:
+                sz = float(f.get("sz", 0))
+                ts = int(f.get("time", 0))
+            except (TypeError, ValueError):
+                continue
+            if abs(sz - db_fill.qty) > max(db_fill.qty * 0.01, 1e-9):
+                continue
+            if abs(ts - db_fill.ts_ms) > 30_000:
+                continue
+            # Coin matching: PERP fills carry the coin name (e.g. "BTC");
+            # SPOT fills carry the pair symbol (e.g. "@142" or "UBTC/USDC").
+            hl_coin = str(f.get("coin", ""))
+            instrument = db_pos.instrument
+            if instrument == Instrument.PERP.value:
+                if hl_coin != db_pos.coin:
+                    continue
+            else:  # SPOT — accept either the symbolic or @-prefixed form
+                if not (hl_coin.startswith("@") or "/" in hl_coin):
+                    continue
+            return f
+        return None
 
     # ------------------------------------------------------------------
     # Protocol: get_wallet

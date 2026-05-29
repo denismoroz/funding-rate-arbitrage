@@ -165,6 +165,14 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         )
         await engine_loop.start()
 
+        # ── Backfill historical zero-fee fills from HL userFills ──────────
+        try:
+            n = await exchange.backfill_fill_fees(strategy_id)
+            if n:
+                logger.info("backfill_fill_fees: updated %d historical fills", n)
+        except Exception:
+            logger.exception("backfill_fill_fees failed at startup")
+
         # ── Stash on app.state ────────────────────────────────────────────
         app.state.exchange = exchange
         app.state.farb_repo = farb_repo
