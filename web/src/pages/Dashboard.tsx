@@ -70,10 +70,10 @@ function EquityTooltip({
     <div className="rounded border border-gray-200 bg-white p-2 text-xs shadow">
       <p className="font-semibold">{formatCurrency(d.value)}</p>
       {d.funding_cum != null && (
-        <p className="text-green-600">funding: {formatCurrencyPrecise(d.funding_cum)}</p>
+        <p className="text-green-600">funding: ${d.funding_cum.toFixed(6)}</p>
       )}
       {d.fees_cum != null && (
-        <p className="text-red-500">fees: {formatCurrencyPrecise(d.fees_cum)}</p>
+        <p className="text-red-500">fees: ${d.fees_cum.toFixed(6)}</p>
       )}
       <p className="text-gray-400">{tsMsToDate(d.ts_ms).toLocaleTimeString()}</p>
     </div>
@@ -263,11 +263,11 @@ function EquityCard() {
             </span>
             {latestStrat && (
               <>
-                <span className="text-green-600">
-                  funding {formatCurrencyPrecise(latestStrat.funding_cum)}
+                <span className="text-green-600 font-mono">
+                  funding ${latestStrat.funding_cum.toFixed(6)}
                 </span>
-                <span className="text-red-500">
-                  fees {formatCurrencyPrecise(latestStrat.fees_cum)}
+                <span className="text-red-500 font-mono">
+                  fees ${latestStrat.fees_cum.toFixed(6)}
                 </span>
               </>
             )}
