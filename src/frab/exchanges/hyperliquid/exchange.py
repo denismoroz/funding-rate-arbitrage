@@ -207,7 +207,13 @@ class HLExchange:
     # ------------------------------------------------------------------
 
     async def _load_spot_idx_map(self) -> None:
-        """Cache pair_idx → base_token_name (e.g. 142 → 'UBTC')."""
+        """Cache pair_idx → 'BASE/QUOTE' (e.g. 142 → 'UBTC/USDC').
+
+        HL hosts the same base token paired against multiple quote stablecoins
+        (USDC token 0, USDH token 360, USDE token 235, etc.). We resolve the
+        actual quote symbol from the second tokens entry rather than assuming
+        USDC — otherwise UBTC/USDH at @234 collides with UBTC/USDC at @142.
+        """
         if self._spot_idx_to_name is not None:
             return
         meta = await self._post({"type": "spotMeta"})
@@ -227,10 +233,11 @@ class HLExchange:
                 mapping[idx] = name
                 continue
             toks = entry.get("tokens") or []
-            if toks and isinstance(toks[0], int):
+            if len(toks) >= 2 and isinstance(toks[0], int) and isinstance(toks[1], int):
                 base = token_by_idx.get(toks[0])
-                if base:
-                    mapping[idx] = f"{base}/USDC"
+                quote = token_by_idx.get(toks[1])
+                if base and quote:
+                    mapping[idx] = f"{base}/{quote}"
         self._spot_idx_to_name = mapping
 
     # ------------------------------------------------------------------
@@ -727,7 +734,9 @@ class HLExchange:
             name = idx_to_name.get(idx)
             if not name or "/" not in name:
                 continue
-            wrapped = name.split("/")[0]
+            wrapped, quote = name.split("/", 1)
+            if quote != self._spot_quote_token:
+                continue
             canonical = _SPOT_TOKEN_INVERSE.get(wrapped)
             if canonical is None:
                 continue
@@ -945,19 +954,50 @@ class HLExchange:
                     balance = float(bal.get("total", 0.0))
                     break
 
-        # Total balance across BOTH sub-wallets (equity-relevant quantity).
-        # On HL all wallets belong to one account; the ledger needs the total.
-        # For USDC: perp accountValue + spot USDC balance.
-        # For non-USDC coins (e.g. BTC): only spot balance is relevant.
+        # Total balance across BOTH sub-wallets (equity-relevant cash).
+        #
+        # HL cross-margin double-counts: the portion of spot USDC held as
+        # collateral for a perp position is reflected BOTH in spot.USDC.total
+        # (as the "hold" component) AND in perp.totalRawUsd (as a synthetic
+        # credit). Naively summing perp.accountValue + spot.USDC.total over-
+        # states equity by exactly spot.USDC.hold.
+        #
+        # Likewise, perp.accountValue already contains the unrealized PnL and
+        # the cumulative funding for open positions — both of which the ledger
+        # surfaces as their own line items (perp_unrealized, funding_cum). So
+        # we strip them out of perp's contribution and keep only the perp
+        # wallet's "standalone" cash (i.e. direct deposits, if any).
         if coin in ("USDC", "USD"):
-            perp_value = float(perp_state.get("marginSummary", {}).get("accountValue", 0.0))
+            margin = perp_state.get("marginSummary", {})
+            account_value = float(margin.get("accountValue", 0.0))
+            asset_positions = perp_state.get("assetPositions") or []
+            unrealized_total = 0.0
+            cum_funding_received = 0.0
+            for entry in asset_positions:
+                pos = entry.get("position") or {}
+                try:
+                    unrealized_total += float(pos.get("unrealizedPnl", 0.0))
+                except (TypeError, ValueError):
+                    pass
+                cf = pos.get("cumFunding") or {}
+                try:
+                    # HL sign convention: cumFunding.sinceOpen is negative when
+                    # received (a credit to the trader); flip to "received".
+                    cum_funding_received += -float(cf.get("sinceOpen", 0.0))
+                except (TypeError, ValueError):
+                    pass
             spot_coin = self._spot_token_map.get(coin, coin)
-            spot_value = 0.0
+            spot_total = 0.0
+            spot_hold = 0.0
             for bal in spot_state.get("balances", []):
                 if bal.get("coin") == spot_coin or bal.get("coin") == coin:
-                    spot_value = float(bal.get("total", 0.0))
+                    spot_total = float(bal.get("total", 0.0))
+                    spot_hold = float(bal.get("hold", 0.0))
                     break
-            total_balance = perp_value + spot_value
+            perp_standalone = (
+                account_value - spot_hold - unrealized_total - cum_funding_received
+            )
+            total_balance = spot_total + perp_standalone
         else:
             # Non-USDC: only spot balance matters for this strategy
             spot_coin = self._spot_token_map.get(coin, coin)
