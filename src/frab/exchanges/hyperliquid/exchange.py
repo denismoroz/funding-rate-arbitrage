@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
+MIN_SPOT_RESIDUE_NOTIONAL_USDC = 11.0   # HL spot min order ≈ $10 — below this we accept dust
+MAX_CLOSE_RETRIES = 3                   # total attempts: 1 initial + up to 2 retries
+CLOSE_RETRY_SLIPPAGE_MULTIPLIER = 2.0   # each retry doubles slippage to chase the remainder
+
 # Inverse of MAINNET_SPOT_TOKEN_MAP: HL wrapped token → canonical perp coin.
 # BRIDGE_TOKEN_BLACKLIST names are explicitly excluded (independent price discovery).
 _SPOT_TOKEN_INVERSE: dict[str, str] = {
@@ -521,12 +525,102 @@ class HLExchange:
         exchange_sdk = self._require_exchange()
 
         if pos.instrument == Instrument.SPOT:
-            # Sell the spot holdings
+            # Sell the spot holdings — retry loop to drain residue above min notional
             is_buy = False  # SELL
             spot_name = self._make_spot_name(pos.coin)
-            resp = await asyncio.to_thread(
-                exchange_sdk.market_open, spot_name, is_buy, pos.qty, None, self._slippage
-            )
+            qty_filled_total = 0.0
+            fee_total = 0.0
+            fill_parts: list[tuple[float, float]] = []  # (qty_i, price_i) for VWAP
+            remaining_qty = pos.qty
+            current_slippage = self._slippage
+            residue_notional = 0.0
+            remaining = pos.qty
+            attempts = 0
+
+            for attempt in range(MAX_CLOSE_RETRIES):
+                attempts = attempt + 1
+                resp = await asyncio.to_thread(
+                    exchange_sdk.market_open, spot_name, is_buy, remaining_qty, None, current_slippage
+                )
+
+                if not isinstance(resp, dict) or resp.get("status") != "ok":
+                    raise RuntimeError(f"HL close rejected: {resp!r}")
+                try:
+                    status0 = resp["response"]["data"]["statuses"][0]
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise RuntimeError(f"HL close response shape unexpected: {resp!r}") from exc
+
+                if "filled" in status0:
+                    filled = status0["filled"]
+                    qty_filled_i = float(filled["totalSz"])
+                    fill_price_i = float(filled["avgPx"])
+                    oid_i = int(filled.get("oid", 0)) or None
+                    estimate_i = qty_filled_i * fill_price_i * SPOT_TAKER
+                    if "fee" in filled:
+                        fee_i = float(filled["fee"])
+                    else:
+                        real_fee = (
+                            await self._fetch_real_fee_usdc(oid_i, since_ms=now_ms - 5_000)
+                            if oid_i else None
+                        )
+                        fee_i = real_fee if real_fee is not None else estimate_i
+                elif "error" in status0:
+                    raise RuntimeError(f"HL close error: {status0['error']!r}")
+                else:
+                    raise RuntimeError(f"HL close unrecognized status: {status0!r}")
+
+                qty_filled_total += qty_filled_i
+                fee_total += fee_i
+                fill_parts.append((qty_filled_i, fill_price_i))
+
+                remaining = pos.qty - qty_filled_total
+                residue_notional = remaining * fill_price_i
+
+                if remaining <= 0 or residue_notional < MIN_SPOT_RESIDUE_NOTIONAL_USDC:
+                    break
+
+                # Prepare next attempt: double slippage, re-round remaining qty
+                current_slippage *= CLOSE_RETRY_SLIPPAGE_MULTIPLIER
+                remaining_qty = await self.round_qty(pos.coin, remaining)
+                if remaining_qty <= 0:
+                    break
+
+            if qty_filled_total <= 0:
+                raise RuntimeError(f"close_position drained 0 of {pos.qty} {pos.coin}")
+
+            if residue_notional >= MIN_SPOT_RESIDUE_NOTIONAL_USDC:
+                logger.warning(
+                    "close_position left %s residue of %s after %d attempts (notional=$%.2f)",
+                    remaining, pos.coin, attempts, residue_notional,
+                )
+
+            vwap_price = sum(qty_i * px_i for qty_i, px_i in fill_parts) / qty_filled_total
+
+            # Closing side is opposite to the opening side
+            closing_side = Side.SHORT if pos.side == Side.LONG else Side.LONG
+
+            if self._session_factory is None:
+                raise RuntimeError("session_factory required for close_position")
+            async with session_scope(self._session_factory) as s:
+                row = await s.get(DBPosition, pos.id)
+                if row is None:
+                    raise RuntimeError(f"Position {pos.id} not found in DB")
+                row.status = PositionStatus.CLOSED.value
+                row.closed_at = now_ms
+                fill_row = DBFill(
+                    position_id=row.id,
+                    ts_ms=now_ms,
+                    side=closing_side.value,
+                    qty=qty_filled_total,
+                    price=vwap_price,
+                    fee=fee_total,
+                    slippage_bps=current_slippage * 1e4,
+                    is_paper=False,
+                )
+                s.add(fill_row)
+                closed_pos = self._db_pos_to_domain(row)
+            return closed_pos
+
         else:  # PERP: use market_close
             resp = await asyncio.to_thread(
                 exchange_sdk.market_close, pos.coin, None, None, self._slippage
@@ -544,7 +638,7 @@ class HLExchange:
             qty_filled = float(filled["totalSz"])
             fill_price = float(filled["avgPx"])
             oid = int(filled.get("oid", 0)) or None
-            taker = SPOT_TAKER if pos.instrument == Instrument.SPOT else PERP_TAKER
+            taker = PERP_TAKER
             estimate = qty_filled * fill_price * taker
             if "fee" in filled:
                 fee = float(filled["fee"])

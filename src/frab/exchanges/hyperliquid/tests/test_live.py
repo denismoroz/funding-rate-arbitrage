@@ -313,6 +313,156 @@ async def test_close_position_perp_updates_db(mocker, seeded_session_factory):
 
 
 # ---------------------------------------------------------------------------
+# 11b. close_position SPOT partial-fill retry helpers + tests
+# ---------------------------------------------------------------------------
+
+async def _seed_open_spot_position(session_factory, *, coin="BTC", qty=0.001, entry_price=72000.0):
+    """Insert an OPEN SPOT DBPosition directly and return the domain Position."""
+    from frab.db.models import Exchange as DBExchange
+    async with session_scope(session_factory) as s:
+        exc_id = (await s.scalar(select(DBExchange.id).where(DBExchange.name == "hyperliquid")))
+        row = DBPosition(
+            exchange_id=exc_id,
+            coin=coin,
+            instrument=Instrument.SPOT.value,
+            side=Side.LONG.value,
+            qty=qty,
+            entry_price=entry_price,
+            opened_at=int(_FIXED_DT.timestamp() * 1000) - 60_000,
+            closed_at=None,
+            status=PositionStatus.OPEN.value,
+            farb_position_id=None,
+        )
+        s.add(row)
+        await s.flush()
+        row_id = row.id
+    # Refetch in a fresh session and build domain Position
+    async with session_scope(session_factory) as s:
+        row = await s.get(DBPosition, row_id)
+        from frab.domain import Position
+        return Position(
+            id=row.id,
+            exchange_name="hyperliquid",
+            coin=row.coin,
+            instrument=Instrument(row.instrument),
+            side=Side(row.side),
+            qty=row.qty,
+            entry_price=row.entry_price,
+            opened_at=_FIXED_DT,
+            closed_at=None,
+            status=PositionStatus(row.status),
+            farb_position_id=None,
+        )
+
+
+async def test_close_position_spot_partial_then_full(mocker, seeded_session_factory):
+    """SPOT close: first attempt partial-fills (residue > min), retry drains the remainder.
+
+    Verifies single aggregated DBFill row with VWAP price and summed fee.
+    """
+    ex, _, _ = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5}  # avoid info.meta call inside round_qty
+    pos = await _seed_open_spot_position(seeded_session_factory, qty=0.01, entry_price=72000.0)
+
+    # Attempt 1: fills 0.005 @ 72000 → residue notional = 0.005 * 72000 = $360 (≥ $11) → retry.
+    # Attempt 2: fills 0.005 @ 72200 → drains.
+    mock = mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=[
+        _filled_resp(qty=0.005, px=72000.0, fee=0.25),
+        _filled_resp(qty=0.005, px=72200.0, fee=0.252),
+    ]))
+
+    closed_pos = await ex.close_position(pos)
+
+    assert closed_pos.status == PositionStatus.CLOSED
+    assert mock.call_count == 2  # one retry happened
+
+    async with session_scope(seeded_session_factory) as s:
+        db_pos = await s.get(DBPosition, pos.id)
+        assert db_pos.status == PositionStatus.CLOSED.value
+        fills = (await s.execute(
+            select(DBFill).where(DBFill.position_id == pos.id)
+        )).scalars().all()
+        assert len(fills) == 1
+        f = fills[0]
+        assert f.qty == pytest.approx(0.01, abs=1e-9)
+        assert f.fee == pytest.approx(0.502, abs=1e-6)
+        expected_vwap = (0.005 * 72000.0 + 0.005 * 72200.0) / 0.01
+        assert f.price == pytest.approx(expected_vwap, abs=1e-4)
+        # slippage was doubled on the retry: 0.01 → 0.02 → reported as 200 bps
+        assert f.slippage_bps == pytest.approx(200.0, abs=1e-6)
+
+
+async def test_close_position_spot_residue_below_min_no_retry(mocker, seeded_session_factory):
+    """Residue notional after first attempt < $11 → accept dust, no retry."""
+    ex, _, _ = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5}
+    pos = await _seed_open_spot_position(seeded_session_factory, qty=0.001, entry_price=72000.0)
+
+    # First attempt fills 0.00099; residue = 0.00001 BTC * 72000 ≈ $0.72 < $11 → break.
+    mock = mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=[
+        _filled_resp(qty=0.00099, px=72000.0, fee=0.05),
+    ]))
+
+    closed_pos = await ex.close_position(pos)
+
+    assert closed_pos.status == PositionStatus.CLOSED
+    assert mock.call_count == 1  # no retry
+
+    async with session_scope(seeded_session_factory) as s:
+        fills = (await s.execute(
+            select(DBFill).where(DBFill.position_id == pos.id)
+        )).scalars().all()
+        assert len(fills) == 1
+        assert fills[0].qty == pytest.approx(0.00099, abs=1e-9)
+        assert fills[0].fee == pytest.approx(0.05, abs=1e-6)
+
+
+async def test_close_position_spot_residue_remains_logs_warning(mocker, seeded_session_factory, caplog):
+    """All MAX_CLOSE_RETRIES attempts leave residue ≥ $11 → warning logged, still CLOSED."""
+    import logging as _logging
+    ex, _, _ = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5}
+    pos = await _seed_open_spot_position(seeded_session_factory, qty=0.01, entry_price=2000.0)
+
+    # Each attempt fills only 0.001 @ $2000 — fixed dust per attempt.
+    # After 3 attempts: filled 0.003, remaining 0.007 → residue = 0.007 * 2000 = $14 ≥ $11.
+    fill = _filled_resp(qty=0.001, px=2000.0, fee=0.01)
+    mock = mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=[fill, fill, fill]))
+
+    with caplog.at_level(_logging.WARNING, logger="frab.exchanges.hyperliquid.exchange"):
+        closed_pos = await ex.close_position(pos)
+
+    assert closed_pos.status == PositionStatus.CLOSED
+    assert mock.call_count == 3  # MAX_CLOSE_RETRIES
+    assert any(
+        "residue" in rec.message and "BTC" in rec.message
+        for rec in caplog.records
+        if rec.levelname == "WARNING"
+    ), f"expected residue warning, got: {[r.message for r in caplog.records]}"
+
+    async with session_scope(seeded_session_factory) as s:
+        fills = (await s.execute(
+            select(DBFill).where(DBFill.position_id == pos.id)
+        )).scalars().all()
+        assert len(fills) == 1
+        assert fills[0].qty == pytest.approx(0.003, abs=1e-9)
+        assert fills[0].fee == pytest.approx(0.03, abs=1e-6)
+
+
+async def test_close_position_spot_zero_filled_raises(mocker, seeded_session_factory):
+    """All attempts fill qty=0 → RuntimeError 'drained 0'."""
+    ex, _, _ = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5}
+    pos = await _seed_open_spot_position(seeded_session_factory, qty=0.001, entry_price=72000.0)
+
+    zero = _filled_resp(qty=0.0, px=72000.0, fee=0.0)
+    mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(side_effect=[zero, zero, zero]))
+
+    with pytest.raises(RuntimeError, match="drained 0"):
+        await ex.close_position(pos)
+
+
+# ---------------------------------------------------------------------------
 # 12. transfer spot→perp happy path
 # ---------------------------------------------------------------------------
 
