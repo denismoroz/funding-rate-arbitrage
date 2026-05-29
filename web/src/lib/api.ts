@@ -97,6 +97,8 @@ export type FarbPosition = {
   current_signal_apr: number | null;
   consec_negative_hours: number | null;
   unrealized_pnl_usdc: number | null;
+  spot_unrealized_pnl_usdc: number | null;
+  perp_unrealized_pnl_usdc: number | null;
   funding_usdc: number;
   fees_usdc: number;
   breakeven_hours_remaining: number | null;

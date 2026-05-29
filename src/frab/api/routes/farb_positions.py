@@ -1,6 +1,7 @@
 """FarbPosition routes — composite arb positions (1 collateral + 1 spot + 1 perp leg)."""
 from __future__ import annotations
 
+import asyncio
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -97,6 +98,8 @@ def _fp_to_dict(
     unrealized_pnl: float | None,
     margin_used_by_coin: dict[str, float] | None = None,
     leverage_by_coin: dict[str, int] | None = None,
+    spot_mids: dict[str, float] | None = None,
+    unrealized_pnl_by_coin: dict[str, float] | None = None,
 ) -> dict:
     """Serialize a FarbPositionRow to the response shape."""
     sd = fp.state_data or {}
@@ -148,6 +151,23 @@ def _fp_to_dict(
     reserved = float(sd.get("required_margin") or 0)
     capital_usdc = spot_value + reserved
 
+    # Per-leg PnL — prefer live HL data when exchange is available.
+    # Falls back to the legacy _compute_unrealized_pnl result (unrealized_pnl)
+    # when neither spot_mids nor unrealized_pnl_by_coin is provided (exchange=None).
+    perp_pnl: float | None = None
+    spot_pnl: float | None = None
+    if is_open and (spot_mids is not None or unrealized_pnl_by_coin is not None):
+        if unrealized_pnl_by_coin is not None:
+            perp_pnl = unrealized_pnl_by_coin.get(fp.coin)
+        if spot_leg and spot_mids is not None and spot_mids.get(fp.coin) is not None:
+            spot_pnl = spot_leg["qty"] * (spot_mids[fp.coin] - spot_leg["entry_price"])
+        total_pnl: float | None = None
+        if perp_pnl is not None or spot_pnl is not None:
+            total_pnl = (perp_pnl or 0.0) + (spot_pnl or 0.0)
+    else:
+        # Fallback path: exchange=None, use legacy combined PnL from DB prices
+        total_pnl = unrealized_pnl
+
     return {
         "id": fp.id,
         "strategy_id": fp.strategy_id,
@@ -162,7 +182,9 @@ def _fp_to_dict(
         "exit_signal_apr": sd.get("exit_signal_apr"),
         "current_signal_apr": current_apr,
         "consec_negative_hours": sd.get("consec_negative_hours"),
-        "unrealized_pnl_usdc": unrealized_pnl,
+        "unrealized_pnl_usdc": total_pnl,
+        "spot_unrealized_pnl_usdc": spot_pnl,
+        "perp_unrealized_pnl_usdc": perp_pnl,
         "funding_usdc": funding_usdc,
         "fees_usdc": fees_usdc,
         "breakeven_hours_remaining": breakeven_hours,
@@ -177,6 +199,8 @@ async def _enrich(
     fp: FarbPositionRow,
     margin_used_by_coin: dict[str, float] | None = None,
     leverage_by_coin: dict[str, int] | None = None,
+    spot_mids: dict[str, float] | None = None,
+    unrealized_pnl_by_coin: dict[str, float] | None = None,
 ) -> dict:
     """Load legs + compute hours_held + compute unrealized PnL for a single FarbPositionRow."""
     collateral = await _load_leg(session, fp.margin_position_id)
@@ -190,9 +214,16 @@ async def _enrich(
     if fp.opened_at is not None:
         hours_held = (now - fp.opened_at) / 3_600_000
 
-    unrealized_pnl = await _compute_unrealized_pnl(session, fp, spot, perp)
+    # Fallback legacy PnL (used when exchange=None, i.e. no live HL data)
+    unrealized_pnl: float | None = None
+    if spot_mids is None and unrealized_pnl_by_coin is None:
+        unrealized_pnl = await _compute_unrealized_pnl(session, fp, spot, perp)
 
-    return _fp_to_dict(fp, legs, hours_held, unrealized_pnl, margin_used_by_coin, leverage_by_coin)
+    return _fp_to_dict(
+        fp, legs, hours_held, unrealized_pnl,
+        margin_used_by_coin, leverage_by_coin,
+        spot_mids, unrealized_pnl_by_coin,
+    )
 
 
 @router.get("")
@@ -235,16 +266,25 @@ async def list_farb_positions(
     result = await session.execute(stmt)
     rows = result.scalars().all()
 
-    # Fetch HL account state once per request (best-effort; falls back to empty)
+    # Fetch HL account state + spot mids once per request (best-effort; falls back to None)
+    # None signals "exchange unavailable" → _enrich falls back to legacy DB-price PnL.
     margin_used_by_coin: dict[str, float] = {}
     leverage_by_coin: dict[str, int] = {}
+    unrealized_pnl_by_coin: dict[str, float] | None = None
+    spot_mids: dict[str, float] | None = None
     exchange = getattr(request.app.state, "exchange", None)
     if exchange is not None:
+        unrealized_pnl_by_coin = {}
+        spot_mids = {}
         try:
-            hl_state = await exchange.fetch_account_state()
+            hl_state, spot_mids = await asyncio.gather(
+                exchange.fetch_account_state(),
+                exchange.get_spot_mids_by_coin(),
+            )
             hl_positions = hl_state.get("perp", {}).get("assetPositions") or []
         except Exception:
             hl_positions = []
+            spot_mids = {}
         for ap in hl_positions:
             p = ap.get("position") or {}
             coin = p.get("coin")
@@ -260,8 +300,17 @@ async def list_farb_positions(
                     leverage_by_coin[coin] = int(lev)
                 except (TypeError, ValueError):
                     pass
+            try:
+                upnl = float(p.get("unrealizedPnl", 0))
+                if coin:
+                    unrealized_pnl_by_coin[coin] = upnl
+            except (TypeError, ValueError):
+                pass
 
-    return [await _enrich(session, fp, margin_used_by_coin, leverage_by_coin) for fp in rows]
+    return [
+        await _enrich(session, fp, margin_used_by_coin, leverage_by_coin, spot_mids, unrealized_pnl_by_coin)
+        for fp in rows
+    ]
 
 
 @router.get("/{farb_position_id}")
@@ -274,16 +323,25 @@ async def get_farb_position(
     if fp is None:
         raise HTTPException(status_code=404, detail="FarbPosition not found")
 
-    # Fetch HL account state best-effort for single FP
+    # Fetch HL account state + spot mids best-effort for single FP
+    # None signals "exchange unavailable" → _enrich falls back to legacy DB-price PnL.
     margin_used_by_coin: dict[str, float] = {}
     leverage_by_coin: dict[str, int] = {}
+    unrealized_pnl_by_coin: dict[str, float] | None = None
+    spot_mids: dict[str, float] | None = None
     exchange = getattr(request.app.state, "exchange", None)
     if exchange is not None:
+        unrealized_pnl_by_coin = {}
+        spot_mids = {}
         try:
-            hl_state = await exchange.fetch_account_state()
+            hl_state, spot_mids = await asyncio.gather(
+                exchange.fetch_account_state(),
+                exchange.get_spot_mids_by_coin(),
+            )
             hl_positions = hl_state.get("perp", {}).get("assetPositions") or []
         except Exception:
             hl_positions = []
+            spot_mids = {}
         for ap in hl_positions:
             p = ap.get("position") or {}
             coin = p.get("coin")
@@ -299,5 +357,11 @@ async def get_farb_position(
                     leverage_by_coin[coin] = int(lev)
                 except (TypeError, ValueError):
                     pass
+            try:
+                upnl = float(p.get("unrealizedPnl", 0))
+                if coin:
+                    unrealized_pnl_by_coin[coin] = upnl
+            except (TypeError, ValueError):
+                pass
 
-    return await _enrich(session, fp, margin_used_by_coin, leverage_by_coin)
+    return await _enrich(session, fp, margin_used_by_coin, leverage_by_coin, spot_mids, unrealized_pnl_by_coin)

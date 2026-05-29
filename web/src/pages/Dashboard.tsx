@@ -611,6 +611,7 @@ function FarbPositionCard({
                 <th className="pb-1 pr-3 text-right font-medium">Qty</th>
                 <th className="pb-1 pr-3 text-right font-medium">Entry</th>
                 <th className="pb-1 pr-3 text-right font-medium">Value</th>
+                <th className="pb-1 pr-3 text-right font-medium">PnL</th>
                 <th className="pb-1 font-medium">Notes</th>
               </tr>
             </thead>
@@ -630,6 +631,15 @@ function FarbPositionCard({
                 <td className="py-0.5 pr-3 text-right text-gray-700">
                   {spotValue != null ? formatCurrency(spotValue) : "—"}
                 </td>
+                <td className="py-0.5 pr-3 text-right font-mono">
+                  {p.spot_unrealized_pnl_usdc != null ? (
+                    <span className={p.spot_unrealized_pnl_usdc >= 0 ? "text-green-600" : "text-rose-500"}>
+                      {formatCurrencyPrecise(p.spot_unrealized_pnl_usdc)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
+                </td>
                 <td className="py-0.5 text-gray-400" />
               </tr>
 
@@ -647,6 +657,15 @@ function FarbPositionCard({
                 </td>
                 <td className="py-0.5 pr-3 text-right text-gray-700">
                   {perpValue != null ? formatCurrency(perpValue) : "—"}
+                </td>
+                <td className="py-0.5 pr-3 text-right font-mono">
+                  {p.perp_unrealized_pnl_usdc != null ? (
+                    <span className={p.perp_unrealized_pnl_usdc >= 0 ? "text-green-600" : "text-rose-500"}>
+                      {formatCurrencyPrecise(p.perp_unrealized_pnl_usdc)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
                 </td>
                 <td className="py-0.5 text-gray-500 text-[11px]">
                   {leverage != null && (
@@ -671,6 +690,7 @@ function FarbPositionCard({
                 <td className="py-0.5 pr-3 text-right text-gray-700">
                   {collateralValue != null ? formatCurrency(collateralValue) : "—"}
                 </td>
+                <td className="py-0.5 pr-3 text-right text-gray-400">—</td>
                 <td className="py-0.5 text-gray-400 text-[11px]">reserved buffer</td>
               </tr>
             </tbody>
