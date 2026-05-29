@@ -147,6 +147,7 @@ async def test_constructor_uses_mainnet_url(mocker):
 
 async def test_open_position_perp_writes_db(mocker, seeded_session_factory):
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.5, px=30000.0, fee=0.1)))
 
     req = OpenRequest(
@@ -190,6 +191,7 @@ async def test_open_position_perp_writes_db(mocker, seeded_session_factory):
 
 async def test_open_position_spot_writes_db(mocker, seeded_session_factory):
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.001, px=80000.0, fee=0.0)))
 
     req = OpenRequest(
@@ -212,6 +214,7 @@ async def test_open_position_spot_writes_db(mocker, seeded_session_factory):
 
 async def test_open_position_rejected_raises(mocker, seeded_session_factory):
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(
         return_value={"status": "err", "response": "insufficient margin"}
     ))
@@ -227,6 +230,7 @@ async def test_open_position_rejected_raises(mocker, seeded_session_factory):
 
 async def test_open_position_inner_error_raises(mocker, seeded_session_factory):
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     resp = {"status": "ok", "response": {"data": {"statuses": [{"error": "min size"}]}}}
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=resp))
 
@@ -241,6 +245,7 @@ async def test_open_position_inner_error_raises(mocker, seeded_session_factory):
 
 async def test_open_position_partial_fill_raises(mocker, seeded_session_factory):
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     # Requested 0.5, filled 0.05 — way below 1% tolerance
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.05, px=24.0, fee=0.0)))
 
@@ -258,6 +263,7 @@ async def test_open_position_partial_fill_raises(mocker, seeded_session_factory)
 
 async def test_open_position_perp_uses_bare_coin_name(mocker, seeded_session_factory):
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mock_to_thread = mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp()))
 
     req = OpenRequest(coin="BTC", instrument=Instrument.PERP, side=Side.SHORT, qty=0.5)
@@ -277,6 +283,7 @@ async def test_open_position_spot_uses_pair_name(mocker, seeded_session_factory)
         spot_token_map={"BTC": "UBTC"},
         session_factory=seeded_session_factory,
     )
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mock_to_thread = mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp()))
 
     req = OpenRequest(coin="BTC", instrument=Instrument.SPOT, side=Side.LONG, qty=0.001)
@@ -292,6 +299,7 @@ async def test_open_position_spot_uses_pair_name(mocker, seeded_session_factory)
 
 async def test_close_position_perp_updates_db(mocker, seeded_session_factory):
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.5, px=31000.0, fee=0.05)))
 
     # First open a position
@@ -655,6 +663,7 @@ async def test_fetch_wallet_state_without_address_raises(mocker):
 async def test_open_position_requires_session_factory(mocker):
     """open_position without session_factory raises RuntimeError."""
     ex, _, exchange = _make_executor(mocker, session_factory=None)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp()))
 
     req = OpenRequest(coin="BTC", instrument=Instrument.PERP, side=Side.SHORT, qty=0.5)
@@ -706,6 +715,7 @@ async def test_open_position_collateral_writes_position_no_fill(mocker, seeded_s
 async def test_open_position_spot_writes_position_and_fill(mocker, seeded_session_factory):
     """SPOT open: both Position row and Fill row are written to DB."""
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(
         return_value=_filled_resp(qty=0.001, px=80000.0, fee=5.6)
     ))
@@ -736,6 +746,7 @@ async def test_open_position_spot_writes_position_and_fill(mocker, seeded_sessio
 async def test_close_position_writes_closing_fill(mocker, seeded_session_factory):
     """close_position PERP: DB position updated to CLOSED + closing Fill inserted."""
     ex, _, exchange = _make_executor(mocker, session_factory=seeded_session_factory)
+    ex._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
     mocker.patch("asyncio.to_thread", new=mocker.AsyncMock(return_value=_filled_resp(qty=0.5, px=30000.0, fee=0.1)))
 
     # Open first
