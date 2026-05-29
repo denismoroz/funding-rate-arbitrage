@@ -24,13 +24,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 from frab.db.models import (
     Exchange as DBExchange,
     Fill as DBFill,
-    FundingAccrual as DBFundingAccrual,
     Position as DBPosition,
     WalletSnapshot as DBWalletSnapshot,
 )
 from frab.db.session import session_scope
 from frab.domain import Instrument, Position, PositionStatus, Side
 from frab.exchanges.hyperliquid.actions.close_position import ClosePositionAction
+from frab.exchanges.hyperliquid.actions.load_funding import LoadAccruedFundingAction
+from frab.exchanges.hyperliquid.actions.load_positions import LoadOpenPositionsAction
 from frab.exchanges.hyperliquid.actions.open_position import OpenPositionAction, PartialFillError
 from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
 from frab.exchanges.hyperliquid.symbols import HLSymbols, SPOT_TOKEN_INVERSE
@@ -162,9 +163,23 @@ class HLExchange:
                 slippage=self._slippage,
                 clock_fn=self._clock_fn,
             )
+            self._load_positions_action: LoadOpenPositionsAction | None = LoadOpenPositionsAction(
+                client=self._hl_client,
+                symbols=self._symbols,
+                session_factory=session_factory,
+                exchange_name=self.name,
+                address=self._address,
+            )
+            self._load_funding_action: LoadAccruedFundingAction | None = LoadAccruedFundingAction(
+                client=self._hl_client,
+                session_factory=session_factory,
+                address=self._address,
+            )
         else:
             self._open_action = None
             self._close_action = None
+            self._load_positions_action = None
+            self._load_funding_action = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -303,54 +318,9 @@ class HLExchange:
 
         Out-of-band positions are logged at WARN but not auto-corrected.
         """
-        address = self._require_address()
-        if self._session_factory is None:
+        if self._load_positions_action is None:
             raise RuntimeError("session_factory required for get_open_positions")
-
-        perp_state, spot_state = await asyncio.gather(
-            self._hl_client.user_state(address),
-            self._hl_client.spot_user_state(address),
-        )
-
-        # Build set of coins with open positions on HL
-        hl_perp_coins: set[str] = set()
-        for ap in perp_state.asset_positions:
-            if abs(ap.szi) > 1e-12:
-                hl_perp_coins.add(ap.coin)
-
-        hl_spot_coins: set[str] = set()
-        for bal in spot_state.balances:
-            if bal.total > 1e-12:
-                hl_spot_coins.add(bal.coin)
-
-        async with session_scope(self._session_factory) as s:
-            exchange_id = await self._get_exchange_id(s)
-            result = await s.execute(
-                select(DBPosition).where(
-                    DBPosition.exchange_id == exchange_id,
-                    DBPosition.status == PositionStatus.OPEN.value,
-                )
-            )
-            db_rows = result.scalars().all()
-
-        positions = []
-        for row in db_rows:
-            # Check reconciliation for PERP positions
-            if row.instrument == Instrument.PERP.value and row.coin not in hl_perp_coins:
-                logger.warning(
-                    "get_open_positions: DB has OPEN PERP %s but HL reports no position",
-                    row.coin,
-                )
-            # Check reconciliation for SPOT positions
-            spot_hl_coin = self._symbols.spot_token_map.get(row.coin, row.coin)
-            if row.instrument == Instrument.SPOT.value and spot_hl_coin not in hl_spot_coins:
-                logger.warning(
-                    "get_open_positions: DB has OPEN SPOT %s but HL reports no balance",
-                    row.coin,
-                )
-            positions.append(self._db_pos_to_domain(row))
-
-        return positions
+        return await self._load_positions_action.execute()
 
     # ------------------------------------------------------------------
     # Protocol: get_accrued_funding
@@ -361,49 +331,9 @@ class HLExchange:
 
         Idempotent: skips rows that already exist by (position_id, ts_ms).
         """
-        address = self._require_address()
-        if pos.id is None:
-            raise ValueError("Position must have a DB id to fetch accrued funding")
-        if self._session_factory is None:
+        if self._load_funding_action is None:
             raise RuntimeError("session_factory required for get_accrued_funding")
-
-        since_ms = _dt_to_ms(pos.opened_at)
-        deltas = await self._hl_client.user_funding(address, since_ms)
-
-        # Filter to matching coin
-        new_accruals: list[tuple[int, float]] = []
-        for delta in deltas:
-            if delta.coin != pos.coin:
-                continue
-            new_accruals.append((delta.ts_ms, delta.amount_usdc))
-
-        async with session_scope(self._session_factory) as s:
-            # Load existing accrual ts_ms values for this position to avoid duplicates
-            result = await s.execute(
-                select(DBFundingAccrual.ts_ms).where(
-                    DBFundingAccrual.position_id == pos.id
-                )
-            )
-            existing_ts = {row for (row,) in result.all()}
-
-            for ts_ms, amount in new_accruals:
-                if ts_ms not in existing_ts:
-                    s.add(DBFundingAccrual(
-                        position_id=pos.id,
-                        ts_ms=ts_ms,
-                        amount=amount,
-                    ))
-
-        # Return cumulative sum from DB (source of truth)
-        async with session_scope(self._session_factory) as s:
-            result = await s.execute(
-                select(DBFundingAccrual.amount).where(
-                    DBFundingAccrual.position_id == pos.id
-                )
-            )
-            total = sum(row for (row,) in result.all())
-
-        return total
+        return await self._load_funding_action.execute(pos)
 
     # ------------------------------------------------------------------
     # Spot mids from HL (authoritative spot prices in USDC)
