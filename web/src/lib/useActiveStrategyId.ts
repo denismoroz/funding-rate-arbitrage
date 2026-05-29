@@ -2,11 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchStrategies } from "./api";
 
 /**
- * Returns the id of the active strategy (status in {"active", "running"}),
- * or undefined while loading / if none exists.
+ * Returns the id of the strategy currently shown on the dashboard.
  *
- * Pollers/UI components keyed on this id should guard with `enabled: !!id`
- * so they don't fire with a stale or default value.
+ * "Selected" = any non-terminal status (active / running / paused / idle).
+ * Pause must NOT hide the strategy — dashboard still needs to render its
+ * equity, positions, and the toggle that resumes it.
  */
 export function useActiveStrategyId(): number | undefined {
   const q = useQuery({
@@ -15,6 +15,6 @@ export function useActiveStrategyId(): number | undefined {
     refetchInterval: 30_000,
     staleTime: 10_000,
   });
-  const active = q.data?.find((s) => s.status === "active" || s.status === "running");
-  return active?.id;
+  const selected = q.data?.find((s) => s.status !== "stopped");
+  return selected?.id;
 }
