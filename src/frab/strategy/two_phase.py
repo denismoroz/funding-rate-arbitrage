@@ -263,13 +263,27 @@ class TwoPhaseStrategy:
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.CHECK_MARGIN,
-            to_state=FarbState.OPENING_LONG,
+            to_state=FarbState.OPENING_MARGIN,
             state_data={**fp.state_data, "required_margin": required},
         )
 
     async def _step_opening_margin(self, fp: FarbPosition) -> None:
-        # HL is cross-margin on one account; no spot→perp transfer needed.
-        # Kept as a pass-through transition for any FP already mid-flight in this state.
+        # HL is cross-margin on one account — no spot→perp transfer needed.
+        # We still record a COLLATERAL Position row so the FP has a tracked
+        # margin obligation (qty = USDC reserved; entry_price = 1.0). The
+        # actual hold on spot USDC is created by HL when the perp leg opens.
+        required = fp.state_data.get("required_margin", self.params.required_margin())
+        coll_req = OpenRequest(
+            coin="USDC",
+            instrument=Instrument.COLLATERAL,
+            side=Side.NONE,
+            qty=required,
+            farb_position_id=fp.id,
+        )
+        coll_pos = await self.exchange.open_position(coll_req)
+        await self.farb_repo.set_leg(
+            fp.id, instrument=Instrument.COLLATERAL, position_id=coll_pos.id
+        )
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_MARGIN,
@@ -377,7 +391,11 @@ class TwoPhaseStrategy:
             raise RuntimeError(f"FarbPosition {fp.id} has no spot_position_id in CLOSING_LONG")
         spot_pos = await self._get_position(fp.spot_position_id)
         await self.exchange.close_position(spot_pos)
-        await self.farb_repo.mark_closed(fp.id)
+        await self.farb_repo.transition(
+            fp.id,
+            from_state=FarbState.CLOSING_LONG,
+            to_state=FarbState.RELEASING_MARGIN,
+        )
         await self._publish(
             level="INFO",
             kind="farb.closed",
@@ -391,8 +409,11 @@ class TwoPhaseStrategy:
         )
 
     async def _step_releasing_margin(self, fp: FarbPosition) -> None:
-        # HL is cross-margin on one account; no perp→spot transfer needed.
-        # Kept as a pass-through close for any FP already mid-flight in this state.
+        # HL cross-margin releases spot.USDC.hold automatically when the perp
+        # leg closes — we only mark our COLLATERAL bookkeeping row CLOSED.
+        if fp.margin_position_id is not None:
+            coll_pos = await self._get_position(fp.margin_position_id)
+            await self.exchange.close_position(coll_pos)
         await self.farb_repo.mark_closed(fp.id)
 
     # ── Signal computation ────────────────────────────────────────────────────

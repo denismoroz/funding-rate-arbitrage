@@ -375,8 +375,10 @@ class HLExchange:
         now_ms = _dt_to_ms(now)
 
         if req.instrument == Instrument.COLLATERAL:
-            # Transfer USDC spot → perp, then record a COLLATERAL position
-            await self.transfer(req.coin, req.qty, WalletKind.SPOT, WalletKind.PERP)
+            # HL cross-margin reserves spot USDC automatically when the perp
+            # leg is opened — no spot→perp transfer needed. We still record a
+            # COLLATERAL Position row so the FP has a tracked margin obligation
+            # (qty = USDC reserved; entry_price = 1.0).
             if self._session_factory is None:
                 raise RuntimeError("session_factory required for open_position")
             async with session_scope(self._session_factory) as s:
@@ -502,7 +504,8 @@ class HLExchange:
         now_ms = _dt_to_ms(now)
 
         if pos.instrument == Instrument.COLLATERAL:
-            await self.transfer(pos.coin, pos.qty, WalletKind.PERP, WalletKind.SPOT)
+            # Cross-margin reservation is released by HL automatically when the
+            # perp leg is closed; we only need to mark our bookkeeping row.
             if self._session_factory is None:
                 raise RuntimeError("session_factory required for close_position")
             async with session_scope(self._session_factory) as s:

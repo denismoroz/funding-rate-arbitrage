@@ -367,7 +367,7 @@ async def test_08_closing_long(session_factory, farb_repo, strategy_id, exchange
 
 @pytest.mark.asyncio
 async def test_09_releasing_margin(session_factory, farb_repo, strategy_id, exchange_id):
-    """RELEASING_MARGIN → CLOSED: transfer called PERP→SPOT, margin pos closed, state=CLOSED."""
+    """RELEASING_MARGIN → CLOSED: COLLATERAL pos closed, state=CLOSED, no transfer (HL cross-margin)."""
     exchange = _make_exchange()
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.strategy_id = strategy_id
@@ -390,9 +390,7 @@ async def test_09_releasing_margin(session_factory, farb_repo, strategy_id, exch
     updated = await farb_repo.get(fp.id)
     assert updated.state == FarbState.CLOSED
 
-    exchange.transfer.assert_called_once_with(
-        "USDC", pytest.approx(required), WalletKind.PERP, WalletKind.SPOT
-    )
+    exchange.transfer.assert_not_called()
     exchange.close_position.assert_called_once()
 
 
@@ -891,15 +889,11 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
     fp = await farb_repo.get(fp_id)
     assert fp.state == FarbState.CLOSED
 
-    # close_position called 2x for PERP + SPOT, and 1x for margin = 3 total
-    # (margin may or may not be set — if not set, 2 calls total)
-    assert exchange.close_position.call_count >= 2
+    # close_position called 3x: PERP + SPOT + COLLATERAL bookkeeping row
+    assert exchange.close_position.call_count == 3
 
-    # transfer called exactly 1x for margin release
-    exchange.transfer.assert_called_once()
-    transfer_call = exchange.transfer.call_args
-    assert transfer_call[0][2] == WalletKind.PERP
-    assert transfer_call[0][3] == WalletKind.SPOT
+    # No spot↔perp transfers on HL cross-margin
+    exchange.transfer.assert_not_called()
 
 
 # ─── Burst-loop tests ────────────────────────────────────────────────────────
