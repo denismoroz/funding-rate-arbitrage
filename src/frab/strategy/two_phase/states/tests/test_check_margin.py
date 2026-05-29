@@ -1,0 +1,160 @@
+"""Unit tests for CheckMarginState."""
+from __future__ import annotations
+
+import pytest
+from datetime import datetime, timezone
+
+from frab.domain import FarbPosition, FarbState
+from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.states.check_margin import CheckMarginState
+
+
+def _make_fp(state_data: dict | None = None) -> FarbPosition:
+    return FarbPosition(
+        id=42,
+        strategy_id=1,
+        coin="BTC",
+        state=FarbState.CHECK_MARGIN,
+        state_data=state_data if state_data is not None else {},
+        spot_position_id=None,
+        perp_position_id=None,
+        margin_position_id=None,
+        opened_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        closed_at=None,
+    )
+
+
+def _make_params(**overrides) -> TwoPhaseParams:
+    defaults = dict(
+        coins=["BTC"],
+        position_size_usdc=1000.0,
+        perp_leverage=5.0,
+        margin_buffer_factor=3.0,
+    )
+    defaults.update(overrides)
+    return TwoPhaseParams(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_check_margin_sufficient_balance_transitions(mocker):
+    """balance >= required → transition to OPENING_MARGIN, return FarbState.OPENING_MARGIN."""
+    params = _make_params()
+    required = params.required_margin()  # 1000/5 * 3 = 600.0
+
+    exchange = mocker.AsyncMock()
+    exchange.get_wallet.return_value = required + 100.0
+
+    farb_repo = mocker.AsyncMock()
+    farb_repo.transition = mocker.AsyncMock()
+
+    state = CheckMarginState(
+        exchange=exchange,
+        farb_repo=farb_repo,
+        params=params,
+    )
+    fp = _make_fp()
+
+    result = await state.execute(fp)
+
+    assert result == FarbState.OPENING_MARGIN
+    farb_repo.transition.assert_awaited_once()
+    call_kwargs = farb_repo.transition.await_args
+    assert call_kwargs.kwargs["from_state"] == FarbState.CHECK_MARGIN
+    assert call_kwargs.kwargs["to_state"] == FarbState.OPENING_MARGIN
+    assert call_kwargs.kwargs["state_data"]["required_margin"] == required
+    farb_repo.mark_failed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_margin_insufficient_balance_marks_failed(mocker):
+    """balance < required → mark_failed called, WARNING event published, returns None."""
+    params = _make_params()
+    required = params.required_margin()  # 600.0
+
+    exchange = mocker.AsyncMock()
+    exchange.get_wallet.return_value = 1.0  # way below required
+
+    farb_repo = mocker.AsyncMock()
+    farb_repo.mark_failed = mocker.AsyncMock()
+
+    event_bus = mocker.AsyncMock()
+    event_bus.publish = mocker.AsyncMock()
+
+    state = CheckMarginState(
+        exchange=exchange,
+        farb_repo=farb_repo,
+        params=params,
+        event_bus=event_bus,
+    )
+    fp = _make_fp()
+
+    result = await state.execute(fp)
+
+    assert result is None
+    farb_repo.mark_failed.assert_awaited_once_with(fp.id, reason=mocker.ANY)
+    reason_arg = farb_repo.mark_failed.await_args.kwargs["reason"]
+    assert "insufficient_margin" in reason_arg
+
+    event_bus.publish.assert_awaited_once()
+    published_event = event_bus.publish.await_args.args[0]
+    assert published_event.level == "WARNING"
+    assert published_event.kind == "farb.failed"
+
+    farb_repo.transition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_margin_no_event_bus_on_failure(mocker):
+    """event_bus=None on failure path → no exception, no publish attempt."""
+    params = _make_params()
+
+    exchange = mocker.AsyncMock()
+    exchange.get_wallet.return_value = 0.0  # insufficient
+
+    farb_repo = mocker.AsyncMock()
+    farb_repo.mark_failed = mocker.AsyncMock()
+
+    state = CheckMarginState(
+        exchange=exchange,
+        farb_repo=farb_repo,
+        params=params,
+        event_bus=None,
+    )
+    fp = _make_fp()
+
+    # Should not raise even with no event_bus
+    result = await state.execute(fp)
+
+    assert result is None
+    farb_repo.mark_failed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_check_margin_state_data_merging(mocker):
+    """Existing state_data keys are preserved; required_margin is added."""
+    params = _make_params()
+    required = params.required_margin()
+
+    exchange = mocker.AsyncMock()
+    exchange.get_wallet.return_value = 99999.0  # plenty
+
+    farb_repo = mocker.AsyncMock()
+    farb_repo.transition = mocker.AsyncMock()
+
+    state = CheckMarginState(
+        exchange=exchange,
+        farb_repo=farb_repo,
+        params=params,
+    )
+    existing_data = {"target_signal_apr": 0.25, "entry_ts_ms": 1234567890}
+    fp = _make_fp(state_data=existing_data)
+
+    await state.execute(fp)
+
+    call_kwargs = farb_repo.transition.await_args.kwargs
+    merged = call_kwargs["state_data"]
+    # Old keys preserved
+    assert merged["target_signal_apr"] == 0.25
+    assert merged["entry_ts_ms"] == 1234567890
+    # New key added
+    assert merged["required_margin"] == required

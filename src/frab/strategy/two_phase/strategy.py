@@ -13,8 +13,6 @@ Signal math: two_phase_signals.decide_two_phase + compute_position_min_hold.
 """
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import desc, select
@@ -36,51 +34,13 @@ from frab.engine.two_phase_signals import (
 from frab.events.bus import Event, EventBus
 from frab.exchanges.protocol import Exchange, OpenRequest, WalletKind
 from frab.repo.farb_repo import FarbRepo, StateConflict
-
-logger = logging.getLogger(__name__)
+import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
+from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.state_machine import StateMachine
+from frab.strategy.two_phase.states.check_margin import CheckMarginState
 
 # HL hourly funding intervals per year
 _HOURS_PER_YEAR = 8760
-
-
-# ─── Params ──────────────────────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class TwoPhaseParams:
-    """All tunable parameters for TwoPhaseStrategy.
-
-    Defaults are Candidate C from research/two_phase_dynamic_stability.py.
-    """
-    coins: list[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
-    entry_threshold_apr: float = 0.10        # entry when smoothed signal > this
-    phase2_exit_threshold: float = -0.10     # exit (phase2) when signal < this
-    base_min_hold_hours: int = 24            # floor on dynamic min_hold
-    cap_min_hold_hours: int = 720            # ceiling on dynamic min_hold
-    safety_mult: float = 5.0                # multiplier for breakeven-based min_hold
-    signal_window_hours: int = 12           # rolling MA window (funding ticks)
-    concurrency_cap: int = 3               # K: max simultaneous open positions
-    position_size_usdc: float = 1000.0      # notional per spot leg
-    budget_cap_usdc: float = 10000.0        # max total committed capital (spot notional + margin) across open + pending FarbPositions
-    margin_buffer_factor: float = 3.0       # perp margin = size/leverage * buffer
-    perp_leverage: float = 5.0             # perp leverage for margin calculation
-    # Two-phase exit params
-    phase1_negative_patience: int = 72      # hours of consecutive negative before phase1 exit
-    phase1_breakeven_cap_hours: int = 720   # if hours-to-breakeven > this → exit phase1
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "TwoPhaseParams":
-        """Construct from a params_json dict. Unknown keys are ignored."""
-        known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
-        filtered = {k: v for k, v in d.items() if k in known}
-        return cls(**filtered)
-
-    def required_margin(self) -> float:
-        """USDC to transfer to perp wallet when opening a new position."""
-        return (self.position_size_usdc / self.perp_leverage) * self.margin_buffer_factor
-
-    def per_position_footprint(self) -> float:
-        """Total USDC committed by one FarbPosition: spot notional + reserved margin."""
-        return self.position_size_usdc + self.required_margin()
 
 
 # ─── Strategy ────────────────────────────────────────────────────────────────
@@ -111,6 +71,14 @@ class TwoPhaseStrategy:
         # Set by the force-tick API to bypass the same-hour entry cooldown on a
         # single hour_tick invocation. The API resets it after _hour_tick returns.
         self.force_entry_cooldown_bypass = False
+        self._state_machine = StateMachine({
+            FarbState.CHECK_MARGIN: CheckMarginState(
+                exchange=exchange,
+                farb_repo=farb_repo,
+                params=params,
+                event_bus=event_bus,
+            ),
+        })
 
     async def _publish(self, *, level: str, kind: str, message: str, payload: dict | None = None) -> None:
         if self._bus is None:
@@ -140,7 +108,7 @@ class TwoPhaseStrategy:
             status = strat_row.status if strat_row is not None else "active"
 
         if status == "paused":
-            logger.info("paused: skipping exits/entries strategy_id=%s", self.strategy_id)
+            _pkg.logger.info("paused: skipping exits/entries strategy_id=%s", self.strategy_id)
             await self._accrue_funding(now_ms=now_ms)
             return
 
@@ -176,14 +144,14 @@ class TwoPhaseStrategy:
             try:
                 await self._dispatch(current)
             except StateConflict as exc:
-                logger.warning(
+                _pkg.logger.warning(
                     "state_conflict farb_position_id=%s: %s — skipping tick",
                     current.id,
                     exc,
                 )
                 break
             except Exception as exc:  # noqa: BLE001
-                logger.error(
+                _pkg.logger.error(
                     "advance_one error farb_position_id=%s state=%s: %s — rolling back",
                     current.id,
                     current.state.value,
@@ -208,7 +176,7 @@ class TwoPhaseStrategy:
             # Refetch to see the new state written by the handler
             refreshed = await self.farb_repo.get(current.id)
             if refreshed is None:
-                logger.error(
+                _pkg.logger.error(
                     "advance_one: farb_repo.get returned None for farb_position_id=%s after dispatch — aborting",
                     current.id,
                 )
@@ -216,7 +184,7 @@ class TwoPhaseStrategy:
             current = refreshed
         else:
             # Safety cap: loop exhausted without reaching a terminal state
-            logger.error(
+            _pkg.logger.error(
                 "advance_one safety cap hit farb_position_id=%s state=%s — aborting burst",
                 current.id,
                 current.state.value,
@@ -226,7 +194,7 @@ class TwoPhaseStrategy:
         """Route to the correct handler based on fp.state."""
         match fp.state:
             case FarbState.CHECK_MARGIN:
-                await self._step_check_margin(fp)
+                await self._state_machine.step(fp)
             case FarbState.OPENING_MARGIN:
                 await self._step_opening_margin(fp)
             case FarbState.OPENING_LONG:
@@ -245,38 +213,6 @@ class TwoPhaseStrategy:
                 pass  # terminal — no-op
 
     # ── Open-side steps ───────────────────────────────────────────────────────
-
-    async def _step_check_margin(self, fp: FarbPosition) -> None:
-        required = self.params.required_margin()
-        balance = await self.exchange.get_wallet("USDC", WalletKind.SPOT)
-        if balance < required:
-            reason = f"insufficient_margin: need {required:.4f}, have {balance:.4f}"
-            logger.warning(
-                "check_margin failed farb_position_id=%s coin=%s "
-                "required=%.4f available=%.4f → FAILED",
-                fp.id, fp.coin, required, balance,
-            )
-            await self.farb_repo.mark_failed(fp.id, reason=reason)
-            await self._publish(
-                level="WARNING",
-                kind="farb.failed",
-                message=f"{fp.coin} FAILED at CHECK_MARGIN: {reason}",
-                payload={
-                    "farb_position_id": fp.id,
-                    "coin": fp.coin,
-                    "state": FarbState.CHECK_MARGIN.value,
-                    "required": required,
-                    "available": balance,
-                    "reason": reason,
-                },
-            )
-            return
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.CHECK_MARGIN,
-            to_state=FarbState.OPENING_MARGIN,
-            state_data={**fp.state_data, "required_margin": required},
-        )
 
     async def _step_opening_margin(self, fp: FarbPosition) -> None:
         # HL is cross-margin on one account — no spot→perp transfer needed.
@@ -497,7 +433,7 @@ class TwoPhaseStrategy:
             try:
                 gross = await self.exchange.get_accrued_funding(perp_pos)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
+                _pkg.logger.warning(
                     "accrue_funding: get_accrued_funding failed fp=%s coin=%s: %s",
                     fp.id, fp.coin, exc,
                 )
@@ -510,7 +446,7 @@ class TwoPhaseStrategy:
                 sd["current_signal_apr"] = smoothed
             await self.farb_repo.update_state_data(fp.id, sd)
 
-            logger.info(
+            _pkg.logger.info(
                 "funding accrued fp=%s coin=%s gross_from_HL=%.6f",
                 fp.id, fp.coin, gross,
             )
@@ -536,7 +472,7 @@ class TwoPhaseStrategy:
         remaining_budget = p.budget_cap_usdc - committed_usdc
         slots_by_budget = int(remaining_budget // footprint) if footprint > 0 else 0
         if slots_by_budget <= 0:
-            logger.info(
+            _pkg.logger.info(
                 "budget_cap blocks new entries: committed=%.2f cap=%.2f remaining=%.2f",
                 committed_usdc,
                 p.budget_cap_usdc,
@@ -575,7 +511,7 @@ class TwoPhaseStrategy:
                 and last_failed_ms // 3_600_000 == current_hour
                 and not self.force_entry_cooldown_bypass
             ):
-                logger.info(
+                _pkg.logger.info(
                     "entry cooldown: coin=%s last_failed_at_ms=%d this_hour=%d, skip",
                     coin, last_failed_ms, current_hour,
                 )
@@ -615,7 +551,7 @@ class TwoPhaseStrategy:
                     "entry_ts_ms": now_ms,
                 },
             )
-            logger.info(
+            _pkg.logger.info(
                 "entry candidate farb created coin=%s signal_apr=%.4f", coin, signal
             )
 
@@ -680,14 +616,14 @@ class TwoPhaseStrategy:
                     to_state=FarbState.CLOSING_SHORT,
                     state_data={**updated_sd, "exit_signal_apr": signal, "exit_decision": decision.value},
                 )
-                logger.info(
+                _pkg.logger.info(
                     "exit triggered farb_position_id=%s decision=%s signal=%.4f",
                     fp.id,
                     decision.value,
                     signal if signal is not None else float("nan"),
                 )
             except StateConflict:
-                logger.debug(
+                _pkg.logger.debug(
                     "state_conflict on exit transition farb_position_id=%s — skipping",
                     fp.id,
                 )
@@ -702,7 +638,7 @@ class TwoPhaseStrategy:
 
         Does NOT re-raise. Logs all inner failures at ERROR level.
         """
-        logger.info(
+        _pkg.logger.info(
             "rollback starting farb_position_id=%s partial_state=%s error=%s",
             fp.id,
             partial_state.value,
@@ -715,13 +651,13 @@ class TwoPhaseStrategy:
                     try:
                         spot_pos = await self._get_position(fp.spot_position_id)
                         await self.exchange.close_position(spot_pos)
-                        logger.info(
+                        _pkg.logger.info(
                             "rollback: closed spot leg farb_position_id=%s spot_position_id=%s",
                             fp.id,
                             fp.spot_position_id,
                         )
                     except Exception as inner:  # noqa: BLE001
-                        logger.error(
+                        _pkg.logger.error(
                             "rollback: failed to close spot leg farb_position_id=%s: %s",
                             fp.id,
                             inner,
@@ -732,13 +668,13 @@ class TwoPhaseStrategy:
                 required = fp.state_data.get("required_margin", self.params.required_margin())
                 try:
                     await self.exchange.transfer("USDC", required, WalletKind.PERP, WalletKind.SPOT)
-                    logger.info(
+                    _pkg.logger.info(
                         "rollback: returned margin farb_position_id=%s amount=%.4f",
                         fp.id,
                         required,
                     )
                 except Exception as inner:  # noqa: BLE001
-                    logger.error(
+                    _pkg.logger.error(
                         "rollback: failed to return margin farb_position_id=%s: %s",
                         fp.id,
                         inner,
@@ -746,7 +682,7 @@ class TwoPhaseStrategy:
 
             elif partial_state in (FarbState.CLOSING_LONG, FarbState.CLOSING_SHORT):
                 # Close-side failure: log for human/oncall, do NOT auto-reopen
-                logger.error(
+                _pkg.logger.error(
                     "rollback: close-side failure farb_position_id=%s state=%s — "
                     "manual intervention required, NOT auto-reopening",
                     fp.id,
@@ -754,7 +690,7 @@ class TwoPhaseStrategy:
                 )
 
         except Exception as outer:  # noqa: BLE001
-            logger.error(
+            _pkg.logger.error(
                 "rollback: unexpected error farb_position_id=%s: %s",
                 fp.id,
                 outer,
