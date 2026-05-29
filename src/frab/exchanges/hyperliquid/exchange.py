@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import Exchange as DBExchange
 from frab.domain import Position
+from frab.exchanges.hyperliquid.actions.account_snapshot import AccountSnapshotAction
 from frab.exchanges.hyperliquid.actions.backfill_fees import BackfillFeesAction
 from frab.exchanges.hyperliquid.actions.close_position import ClosePositionAction
 from frab.exchanges.hyperliquid.actions.get_wallet import GetWalletAction
@@ -194,6 +195,12 @@ class HLExchange:
             self._transfer_action = None
             self._backfill_fees_action = None
 
+        self._account_snapshot_action = AccountSnapshotAction(
+            client=self._hl_client,
+            symbols=self._symbols,
+            address=self._address,
+        )
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -333,50 +340,13 @@ class HLExchange:
             raise RuntimeError("session_factory required for get_accrued_funding")
         return await self._load_funding_action.execute(pos)
 
-    # ------------------------------------------------------------------
-    # Spot mids from HL (authoritative spot prices in USDC)
-    # ------------------------------------------------------------------
-
     async def get_spot_mids_by_coin(self) -> dict[str, float]:
         """Return {canonical_coin: spot_mid_USDC} for spot pairs we support."""
-        try:
-            mids = await self._hl_client.all_mids()
-        except Exception as exc:
-            logger.warning("get_spot_mids_by_coin: allMids failed: %s", exc)
-            return {}
-        out: dict[str, float] = {}
-        for key, val in mids.items():
-            if not key.startswith("@"):
-                continue
-            try:
-                idx = int(key[1:])
-            except ValueError:
-                continue
-            name = await self._symbols.resolve_spot_pair(idx)
-            if not name or "/" not in name:
-                continue
-            wrapped, quote = name.split("/", 1)
-            if quote != self._symbols.spot_quote_token:
-                continue
-            canonical = SPOT_TOKEN_INVERSE.get(wrapped)
-            if canonical is None:
-                continue
-            out[canonical] = val
-        return out
-
-    # ------------------------------------------------------------------
-    # Perp unrealized PnL from HL (authoritative)
-    # ------------------------------------------------------------------
+        return await self._symbols.spot_mids_by_coin()
 
     async def get_perp_unrealized_by_coin(self) -> dict[str, float]:
         """Return {coin: unrealizedPnl_USDC} from HL assetPositions."""
-        address = self._require_address()
-        try:
-            state = await self._hl_client.user_state(address)
-        except Exception as exc:
-            logger.warning("get_perp_unrealized_by_coin: user_state failed: %s", exc)
-            return {}
-        return {ap.coin: ap.unrealized_pnl for ap in state.asset_positions if ap.coin}
+        return await self._account_snapshot_action.get_perp_unrealized_by_coin()
 
     # ------------------------------------------------------------------
     # Fees from HL userFills (authoritative)
@@ -467,86 +437,11 @@ class HLExchange:
 
     async def fetch_account_state(self) -> dict[str, Any]:
         """Return raw perp + spot account state dicts."""
-        address = self._require_address()
-        perp_state, spot_state = await asyncio.gather(
-            self._hl_client.user_state(address),
-            self._hl_client.spot_user_state(address),
-        )
-        # Re-serialize to match the dict shape callers (API routes) expect
-        perp_dict = {
-            "marginSummary": {"accountValue": str(perp_state.account_value)},
-            "assetPositions": [
-                {
-                    "position": {
-                        "coin": ap.coin,
-                        "szi": str(ap.szi),
-                        "unrealizedPnl": str(ap.unrealized_pnl),
-                        "cumFunding": {"sinceOpen": str(ap.cum_funding_since_open)},
-                    }
-                }
-                for ap in perp_state.asset_positions
-            ],
-        }
-        spot_dict = {
-            "balances": [
-                {"coin": b.coin, "total": str(b.total), "hold": str(b.hold)}
-                for b in spot_state.balances
-            ]
-        }
-        return {"perp": perp_dict, "spot": spot_dict}
-
+        return await self._account_snapshot_action.get_state()
 
     async def fetch_wallet_state(
         self,
         mark_prices: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         """Return normalized wallet snapshot suitable for the /api/equity/wallet endpoint."""
-        address = self._require_address()  # noqa: F841
-
-        raw = await self.fetch_account_state()
-        perp_state = raw["perp"]
-        spot_state = raw["spot"]
-
-        margin_summary = perp_state.get("marginSummary", {})
-        perp_account_value = float(margin_summary.get("accountValue", 0.0))
-
-        perp_unrealized_pnl = sum(
-            float(entry.get("position", {}).get("unrealizedPnl", 0.0))
-            for entry in perp_state.get("assetPositions", [])
-        )
-
-        prices = mark_prices or {}
-        spot_balances: list[dict[str, Any]] = []
-        usdc_spot = 0.0
-
-        for balance in spot_state.get("balances", []):
-            hl_coin: str = balance.get("coin", "")
-            total = float(balance.get("total", 0.0))
-            if total <= 0:
-                continue
-
-            canonical = self._symbols.normalize_spot_coin(hl_coin)
-
-            if canonical in ("USDC", "USD"):
-                usdc_spot += total
-                continue
-
-            mark = prices.get(canonical, 0.0)
-            usd_value = total * mark
-            spot_balances.append({
-                "coin": canonical,
-                "qty": total,
-                "mark": mark,
-                "usd_value": usd_value,
-            })
-
-        spot_tokens_usd = sum(b["usd_value"] for b in spot_balances)
-        total_usd = perp_account_value + spot_tokens_usd + usdc_spot
-
-        return {
-            "perp_account_value": perp_account_value,
-            "perp_unrealized_pnl": perp_unrealized_pnl,
-            "spot_balances": spot_balances,
-            "usdc_spot": usdc_spot,
-            "total_usd": total_usd,
-        }
+        return await self._account_snapshot_action.get_wallet_state(mark_prices)

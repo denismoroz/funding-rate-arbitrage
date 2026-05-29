@@ -1,6 +1,8 @@
 """Unit tests for HLSymbols — coin normalization, sz_decimals cache, qty rounding."""
 from __future__ import annotations
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock
 
@@ -312,3 +314,93 @@ async def test_normalize_hl_coin_unknown_wrapped_passes_through(mock_client):
     coin, leg = await sym.normalize_hl_coin("FOO/USDC")
     assert coin == "FOO"
     assert leg == "spot"
+
+
+# ---------------------------------------------------------------------------
+# 25. spot_mids_by_coin — happy path: @-prefixed entries resolved to canonical coins
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_spot_mids_by_coin_happy_path(mocker):
+    client = mocker.MagicMock(spec=HLClient)
+    client.all_mids = AsyncMock(return_value={
+        "@1": 60000.0,
+        "@2": 3000.0,
+        "BTC": 60000.0,   # non-@ key, should be skipped
+    })
+    client.spot_meta = AsyncMock(return_value=HLSpotMeta(
+        tokens={1: "UBTC", 2: "UETH"},
+        pairs=[
+            HLSpotPair(index=1, name="UBTC/USDC"),
+            HLSpotPair(index=2, name="UETH/USDC"),
+        ],
+    ))
+    sym = HLSymbols(client=client, spot_token_map={"BTC": "UBTC", "ETH": "UETH"})
+    result = await sym.spot_mids_by_coin()
+    assert result == {"BTC": 60000.0, "ETH": 3000.0}
+
+
+# ---------------------------------------------------------------------------
+# 26. spot_mids_by_coin — pair with wrong quote token is skipped
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_spot_mids_by_coin_wrong_quote_token_skipped(mocker):
+    client = mocker.MagicMock(spec=HLClient)
+    client.all_mids = AsyncMock(return_value={"@1": 60000.0})
+    client.spot_meta = AsyncMock(return_value=HLSpotMeta(
+        tokens={1: "UBTC"},
+        pairs=[HLSpotPair(index=1, name="UBTC/BTC")],  # wrong quote
+    ))
+    sym = HLSymbols(client=client)
+    result = await sym.spot_mids_by_coin()
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# 27. spot_mids_by_coin — wrapped token not in SPOT_TOKEN_INVERSE is skipped
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_spot_mids_by_coin_unknown_wrapped_token_skipped(mocker):
+    client = mocker.MagicMock(spec=HLClient)
+    client.all_mids = AsyncMock(return_value={"@5": 1.0})
+    client.spot_meta = AsyncMock(return_value=HLSpotMeta(
+        tokens={5: "PURR"},
+        pairs=[HLSpotPair(index=5, name="PURR/USDC")],
+    ))
+    sym = HLSymbols(client=client)
+    result = await sym.spot_mids_by_coin()
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# 28. spot_mids_by_coin — resolve_spot_pair returning None or empty string skips entry
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_spot_mids_by_coin_unresolved_pair_skipped(mocker):
+    client = mocker.MagicMock(spec=HLClient)
+    client.all_mids = AsyncMock(return_value={"@999": 100.0})
+    client.spot_meta = AsyncMock(return_value=HLSpotMeta(
+        tokens={},
+        pairs=[],  # index 999 not present → resolve_spot_pair returns None
+    ))
+    sym = HLSymbols(client=client)
+    result = await sym.spot_mids_by_coin()
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# 29. spot_mids_by_coin — client.all_mids() raising logs warning and returns {}
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_spot_mids_by_coin_all_mids_raises_returns_empty(mocker, caplog):
+    client = mocker.MagicMock(spec=HLClient)
+    client.all_mids = AsyncMock(side_effect=RuntimeError("network error"))
+    sym = HLSymbols(client=client)
+    with caplog.at_level(logging.WARNING):
+        result = await sym.spot_mids_by_coin()
+    assert result == {}
+    assert "allMids failed" in caplog.text

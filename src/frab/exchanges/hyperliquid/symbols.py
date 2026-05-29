@@ -5,9 +5,12 @@ caches that any action touching coins needs: perp meta szDecimals and spot pair-
 """
 from __future__ import annotations
 
+import logging
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 
 from frab.exchanges.hyperliquid.client import HLClient
+
+logger = logging.getLogger(__name__)
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
 
 
@@ -90,6 +93,33 @@ class HLSymbols:
         sz_dec = await self.sz_decimals(coin)
         quant = Decimal(10) ** -sz_dec
         return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_HALF_UP))
+
+    async def spot_mids_by_coin(self) -> dict[str, float]:
+        """Return {canonical_coin: spot_mid_USDC} for spot pairs we support."""
+        try:
+            mids = await self._client.all_mids()
+        except Exception as exc:
+            logger.warning("get_spot_mids_by_coin: allMids failed: %s", exc)
+            return {}
+        out: dict[str, float] = {}
+        for key, val in mids.items():
+            if not key.startswith("@"):
+                continue
+            try:
+                idx = int(key[1:])
+            except ValueError:
+                continue
+            name = await self.resolve_spot_pair(idx)
+            if not name or "/" not in name:
+                continue
+            wrapped, quote = name.split("/", 1)
+            if quote != self.spot_quote_token:
+                continue
+            canonical = SPOT_TOKEN_INVERSE.get(wrapped)
+            if canonical is None:
+                continue
+            out[canonical] = val
+        return out
 
     async def resolve_spot_pair(self, idx: int) -> str | None:
         """Map HL spot pair index (the @N) → symbolic name 'UBTC/USDC'.
