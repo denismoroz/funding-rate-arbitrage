@@ -19,25 +19,29 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import Exchange as ExchangeRow
-from frab.db.models import FundingAccrual as FundingAccrualRow
 from frab.db.models import FundingRate as FundingRateRow
 from frab.db.models import Strategy as StrategyRow
 from frab.db.session import session_scope
-from frab.domain import FarbPosition, FarbState, Instrument, Position, Side
-from frab.constants import PERP_TAKER, SPOT_TAKER
+from frab.domain import FarbPosition, FarbState
 from frab.engine.two_phase_signals import (
     TwoPhaseDecision,
-    compute_position_min_hold,
     decide_two_phase,
     update_consec_negative,
 )
 from frab.events.bus import Event, EventBus
-from frab.exchanges.protocol import Exchange, OpenRequest, WalletKind
+from frab.exchanges.protocol import Exchange, WalletKind
 from frab.repo.farb_repo import FarbRepo, StateConflict
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.states._helpers import load_position
 from frab.strategy.two_phase.state_machine import StateMachine
 from frab.strategy.two_phase.states.check_margin import CheckMarginState
+from frab.strategy.two_phase.states.closing_long import ClosingLongState
+from frab.strategy.two_phase.states.closing_short import ClosingShortState
+from frab.strategy.two_phase.states.opening_long import OpeningLongState
+from frab.strategy.two_phase.states.opening_margin import OpeningMarginState
+from frab.strategy.two_phase.states.opening_short import OpeningShortState
+from frab.strategy.two_phase.states.releasing_margin import ReleasingMarginState
 
 # HL hourly funding intervals per year
 _HOURS_PER_YEAR = 8760
@@ -77,6 +81,38 @@ class TwoPhaseStrategy:
                 farb_repo=farb_repo,
                 params=params,
                 event_bus=event_bus,
+            ),
+            FarbState.OPENING_MARGIN: OpeningMarginState(
+                exchange=exchange,
+                farb_repo=farb_repo,
+                params=params,
+            ),
+            FarbState.OPENING_LONG: OpeningLongState(
+                exchange=exchange,
+                farb_repo=farb_repo,
+                params=params,
+            ),
+            FarbState.OPENING_SHORT: OpeningShortState(
+                exchange=exchange,
+                farb_repo=farb_repo,
+                params=params,
+                event_bus=event_bus,
+            ),
+            FarbState.CLOSING_SHORT: ClosingShortState(
+                exchange=exchange,
+                farb_repo=farb_repo,
+                session_factory=session_factory,
+            ),
+            FarbState.CLOSING_LONG: ClosingLongState(
+                exchange=exchange,
+                farb_repo=farb_repo,
+                session_factory=session_factory,
+                event_bus=event_bus,
+            ),
+            FarbState.RELEASING_MARGIN: ReleasingMarginState(
+                exchange=exchange,
+                farb_repo=farb_repo,
+                session_factory=session_factory,
             ),
         })
 
@@ -191,178 +227,9 @@ class TwoPhaseStrategy:
             )
 
     async def _dispatch(self, fp: FarbPosition) -> None:
-        """Route to the correct handler based on fp.state."""
-        match fp.state:
-            case FarbState.CHECK_MARGIN:
-                await self._state_machine.step(fp)
-            case FarbState.OPENING_MARGIN:
-                await self._step_opening_margin(fp)
-            case FarbState.OPENING_LONG:
-                await self._step_opening_long(fp)
-            case FarbState.OPENING_SHORT:
-                await self._step_opening_short(fp)
-            case FarbState.OPEN:
-                pass  # steady state — no-op
-            case FarbState.CLOSING_SHORT:
-                await self._step_closing_short(fp)
-            case FarbState.CLOSING_LONG:
-                await self._step_closing_long(fp)
-            case FarbState.RELEASING_MARGIN:
-                await self._step_releasing_margin(fp)
-            case FarbState.CLOSED | FarbState.FAILED:
-                pass  # terminal — no-op
-
-    # ── Open-side steps ───────────────────────────────────────────────────────
-
-    async def _step_opening_margin(self, fp: FarbPosition) -> None:
-        # HL is cross-margin on one account — no spot→perp transfer needed.
-        # We still record a COLLATERAL Position row so the FP has a tracked
-        # margin obligation (qty = USDC reserved; entry_price = 1.0). The
-        # actual hold on spot USDC is created by HL when the perp leg opens.
-        required = fp.state_data.get("required_margin", self.params.required_margin())
-        coll_req = OpenRequest(
-            coin="USDC",
-            instrument=Instrument.COLLATERAL,
-            side=Side.NONE,
-            qty=required,
-            farb_position_id=fp.id,
-        )
-        coll_pos = await self.exchange.open_position(coll_req)
-        await self.farb_repo.set_leg(
-            fp.id, instrument=Instrument.COLLATERAL, position_id=coll_pos.id
-        )
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.OPENING_MARGIN,
-            to_state=FarbState.OPENING_LONG,
-        )
-
-    async def _step_opening_long(self, fp: FarbPosition) -> None:
-        quote = await self.exchange.get_quote(fp.coin)
-        price = quote.spot if quote.spot is not None else quote.mark
-        spot_qty = self.params.position_size_usdc / price
-        req = OpenRequest(
-            coin=fp.coin,
-            instrument=Instrument.SPOT,
-            side=Side.LONG,
-            qty=spot_qty,
-            farb_position_id=fp.id,
-        )
-        pos = await self.exchange.open_position(req)
-        await self.farb_repo.set_leg(fp.id, instrument=Instrument.SPOT, position_id=pos.id)
-        # Use the actual filled qty (pos.qty) for the perp short so spot and
-        # perp legs match in size after HL's szDecimals flooring + partial fills.
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.OPENING_LONG,
-            to_state=FarbState.OPENING_SHORT,
-            state_data={**fp.state_data, "spot_qty": pos.qty, "spot_entry_price": pos.entry_price},
-        )
-
-    async def _step_opening_short(self, fp: FarbPosition) -> None:
-        spot_qty = fp.state_data.get("spot_qty")
-        if spot_qty is None:
-            # Fallback: recompute from current price
-            quote = await self.exchange.get_quote(fp.coin)
-            price = quote.spot if quote.spot is not None else quote.mark
-            spot_qty = self.params.position_size_usdc / price
-
-        req = OpenRequest(
-            coin=fp.coin,
-            instrument=Instrument.PERP,
-            side=Side.SHORT,
-            qty=spot_qty,
-            farb_position_id=fp.id,
-            leverage=int(self.params.perp_leverage),
-        )
-        pos = await self.exchange.open_position(req)
-        await self.farb_repo.set_leg(fp.id, instrument=Instrument.PERP, position_id=pos.id)
-        # Record two-phase dynamic state at entry
-        entry_signal = fp.state_data.get("target_signal_apr", 0.0)
-        pos_min_hold = compute_position_min_hold(
-            entry_signal_annual=entry_signal,
-            safety_mult=self.params.safety_mult,
-            base_min_hold_hours=self.params.base_min_hold_hours,
-            cap_min_hold_hours=self.params.cap_min_hold_hours,
-        )
-        # total_fees_paid: round-trip fees at entry (perp taker + spot taker, both sides)
-        total_fees_paid = self.params.position_size_usdc * (PERP_TAKER + SPOT_TAKER) * 2
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.OPENING_SHORT,
-            to_state=FarbState.OPEN,
-            state_data={
-                **fp.state_data,
-                "position_min_hold_hours": pos_min_hold,
-                "gross_funding_so_far": 0.0,
-                "total_fees_paid": total_fees_paid,
-                "consec_negative_hours": 0,
-                "opened_at_ms": _now_ms(),
-                "leverage": int(self.params.perp_leverage),
-            },
-        )
-        await self._publish(
-            level="INFO",
-            kind="farb.opened",
-            message=(
-                f"{fp.coin} OPEN: spot={spot_qty:.6f} @ "
-                f"{fp.state_data.get('spot_entry_price', 0):.2f}, "
-                f"perp_short={pos.qty:.6f} @ {pos.entry_price:.2f}"
-            ),
-            payload={
-                "farb_position_id": fp.id,
-                "coin": fp.coin,
-                "spot_qty": spot_qty,
-                "perp_qty": pos.qty,
-                "spot_entry_price": fp.state_data.get("spot_entry_price"),
-                "perp_entry_price": pos.entry_price,
-                "target_signal_apr": entry_signal,
-                "position_min_hold_hours": pos_min_hold,
-            },
-        )
-
-    # ── Close-side steps ──────────────────────────────────────────────────────
-
-    async def _step_closing_short(self, fp: FarbPosition) -> None:
-        if fp.perp_position_id is None:
-            raise RuntimeError(f"FarbPosition {fp.id} has no perp_position_id in CLOSING_SHORT")
-        perp_pos = await self._get_position(fp.perp_position_id)
-        await self.exchange.close_position(perp_pos)
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.CLOSING_SHORT,
-            to_state=FarbState.CLOSING_LONG,
-        )
-
-    async def _step_closing_long(self, fp: FarbPosition) -> None:
-        if fp.spot_position_id is None:
-            raise RuntimeError(f"FarbPosition {fp.id} has no spot_position_id in CLOSING_LONG")
-        spot_pos = await self._get_position(fp.spot_position_id)
-        await self.exchange.close_position(spot_pos)
-        await self.farb_repo.transition(
-            fp.id,
-            from_state=FarbState.CLOSING_LONG,
-            to_state=FarbState.RELEASING_MARGIN,
-        )
-        await self._publish(
-            level="INFO",
-            kind="farb.closed",
-            message=f"{fp.coin} CLOSED (held {fp.state_data.get('hours_in_position', '?')}h)",
-            payload={
-                "farb_position_id": fp.id,
-                "coin": fp.coin,
-                "exit_signal_apr": fp.state_data.get("exit_signal_apr"),
-                "exit_decision": fp.state_data.get("exit_decision"),
-            },
-        )
-
-    async def _step_releasing_margin(self, fp: FarbPosition) -> None:
-        # HL cross-margin releases spot.USDC.hold automatically when the perp
-        # leg closes — we only mark our COLLATERAL bookkeeping row CLOSED.
-        if fp.margin_position_id is not None:
-            coll_pos = await self._get_position(fp.margin_position_id)
-            await self.exchange.close_position(coll_pos)
-        await self.farb_repo.mark_closed(fp.id)
+        """Route to the registered state handler. Steady/terminal states have no
+        handler registered → StateMachine.step returns None (no-op)."""
+        await self._state_machine.step(fp)
 
     # ── Signal computation ────────────────────────────────────────────────────
 
@@ -429,7 +296,7 @@ class TwoPhaseStrategy:
         for fp in open_fps:
             if fp.perp_position_id is None:
                 continue
-            perp_pos = await self._get_position(fp.perp_position_id)
+            perp_pos = await load_position(self._sf,fp.perp_position_id)
             try:
                 gross = await self.exchange.get_accrued_funding(perp_pos)
             except Exception as exc:  # noqa: BLE001
@@ -649,7 +516,7 @@ class TwoPhaseStrategy:
                 # Spot leg is open; close it
                 if fp.spot_position_id is not None:
                     try:
-                        spot_pos = await self._get_position(fp.spot_position_id)
+                        spot_pos = await load_position(self._sf,fp.spot_position_id)
                         await self.exchange.close_position(spot_pos)
                         _pkg.logger.info(
                             "rollback: closed spot leg farb_position_id=%s spot_position_id=%s",
@@ -696,43 +563,8 @@ class TwoPhaseStrategy:
                 outer,
             )
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    async def _get_position(self, position_id: int) -> Position:
-        """Load a Position domain object from DB by id."""
-        from frab.db.models import Position as PositionRow
-        from frab.domain import Position as DomainPosition
-        from frab.domain.enums import Instrument as Inst, PositionStatus, Side as S
-        from datetime import timezone
-
-        async with session_scope(self._sf) as session:
-            row = await session.get(PositionRow, position_id)
-            if row is None:
-                raise KeyError(f"Position {position_id} not found")
-            return DomainPosition(
-                id=row.id,
-                exchange_name=str(row.exchange_id),  # exchange name resolved elsewhere
-                coin=row.coin,
-                instrument=Inst(row.instrument),
-                side=S(row.side),
-                qty=row.qty,
-                entry_price=row.entry_price,
-                opened_at=datetime.fromtimestamp(row.opened_at / 1000, tz=timezone.utc),
-                closed_at=(
-                    datetime.fromtimestamp(row.closed_at / 1000, tz=timezone.utc)
-                    if row.closed_at is not None
-                    else None
-                ),
-                status=PositionStatus(row.status),
-                farb_position_id=row.farb_position_id,
-            )
-
 
 # ─── Tiny utilities ──────────────────────────────────────────────────────────
-
-def _now_ms() -> int:
-    return int(datetime.now(timezone.utc).timestamp() * 1000)
-
 
 def _dt_to_ms(dt: datetime) -> int:
     return int(dt.timestamp() * 1000)

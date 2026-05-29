@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
 from frab.domain import FarbPosition, FarbState
-from frab.events.bus import Event, EventBus
+from frab.events.bus import EventBus
 from frab.exchanges.protocol import Exchange, WalletKind
 from frab.repo.farb_repo import FarbRepo
 from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.states._helpers import publish_event
 from frab.strategy.two_phase.states.base import State
 
 logger = logging.getLogger(__name__)
@@ -28,25 +28,6 @@ class CheckMarginState(State):
         self._params = params
         self._bus = event_bus
 
-    async def _publish(
-        self,
-        *,
-        level: str,
-        kind: str,
-        message: str,
-        payload: dict | None = None,
-    ) -> None:
-        if self._bus is None:
-            return
-        await self._bus.publish(Event(
-            ts=datetime.now(timezone.utc),
-            level=level,
-            source="strategy",
-            kind=kind,
-            message=message,
-            payload_json=payload,
-        ))
-
     async def execute(self, fp: FarbPosition) -> FarbState | None:
         required = self._params.required_margin()
         balance = await self._exchange.get_wallet("USDC", WalletKind.SPOT)
@@ -58,7 +39,8 @@ class CheckMarginState(State):
                 fp.id, fp.coin, required, balance,
             )
             await self._farb_repo.mark_failed(fp.id, reason=reason)
-            await self._publish(
+            await publish_event(
+                self._bus,
                 level="WARNING",
                 kind="farb.failed",
                 message=f"{fp.coin} FAILED at CHECK_MARGIN: {reason}",
