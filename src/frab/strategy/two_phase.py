@@ -336,6 +336,25 @@ class TwoPhaseStrategy:
                 "opened_at_ms": _now_ms(),
             },
         )
+        await self._publish(
+            level="INFO",
+            kind="farb.opened",
+            message=(
+                f"{fp.coin} OPEN: spot={spot_qty:.6f} @ "
+                f"{fp.state_data.get('spot_entry_price', 0):.2f}, "
+                f"perp_short={pos.qty:.6f} @ {pos.entry_price:.2f}"
+            ),
+            payload={
+                "farb_position_id": fp.id,
+                "coin": fp.coin,
+                "spot_qty": spot_qty,
+                "perp_qty": pos.qty,
+                "spot_entry_price": fp.state_data.get("spot_entry_price"),
+                "perp_entry_price": pos.entry_price,
+                "target_signal_apr": entry_signal,
+                "position_min_hold_hours": pos_min_hold,
+            },
+        )
 
     # ── Close-side steps ──────────────────────────────────────────────────────
 
@@ -356,6 +375,17 @@ class TwoPhaseStrategy:
         spot_pos = await self._get_position(fp.spot_position_id)
         await self.exchange.close_position(spot_pos)
         await self.farb_repo.mark_closed(fp.id)
+        await self._publish(
+            level="INFO",
+            kind="farb.closed",
+            message=f"{fp.coin} CLOSED (held {fp.state_data.get('hours_in_position', '?')}h)",
+            payload={
+                "farb_position_id": fp.id,
+                "coin": fp.coin,
+                "exit_signal_apr": fp.state_data.get("exit_signal_apr"),
+                "exit_decision": fp.state_data.get("exit_decision"),
+            },
+        )
 
     async def _step_releasing_margin(self, fp: FarbPosition) -> None:
         # HL is cross-margin on one account; no perp→spot transfer needed.
