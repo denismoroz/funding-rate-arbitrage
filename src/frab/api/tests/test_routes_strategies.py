@@ -123,3 +123,71 @@ async def test_patch_strategy_params_accepts_all_valid_keys(api_client, session_
     )
     # Should not be 422 for known keys
     assert resp.status_code == 200
+
+
+# ── pause / resume endpoints ──────────────────────────────────────────────────
+
+
+async def test_pause_sets_status_paused(api_client, session_factory):
+    """POST /pause flips status to 'paused' and returns the new status."""
+    strat_id = await _seed_strategy(session_factory)
+
+    resp = await api_client.post(f"/api/strategies/{strat_id}/pause")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == strat_id
+    assert data["status"] == "paused"
+    assert "ts_ms" in data
+
+    # Verify persisted to DB
+    async with session_scope(session_factory) as s:
+        from sqlalchemy import select as sa_select
+        row = (await s.execute(sa_select(Strategy).where(Strategy.id == strat_id))).scalar_one()
+        assert row.status == "paused"
+
+
+async def test_resume_sets_status_active(api_client, session_factory):
+    """POST /resume flips status to 'active' and returns the new status."""
+    strat_id = await _seed_strategy(session_factory, params={"status": "paused"})
+    # Force the status to paused first via the pause endpoint
+    await api_client.post(f"/api/strategies/{strat_id}/pause")
+
+    resp = await api_client.post(f"/api/strategies/{strat_id}/resume")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == strat_id
+    assert data["status"] == "active"
+    assert "ts_ms" in data
+
+    async with session_scope(session_factory) as s:
+        from sqlalchemy import select as sa_select
+        row = (await s.execute(sa_select(Strategy).where(Strategy.id == strat_id))).scalar_one()
+        assert row.status == "active"
+
+
+async def test_pause_idempotent(api_client, session_factory):
+    """POST /pause on an already-paused strategy returns 200 (idempotent)."""
+    strat_id = await _seed_strategy(session_factory)
+
+    # Pause once
+    r1 = await api_client.post(f"/api/strategies/{strat_id}/pause")
+    assert r1.status_code == 200
+
+    # Pause again — must still be 200
+    r2 = await api_client.post(f"/api/strategies/{strat_id}/pause")
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "paused"
+
+
+async def test_pause_404_for_nonexistent(api_client):
+    """POST /pause on a non-existent strategy_id returns 404."""
+    resp = await api_client.post("/api/strategies/99999/pause")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+async def test_resume_404_for_nonexistent(api_client):
+    """POST /resume on a non-existent strategy_id returns 404."""
+    resp = await api_client.post("/api/strategies/99999/resume")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()

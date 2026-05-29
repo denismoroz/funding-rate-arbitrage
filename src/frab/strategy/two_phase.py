@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 from frab.db.models import Exchange as ExchangeRow
 from frab.db.models import FundingAccrual as FundingAccrualRow
 from frab.db.models import FundingRate as FundingRateRow
+from frab.db.models import Strategy as StrategyRow
 from frab.db.session import session_scope
 from frab.domain import FarbPosition, FarbState, Instrument, Position, Side
 from frab.constants import PERP_TAKER, SPOT_TAKER
@@ -133,6 +134,16 @@ class TwoPhaseStrategy:
 
     async def on_hour_tick(self, *, now_ms: int) -> None:
         """Hourly: accrue funding on open positions, evaluate exits, then entries."""
+        # Read fresh status from DB (params can be edited without restart).
+        async with session_scope(self._sf) as session:
+            strat_row = await session.get(StrategyRow, self.strategy_id)
+            status = strat_row.status if strat_row is not None else "active"
+
+        if status == "paused":
+            logger.info("paused: skipping exits/entries strategy_id=%s", self.strategy_id)
+            await self._accrue_funding(now_ms=now_ms)
+            return
+
         await self._accrue_funding(now_ms=now_ms)
         await self._evaluate_exits(now_ms=now_ms)
         await self._evaluate_entries(now_ms=now_ms)

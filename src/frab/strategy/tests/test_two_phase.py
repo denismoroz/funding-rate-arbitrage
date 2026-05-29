@@ -1092,6 +1092,56 @@ async def test_evaluate_entries_blocks_when_budget_cap_reached(
 
 
 @pytest.mark.asyncio
+async def test_on_hour_tick_paused_skips_exits_and_entries(
+    session_factory, farb_repo, strategy_id, mocker
+):
+    """When Strategy.status=='paused', on_hour_tick calls _accrue_funding but
+    skips _evaluate_exits and _evaluate_entries entirely."""
+    # Set the strategy status to 'paused' in the DB.
+    from frab.db.models import Strategy as StrategyRow
+    async with session_scope(session_factory) as s:
+        row = await s.get(StrategyRow, strategy_id)
+        row.status = "paused"
+        s.add(row)
+
+    exchange = _make_exchange()
+    strat = _make_strategy(exchange, farb_repo, session_factory)
+    strat.strategy_id = strategy_id
+
+    mock_accrue = mocker.patch.object(strat, "_accrue_funding")
+    mock_exits = mocker.patch.object(strat, "_evaluate_exits")
+    mock_entries = mocker.patch.object(strat, "_evaluate_entries")
+
+    await strat.on_hour_tick(now_ms=_NOW_MS)
+
+    mock_accrue.assert_awaited_once_with(now_ms=_NOW_MS)
+    mock_exits.assert_not_called()
+    mock_entries.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_hour_tick_active_runs_all_phases(
+    session_factory, farb_repo, strategy_id, mocker
+):
+    """When Strategy.status=='active' (or any non-paused value), on_hour_tick
+    calls _accrue_funding, _evaluate_exits, and _evaluate_entries."""
+    # status defaults to "idle" in the fixture — must be treated as active
+    exchange = _make_exchange()
+    strat = _make_strategy(exchange, farb_repo, session_factory)
+    strat.strategy_id = strategy_id
+
+    mock_accrue = mocker.patch.object(strat, "_accrue_funding")
+    mock_exits = mocker.patch.object(strat, "_evaluate_exits")
+    mock_entries = mocker.patch.object(strat, "_evaluate_entries")
+
+    await strat.on_hour_tick(now_ms=_NOW_MS)
+
+    mock_accrue.assert_awaited_once_with(now_ms=_NOW_MS)
+    mock_exits.assert_awaited_once_with(now_ms=_NOW_MS)
+    mock_entries.assert_awaited_once_with(now_ms=_NOW_MS)
+
+
+@pytest.mark.asyncio
 async def test_evaluate_entries_respects_partial_budget(
     session_factory, farb_repo, strategy_id, exchange_id
 ):

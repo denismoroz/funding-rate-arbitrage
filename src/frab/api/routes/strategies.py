@@ -1,4 +1,7 @@
 """Strategy routes — updated for new schema."""
+import time
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -7,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from frab.api.deps import get_session
 from frab.db.models import Strategy
 from frab.db.session import session_scope
+from frab.events.bus import Event
 from frab.strategy.two_phase import TwoPhaseParams
 
 router = APIRouter()
@@ -107,6 +111,56 @@ async def patch_strategy_params(
         "restart_required": True,
         "note": "params_json updated; engine must be restarted to pick up changes",
     }
+
+
+@router.post("/{strategy_id}/pause")
+async def pause_strategy(strategy_id: int, request: Request, session: AsyncSession = Depends(get_session)) -> dict:
+    """Set strategy status to 'paused'. Idempotent."""
+    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    strategy.status = "paused"
+    session.add(strategy)
+    ts_ms = int(time.time() * 1000)
+
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus is not None:
+        await event_bus.publish(Event(
+            ts=datetime.now(timezone.utc),
+            level="INFO",
+            source="api",
+            kind="strategy.paused",
+            message=f"strategy {strategy_id} paused",
+        ))
+
+    return {"id": strategy_id, "status": "paused", "ts_ms": ts_ms}
+
+
+@router.post("/{strategy_id}/resume")
+async def resume_strategy(strategy_id: int, request: Request, session: AsyncSession = Depends(get_session)) -> dict:
+    """Set strategy status to 'active'. Idempotent."""
+    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    strategy = result.scalar_one_or_none()
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    strategy.status = "active"
+    session.add(strategy)
+    ts_ms = int(time.time() * 1000)
+
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus is not None:
+        await event_bus.publish(Event(
+            ts=datetime.now(timezone.utc),
+            level="INFO",
+            source="api",
+            kind="strategy.resumed",
+            message=f"strategy {strategy_id} resumed",
+        ))
+
+    return {"id": strategy_id, "status": "active", "ts_ms": ts_ms}
 
 
 @router.post("/{strategy_id}/force-tick")
