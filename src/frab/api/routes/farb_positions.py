@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,7 +90,13 @@ async def _compute_unrealized_pnl(
 _HOURS_PER_YEAR = 8760
 
 
-def _fp_to_dict(fp: FarbPositionRow, legs: dict, hours_held: float | None, unrealized_pnl: float | None) -> dict:
+def _fp_to_dict(
+    fp: FarbPositionRow,
+    legs: dict,
+    hours_held: float | None,
+    unrealized_pnl: float | None,
+    margin_used_by_coin: dict[str, float] | None = None,
+) -> dict:
     """Serialize a FarbPositionRow to the response shape."""
     sd = fp.state_data or {}
 
@@ -116,11 +122,18 @@ def _fp_to_dict(fp: FarbPositionRow, legs: dict, hours_held: float | None, unrea
             remaining = max(fees_usdc - funding_usdc, 0.0)
             breakeven_hours = remaining / hourly_income
 
+    # locked_margin_usdc: only meaningful for OPEN positions still tracked by HL
+    state_str = fp.state.upper() if isinstance(fp.state, str) else fp.state
+    is_open = (state_str == "OPEN")
+    locked_margin = 0.0
+    if is_open and margin_used_by_coin is not None:
+        locked_margin = margin_used_by_coin.get(fp.coin, 0.0)
+
     return {
         "id": fp.id,
         "strategy_id": fp.strategy_id,
         "coin": fp.coin,
-        "state": fp.state.upper() if isinstance(fp.state, str) else fp.state,
+        "state": state_str,
         "state_data": sd,
         "opened_at_ms": fp.opened_at,
         "closed_at_ms": fp.closed_at,
@@ -134,10 +147,16 @@ def _fp_to_dict(fp: FarbPositionRow, legs: dict, hours_held: float | None, unrea
         "funding_usdc": funding_usdc,
         "fees_usdc": fees_usdc,
         "breakeven_hours_remaining": breakeven_hours,
+        "locked_margin_usdc": locked_margin,
+        "leverage": sd.get("leverage"),
     }
 
 
-async def _enrich(session: AsyncSession, fp: FarbPositionRow) -> dict:
+async def _enrich(
+    session: AsyncSession,
+    fp: FarbPositionRow,
+    margin_used_by_coin: dict[str, float] | None = None,
+) -> dict:
     """Load legs + compute hours_held + compute unrealized PnL for a single FarbPositionRow."""
     collateral = await _load_leg(session, fp.margin_position_id)
     spot = await _load_leg(session, fp.spot_position_id)
@@ -152,11 +171,12 @@ async def _enrich(session: AsyncSession, fp: FarbPositionRow) -> dict:
 
     unrealized_pnl = await _compute_unrealized_pnl(session, fp, spot, perp)
 
-    return _fp_to_dict(fp, legs, hours_held, unrealized_pnl)
+    return _fp_to_dict(fp, legs, hours_held, unrealized_pnl, margin_used_by_coin)
 
 
 @router.get("")
 async def list_farb_positions(
+    request: Request,
     strategy_id: int,
     status: str | None = None,
     session: AsyncSession = Depends(get_session),
@@ -194,15 +214,55 @@ async def list_farb_positions(
     result = await session.execute(stmt)
     rows = result.scalars().all()
 
-    return [await _enrich(session, fp) for fp in rows]
+    # Fetch HL margin data once per request (best-effort; falls back to empty)
+    margin_used_by_coin: dict[str, float] = {}
+    exchange = getattr(request.app.state, "exchange", None)
+    if exchange is not None:
+        try:
+            hl_state = await exchange.fetch_account_state()
+            hl_positions = hl_state.get("perp", {}).get("assetPositions") or []
+        except Exception:
+            hl_positions = []
+        for ap in hl_positions:
+            p = ap.get("position") or {}
+            coin = p.get("coin")
+            try:
+                m = float(p.get("marginUsed", 0))
+            except (TypeError, ValueError):
+                continue
+            if coin:
+                margin_used_by_coin[coin] = m
+
+    return [await _enrich(session, fp, margin_used_by_coin) for fp in rows]
 
 
 @router.get("/{farb_position_id}")
 async def get_farb_position(
+    request: Request,
     farb_position_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     fp = await session.get(FarbPositionRow, farb_position_id)
     if fp is None:
         raise HTTPException(status_code=404, detail="FarbPosition not found")
-    return await _enrich(session, fp)
+
+    # Fetch HL margin data best-effort for single FP
+    margin_used_by_coin: dict[str, float] = {}
+    exchange = getattr(request.app.state, "exchange", None)
+    if exchange is not None:
+        try:
+            hl_state = await exchange.fetch_account_state()
+            hl_positions = hl_state.get("perp", {}).get("assetPositions") or []
+        except Exception:
+            hl_positions = []
+        for ap in hl_positions:
+            p = ap.get("position") or {}
+            coin = p.get("coin")
+            try:
+                m = float(p.get("marginUsed", 0))
+            except (TypeError, ValueError):
+                continue
+            if coin:
+                margin_used_by_coin[coin] = m
+
+    return await _enrich(session, fp, margin_used_by_coin)

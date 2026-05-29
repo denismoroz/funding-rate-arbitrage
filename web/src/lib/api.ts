@@ -100,6 +100,8 @@ export type FarbPosition = {
   funding_usdc: number;
   fees_usdc: number;
   breakeven_hours_remaining: number | null;
+  locked_margin_usdc: number;
+  leverage: number | null;
 };
 
 export type FundingRate = {
@@ -168,7 +170,8 @@ export type EquitySummary = {
   long: number;
   short: number;
   free: number;
-  margin: number;
+  locked: number;
+  reserved: number;
 };
 
 export function fetchEquitySummary(): Promise<EquitySummary> {

@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
-from frab.db.models import EquitySnapshot
+from frab.db.models import EquitySnapshot, FarbPosition as DBFarbPosition
+from frab.domain.enums import FarbState
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -123,7 +124,30 @@ async def get_summary(request: Request) -> dict:
         mid = spot_mids.get(canonical, 0.0)
         spot_tokens_value += total * mid
 
-    spot_free_usdc = spot_total_usdc - spot_hold_usdc
+    # locked: sum of marginUsed across HL assetPositions (same as totalMarginUsed, renamed)
+    locked_usdc = 0.0
+    for entry in perp_state.get("assetPositions") or []:
+        pos = entry.get("position") or {}
+        try:
+            locked_usdc += float(pos.get("marginUsed", 0.0))
+        except (TypeError, ValueError):
+            pass
+
+    # reserved: sum of state_data.required_margin over all currently OPEN FarbPositions in DB
+    sf = getattr(request.app.state, "session_factory", None)
+    reserved_usdc = 0.0
+    if sf is not None:
+        async with sf() as s:
+            rows = (await s.execute(
+                select(DBFarbPosition).where(DBFarbPosition.state == FarbState.OPEN.name)
+            )).scalars().all()
+        reserved_usdc = sum(
+            float((r.state_data or {}).get("required_margin", 0) or 0) for r in rows
+        )
+
+    # free: spot USDC total minus reserved (not minus hold, which is a HL internal concept)
+    spot_free_usdc = spot_total_usdc - reserved_usdc
+
     perp_standalone = account_value - spot_hold_usdc - unrealized - cum_funding_received
     total_equity = spot_total_usdc + perp_standalone + spot_tokens_value + unrealized + cum_funding_received
 
@@ -133,5 +157,6 @@ async def get_summary(request: Request) -> dict:
         "long": spot_tokens_value + long_notional,
         "short": short_notional,
         "free": spot_free_usdc,
-        "margin": margin_used,
+        "locked": locked_usdc,
+        "reserved": reserved_usdc,
     }

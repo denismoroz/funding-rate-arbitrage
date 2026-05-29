@@ -351,6 +351,7 @@ class TwoPhaseStrategy:
                 "total_fees_paid": total_fees_paid,
                 "consec_negative_hours": 0,
                 "opened_at_ms": _now_ms(),
+                "leverage": int(self.params.perp_leverage),
             },
         )
         await self._publish(
