@@ -696,6 +696,34 @@ class HLExchange:
         return total
 
     # ------------------------------------------------------------------
+    # Perp unrealized PnL from HL (authoritative)
+    # ------------------------------------------------------------------
+
+    async def get_perp_unrealized_by_coin(self) -> dict[str, float]:
+        """Return {coin: unrealizedPnl_USDC} from HL assetPositions.
+
+        Empty dict if HL reports no open perp positions. Caller decides whether
+        to use this as a per-coin override or to fall back to local m-to-m.
+        """
+        address = self._require_address()
+        try:
+            state = await asyncio.to_thread(self._info.user_state, address)
+        except Exception as exc:
+            logger.warning("get_perp_unrealized_by_coin: user_state failed: %s", exc)
+            return {}
+        out: dict[str, float] = {}
+        for entry in state.get("assetPositions") or []:
+            pos = entry.get("position", {})
+            coin = pos.get("coin")
+            if not coin:
+                continue
+            try:
+                out[coin] = float(pos.get("unrealizedPnl", 0.0))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    # ------------------------------------------------------------------
     # Fees from HL userFills (authoritative)
     # ------------------------------------------------------------------
 

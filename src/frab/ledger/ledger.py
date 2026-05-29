@@ -82,6 +82,8 @@ class Ledger:
         self,
         strategy_id: int,
         quotes: dict[str, Quote],
+        *,
+        perp_unrealized_by_coin: dict[str, float] | None = None,
     ) -> EquitySnapshot:
         """Compute equity snapshot from DB + quotes.  Read-only — no DB writes.
 
@@ -93,6 +95,12 @@ class Ledger:
             Mapping coin → fresh Quote.  For coins with open positions that are
             absent from this dict, the position's contribution is treated as 0
             and a WARN event is logged.
+        perp_unrealized_by_coin:
+            Optional {coin: unrealizedPnl_USDC} sourced from the exchange
+            (e.g. HL assetPositions[].unrealizedPnl). When provided for a coin
+            that has an open PERP position in the DB, this value is used
+            instead of the local (entry-mark)*qty estimate. Missing coins fall
+            back to the local computation.
 
         Returns
         -------
@@ -104,7 +112,8 @@ class Ledger:
         async with self._sf() as session:
             cash = await self._compute_cash(session, strategy_id)
             spot_value, perp_unrealized = await self._compute_position_values(
-                session, strategy_id, quotes
+                session, strategy_id, quotes,
+                perp_unrealized_by_coin=perp_unrealized_by_coin,
             )
             perp_realized_cum = await self._compute_perp_realized(session, strategy_id)
             funding_cum = await self._compute_funding_cum(session, strategy_id)
@@ -157,9 +166,14 @@ class Ledger:
         self,
         strategy_id: int,
         quotes: dict[str, Quote],
+        *,
+        perp_unrealized_by_coin: dict[str, float] | None = None,
     ) -> EquitySnapshot:
         """Convenience: compute then save.  Returns the snapshot."""
-        snapshot = await self.compute_equity(strategy_id, quotes)
+        snapshot = await self.compute_equity(
+            strategy_id, quotes,
+            perp_unrealized_by_coin=perp_unrealized_by_coin,
+        )
         await self.save_snapshot(snapshot)
         return snapshot
 
@@ -213,6 +227,8 @@ class Ledger:
         session: AsyncSession,
         strategy_id: int,
         quotes: dict[str, Quote],
+        *,
+        perp_unrealized_by_coin: dict[str, float] | None = None,
     ) -> tuple[float, float]:
         """Return (spot_value, perp_unrealized) for all OPEN positions
         linked to this strategy via farb_positions.
@@ -268,6 +284,9 @@ class Ledger:
                 spot_value += pos.qty * price
 
             elif instrument == Instrument.PERP:
+                if perp_unrealized_by_coin is not None and coin in perp_unrealized_by_coin:
+                    perp_unrealized += perp_unrealized_by_coin[coin]
+                    continue
                 mark = quote.mark
                 if side == Side.LONG:
                     perp_unrealized += (mark - pos.entry_price) * pos.qty

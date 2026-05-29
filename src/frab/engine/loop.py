@@ -155,7 +155,20 @@ class EngineLoop:
         await self._strategy.on_minute_tick(now_ms=now_ms)
 
         quote_map = {q.coin: q for q in quotes}
-        await self._ledger.compute_and_save(self._strategy.strategy_id, quote_map)
+        # Pull authoritative unrealized PnL from the exchange when available
+        # (HL: assetPositions[].unrealizedPnl). Fallback handled by Ledger.
+        perp_unrealized_by_coin: dict[str, float] | None = None
+        getter = getattr(self._exchange, "get_perp_unrealized_by_coin", None)
+        if getter is not None:
+            try:
+                perp_unrealized_by_coin = await getter()
+            except Exception as exc:  # noqa: BLE001
+                await self._log_error("perp_unrealized_fetch_failed", exc)
+        await self._ledger.compute_and_save(
+            self._strategy.strategy_id,
+            quote_map,
+            perp_unrealized_by_coin=perp_unrealized_by_coin,
+        )
 
     # ── Hour tick ─────────────────────────────────────────────────────────────
 
