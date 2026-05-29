@@ -470,6 +470,146 @@ function FarbPositionModal({
 
 // ── Open FarbPositions ─────────────────────────────────────────────────────────
 
+function FarbPositionGroup({
+  p,
+  now,
+  onSelect,
+}: {
+  p: FarbPosition;
+  now: number;
+  onSelect: (fp: FarbPosition) => void;
+}) {
+  const leverage =
+    typeof p.state_data?.leverage === "number" ? p.state_data.leverage : 1;
+
+  const pnlColor =
+    p.unrealized_pnl_usdc == null
+      ? "text-gray-400"
+      : p.unrealized_pnl_usdc > 0
+        ? "text-green-600"
+        : p.unrealized_pnl_usdc < 0
+          ? "text-red-500"
+          : "text-gray-400";
+
+  return (
+    <>
+      {/* ── FP header row ─────────────────────────────────────── */}
+      <tr
+        className="border-t-2 border-gray-300 bg-gray-50 cursor-pointer hover:bg-gray-100"
+        onClick={() => onSelect(p)}
+        title="Click to see funding history"
+      >
+        {/* coin + state */}
+        <td className="py-1.5 pr-2 font-semibold text-gray-900">{p.coin}</td>
+        <td className="py-1.5 pr-2 font-mono text-gray-600 text-[11px]">{p.state}</td>
+        {/* held / opened */}
+        <td className="py-1.5 pr-2 text-right text-gray-600">
+          {p.hours_held != null ? `${formatNumber(p.hours_held, 1)}h` : "—"}
+          <span className="ml-1.5 text-gray-400 text-[10px]">
+            ({formatRelative(p.opened_at_ms, now)})
+          </span>
+        </td>
+        {/* signal APRs */}
+        <td className="py-1.5 pr-2 text-right">
+          <span className="text-indigo-600">
+            {p.target_signal_apr != null ? `${formatNumber(p.target_signal_apr * 100, 2)}%` : "—"}
+          </span>
+          <span className="text-gray-400 mx-0.5">/</span>
+          <span className="text-rose-500">
+            {p.exit_signal_apr != null ? `${formatNumber(p.exit_signal_apr * 100, 2)}%` : "—"}
+          </span>
+          <span className="text-gray-400 mx-0.5">/</span>
+          <span className="text-emerald-600">
+            {p.current_signal_apr != null ? `${formatNumber(p.current_signal_apr * 100, 2)}%` : "—"}
+          </span>
+        </td>
+        {/* unrealized pnl */}
+        <td className={`py-1.5 pr-2 text-right font-mono ${pnlColor}`}>
+          {p.unrealized_pnl_usdc != null ? formatCurrencyPrecise(p.unrealized_pnl_usdc) : "—"}
+        </td>
+        {/* funding */}
+        <td className="py-1.5 pr-2 text-right font-mono text-green-600">
+          ${p.funding_usdc.toFixed(6)}
+        </td>
+        {/* fees */}
+        <td className="py-1.5 pr-2 text-right font-mono text-gray-500">
+          ${p.fees_usdc.toFixed(6)}
+        </td>
+        {/* break-even */}
+        <td className="py-1.5 pr-2 text-right">
+          {p.breakeven_hours_remaining == null ? (
+            <span className="text-gray-400">—</span>
+          ) : p.breakeven_hours_remaining <= 0 ? (
+            <span className="text-green-600 font-semibold">done</span>
+          ) : (
+            <span className="text-gray-700">{formatNumber(p.breakeven_hours_remaining, 1)}h</span>
+          )}
+        </td>
+        {/* consec neg */}
+        <td className="py-1.5 text-right">
+          {p.consec_negative_hours != null ? (
+            <span className={p.consec_negative_hours > 24 ? "text-amber-600 font-semibold" : "text-gray-700"}>
+              {p.consec_negative_hours}
+            </span>
+          ) : "—"}
+        </td>
+      </tr>
+
+      {/* ── long (spot) leg row ───────────────────────────────── */}
+      <tr className="bg-white border-t border-gray-100">
+        <td className="py-1 pl-4 pr-2 text-gray-400 text-[11px]" colSpan={1}>
+          <span className="text-indigo-400 font-medium">long</span>{" "}
+          <span className="text-gray-400">spot</span>
+        </td>
+        <td className="py-1 pr-2 text-right font-mono text-gray-600 text-[11px]" colSpan={1}>
+          {p.legs.spot ? formatQty(p.legs.spot.qty) : "—"}
+        </td>
+        <td className="py-1 pr-2 text-right text-gray-500 text-[11px]" colSpan={1}>
+          entry {p.legs.spot ? formatCurrency(p.legs.spot.entry_price) : "—"}
+        </td>
+        <td className="py-1 text-gray-400 text-[11px]" colSpan={6} />
+      </tr>
+
+      {/* ── short (perp) leg row ──────────────────────────────── */}
+      <tr className="bg-white border-t border-gray-100">
+        <td className="py-1 pl-4 pr-2 text-[11px]" colSpan={1}>
+          <span className="text-rose-400 font-medium">short</span>{" "}
+          <span className="text-gray-400">perp</span>
+        </td>
+        <td className="py-1 pr-2 text-right font-mono text-gray-600 text-[11px]" colSpan={1}>
+          {p.legs.perp ? formatQty(p.legs.perp.qty) : "—"}
+        </td>
+        <td className="py-1 pr-2 text-right text-gray-500 text-[11px]" colSpan={1}>
+          entry {p.legs.perp ? formatCurrency(p.legs.perp.entry_price) : "—"}
+        </td>
+        <td className="py-1 text-gray-500 text-[11px]" colSpan={1}>
+          {leverage !== 1 ? (
+            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 font-semibold">
+              {leverage}×
+            </span>
+          ) : null}
+        </td>
+        <td className="py-1" colSpan={5} />
+      </tr>
+
+      {/* ── collateral row ────────────────────────────────────── */}
+      <tr className="bg-white border-t border-gray-100">
+        <td className="py-1 pl-4 pr-2 text-[11px]" colSpan={1}>
+          <span className="text-sky-400 font-medium">margin</span>{" "}
+          <span className="text-gray-400">usdc</span>
+        </td>
+        <td className="py-1 pr-2 text-right font-mono text-gray-600 text-[11px]" colSpan={1}>
+          {p.legs.collateral ? formatCurrency(p.legs.collateral.qty) : "—"}
+        </td>
+        <td className="py-1 pr-2 text-right text-gray-400 text-[11px]" colSpan={1}>
+          entry $1.00
+        </td>
+        <td className="py-1" colSpan={6} />
+      </tr>
+    </>
+  );
+}
+
 function OpenFarbPositions() {
   const now = useNow();
   const strategyId = useActiveStrategyId();
@@ -496,88 +636,32 @@ function OpenFarbPositions() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-gray-100 text-left text-gray-500">
-                <th className="pb-1 pr-3">Coin</th>
-                <th className="pb-1 pr-3">Opened</th>
-                <th className="pb-1 pr-3 text-right">Spot qty</th>
-                <th className="pb-1 pr-3 text-right">Perp qty</th>
-                <th className="pb-1 pr-3 text-right">Held (h)</th>
-                <th className="pb-1 pr-3 text-right">Target APR</th>
-                <th className="pb-1 pr-3 text-right">Funding</th>
-                <th className="pb-1 pr-3 text-right">Fees</th>
-                <th className="pb-1 pr-3 text-right" title="Hours of forward funding at the current smoothed signal APR needed to cover remaining fees">Break-even</th>
-                <th className="pb-1 pr-3 text-right">Consec neg</th>
-                <th className="pb-1 text-right">Unrealized</th>
+              <tr className="border-b-2 border-gray-200 text-left text-gray-500">
+                <th className="pb-1 pr-2">Coin</th>
+                <th className="pb-1 pr-2">State</th>
+                <th className="pb-1 pr-2 text-right">Held</th>
+                <th className="pb-1 pr-2 text-right">
+                  Target / Exit / Current APR
+                </th>
+                <th className="pb-1 pr-2 text-right">Unrealized</th>
+                <th className="pb-1 pr-2 text-right">Funding</th>
+                <th className="pb-1 pr-2 text-right">Fees</th>
+                <th className="pb-1 pr-2 text-right" title="Hours of forward funding at the current smoothed signal APR needed to cover remaining fees">
+                  Break-even
+                </th>
+                <th className="pb-1 text-right" title="Consecutive hours of negative funding">
+                  Neg hrs
+                </th>
               </tr>
             </thead>
             <tbody>
-              {data.map((p, idx) => (
-                <tr
+              {data.map((p) => (
+                <FarbPositionGroup
                   key={p.id}
-                  className={`cursor-pointer border-b border-gray-50 hover:bg-gray-100 ${
-                    idx % 2 === 0 ? "bg-white" : "bg-gray-50"
-                  }`}
-                  onClick={() => setSelected(p)}
-                  title="Click to see funding history"
-                >
-                  <td className="py-1 pr-3 font-medium">{p.coin}</td>
-                  <td className="py-1 pr-3 text-gray-500">
-                    {formatRelative(p.opened_at_ms, now)}
-                  </td>
-                  <td className="py-1 pr-3 text-right font-mono">
-                    {p.legs.spot ? formatQty(p.legs.spot.qty) : "—"}
-                  </td>
-                  <td className="py-1 pr-3 text-right font-mono">
-                    {p.legs.perp ? formatQty(p.legs.perp.qty) : "—"}
-                  </td>
-                  <td className="py-1 pr-3 text-right">
-                    {p.hours_held != null ? formatNumber(p.hours_held, 1) : "—"}
-                  </td>
-                  <td className="py-1 pr-3 text-right text-indigo-600">
-                    {p.target_signal_apr != null
-                      ? `${formatNumber(p.target_signal_apr * 100, 2)}%`
-                      : "—"}
-                  </td>
-                  <td className="py-1 pr-3 text-right text-green-600 font-mono">
-                    ${p.funding_usdc.toFixed(6)}
-                  </td>
-                  <td className="py-1 pr-3 text-right text-gray-500 font-mono">
-                    ${p.fees_usdc.toFixed(6)}
-                  </td>
-                  <td className="py-1 pr-3 text-right">
-                    {p.breakeven_hours_remaining == null ? (
-                      <span className="text-gray-400">—</span>
-                    ) : p.breakeven_hours_remaining <= 0 ? (
-                      <span className="text-green-600 font-semibold">✓</span>
-                    ) : (
-                      <span className="text-gray-700">
-                        {formatNumber(p.breakeven_hours_remaining, 1)}h
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-1 pr-3 text-right">
-                    {p.consec_negative_hours != null ? (
-                      <span className={p.consec_negative_hours > 24 ? "text-amber-600 font-semibold" : "text-gray-700"}>
-                        {p.consec_negative_hours}
-                      </span>
-                    ) : "—"}
-                  </td>
-                  <td
-                    className={`py-1 text-right ${
-                      p.unrealized_pnl_usdc == null
-                        ? "text-gray-400"
-                        : p.unrealized_pnl_usdc > 0
-                          ? "text-green-600"
-                          : p.unrealized_pnl_usdc < 0
-                            ? "text-red-500"
-                            : "text-gray-400"
-                    }`}
-                  >
-                    {p.unrealized_pnl_usdc != null
-                      ? formatCurrencyPrecise(p.unrealized_pnl_usdc)
-                      : "—"}
-                  </td>
-                </tr>
+                  p={p}
+                  now={now}
+                  onSelect={setSelected}
+                />
               ))}
             </tbody>
           </table>
