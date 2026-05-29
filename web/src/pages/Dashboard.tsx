@@ -98,6 +98,7 @@ const WS_DOT: Record<WsStatus, string> = {
 function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" | "funding" | "journal" }) {
   const now = useNow();
   const strategyId = useActiveStrategyId();
+  const queryClient = useQueryClient();
   const stratQ = useQuery({
     queryKey: ["strategies"],
     queryFn: fetchStrategies,
@@ -110,6 +111,21 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
   });
 
   const strategy = stratQ.data?.find((s) => s.id === strategyId);
+
+  const toggleMutation = useMutation({
+    mutationFn: () => {
+      if (!strategyId) throw new Error("No strategy");
+      return strategy?.status === "paused"
+        ? resumeStrategy(strategyId)
+        : pauseStrategy(strategyId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["strategies"] });
+    },
+    onError: (err: Error) => {
+      alert(err.message);
+    },
+  });
 
   const lastTick = eventsQ.data?.find((e) => e.kind === "tick.completed");
   // WS events still carry `ts` as ISO string; DB events have ts_ms
@@ -154,8 +170,20 @@ function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | 
       </nav>
 
       {strategy && (
-        <span className="rounded-full bg-indigo-700 px-2.5 py-0.5 text-xs font-medium text-white">
-          {strategy.name} {strategy.version} · {strategy.status}
+        <span className="inline-flex items-center rounded-full bg-indigo-700 px-2.5 py-0.5 text-xs font-medium text-white">
+          {strategy.name} {strategy.version} ·&nbsp;
+          <span className={strategy.status === "paused" ? "text-amber-300" : "text-white"}>
+            {strategy.status}
+          </span>
+          <button
+            type="button"
+            className="ml-1.5 px-1.5 py-0 rounded bg-indigo-900 hover:bg-indigo-800 text-white text-[10px] leading-tight disabled:opacity-50"
+            disabled={toggleMutation.isPending}
+            onClick={() => toggleMutation.mutate()}
+            title={strategy.status === "paused" ? "Resume strategy" : "Pause strategy"}
+          >
+            {toggleMutation.isPending ? "…" : strategy.status === "paused" ? "▶" : "⏸"}
+          </button>
         </span>
       )}
 
@@ -1160,69 +1188,6 @@ function AlertBanner() {
   );
 }
 
-// ── Strategy pause/resume toggle ──────────────────────────────────────────────
-
-function StrategyToggle() {
-  const strategyId = useActiveStrategyId();
-  const queryClient = useQueryClient();
-
-  const { data: strategy } = useQuery({
-    queryKey: ["strategy", strategyId],
-    queryFn: () => fetchStrategy(strategyId!),
-    enabled: !!strategyId,
-    staleTime: 15_000,
-    refetchInterval: 30_000,
-  });
-
-  const toggleMutation = useMutation({
-    mutationFn: () => {
-      if (!strategyId) throw new Error("No strategy");
-      return strategy?.status === "paused"
-        ? resumeStrategy(strategyId)
-        : pauseStrategy(strategyId);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["strategy", strategyId] });
-    },
-  });
-
-  if (!strategyId || !strategy) return null;
-
-  const isPaused = strategy.status === "paused";
-  const statusDotCls = isPaused ? "bg-amber-400" : "bg-green-500";
-  const statusLabel = isPaused ? "paused" : "running";
-  const btnCls = isPaused
-    ? "rounded border border-green-300 bg-green-50 px-3 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
-    : "rounded border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50";
-
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 shadow-sm">
-      <span
-        className={`inline-block h-2 w-2 rounded-full ${statusDotCls}`}
-        title={statusLabel}
-      />
-      <span className="text-xs text-gray-500">{statusLabel}</span>
-      <button
-        type="button"
-        className={btnCls}
-        disabled={!strategyId || toggleMutation.isPending}
-        onClick={() => toggleMutation.mutate()}
-      >
-        {toggleMutation.isPending
-          ? "…"
-          : isPaused
-            ? "▶ Resume"
-            : "⏸ Pause"}
-      </button>
-      {toggleMutation.isError && (
-        <span className="text-xs text-red-600">
-          {(toggleMutation.error as Error).message}
-        </span>
-      )}
-    </div>
-  );
-}
-
 // ── Dashboard page ─────────────────────────────────────────────────────────────
 
 export { Header };
@@ -1236,7 +1201,6 @@ export default function Dashboard() {
       <Header wsStatus={status} route="dashboard" />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <AlertBanner />
-        <StrategyToggle />
         <ActiveFarbPositions />
         <EquityCard />
         <SignalsStrip />
