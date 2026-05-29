@@ -49,6 +49,7 @@ class OpenRequest:
     side: Side
     qty: float           # for COLLATERAL, qty is USDC amount; entry_price=1.0
     farb_position_id: int | None = None   # link if the open is part of a composite
+    leverage: int | None = None   # PERP only: cross-margin leverage to set before the order
 
 
 class WalletKind(str, Enum):

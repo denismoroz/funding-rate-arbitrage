@@ -312,6 +312,7 @@ class TwoPhaseStrategy:
             side=Side.SHORT,
             qty=spot_qty,
             farb_position_id=fp.id,
+            leverage=int(self.params.perp_leverage),
         )
         pos = await self.exchange.open_position(req)
         await self.farb_repo.set_leg(fp.id, instrument=Instrument.PERP, position_id=pos.id)

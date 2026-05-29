@@ -417,6 +417,8 @@ class HLExchange:
                 exchange_sdk.market_open, spot_name, is_buy, wire_qty, None, self._slippage
             )
         else:  # PERP
+            if req.leverage is not None:
+                await self._set_leverage(req.coin, req.leverage)
             is_buy = req.side == Side.LONG
             resp = await asyncio.to_thread(
                 exchange_sdk.market_open, req.coin, is_buy, wire_qty, None, self._slippage
@@ -1103,6 +1105,25 @@ class HLExchange:
                 "(or an injected exchange object)"
             )
         return self._exchange
+
+    async def _set_leverage(self, coin: str, leverage: int) -> None:
+        """Set cross-margin leverage for a perp asset before opening a position.
+
+        HL applies leverage at the account level per asset; without an explicit
+        update the account default is used (commonly 20× for BTC). We call this
+        on every PERP open so the position reflects the strategy's configured
+        leverage rather than whatever HL left in place.
+        """
+        if leverage <= 0:
+            raise ValueError(f"leverage must be > 0, got {leverage!r}")
+        exchange_sdk = self._require_exchange()
+        resp = await asyncio.to_thread(
+            exchange_sdk.update_leverage, int(leverage), coin, True
+        )
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            raise RuntimeError(
+                f"HL updateLeverage rejected for coin={coin} leverage={leverage}: {resp!r}"
+            )
 
     def _require_address(self) -> str:
         if self._address is None:
