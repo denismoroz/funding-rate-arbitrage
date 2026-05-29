@@ -449,46 +449,36 @@ class TwoPhaseStrategy:
     # ── Funding accrual ───────────────────────────────────────────────────────
 
     async def _accrue_funding(self, *, now_ms: int) -> None:
-        """For each OPEN FP, accrue this hour's funding payment and refresh
-        the cached current smoothed signal on state_data.
-
-        Funding = perp.qty * mark * latest_rate. SHORT receives positive funding
-        when rate>0 (our default arb posture).
+        """For each OPEN FP, refresh funding accruals from HL's authoritative
+        userFunding endpoint via Exchange.get_accrued_funding. That helper is
+        already idempotent (dedupes by (position_id, ts_ms) before insert) and
+        returns the cumulative DB sum. We just mirror that sum into state_data
+        and refresh the cached current smoothed signal.
         """
         open_fps = await self.farb_repo.list_open(self.strategy_id)
         for fp in open_fps:
             if fp.perp_position_id is None:
                 continue
-            rate = await self._latest_funding_rate(fp.coin)
-            smoothed = await self._compute_signal(fp.coin)
+            perp_pos = await self._get_position(fp.perp_position_id)
             try:
-                quote = await self.exchange.get_quote(fp.coin)
+                gross = await self.exchange.get_accrued_funding(perp_pos)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "accrue_funding: failed to get_quote coin=%s farb_position_id=%s: %s",
-                    fp.coin, fp.id, exc,
+                    "accrue_funding: get_accrued_funding failed fp=%s coin=%s: %s",
+                    fp.id, fp.coin, exc,
                 )
                 continue
-            perp_pos = await self._get_position(fp.perp_position_id)
-            amount = perp_pos.qty * quote.mark * rate if rate is not None else 0.0
 
             sd = dict(fp.state_data)
-            sd["gross_funding_so_far"] = sd.get("gross_funding_so_far", 0.0) + amount
+            sd["gross_funding_so_far"] = float(gross)
+            smoothed = await self._compute_signal(fp.coin)
             if smoothed is not None:
                 sd["current_signal_apr"] = smoothed
             await self.farb_repo.update_state_data(fp.id, sd)
 
-            async with session_scope(self._sf) as s:
-                s.add(FundingAccrualRow(
-                    position_id=fp.perp_position_id,
-                    ts_ms=now_ms,
-                    amount=amount,
-                ))
-
             logger.info(
-                "funding accrued farb_position_id=%s coin=%s rate=%.6f mark=%.2f amount=%.6f total=%.6f",
-                fp.id, fp.coin, rate or 0.0, quote.mark, amount,
-                sd["gross_funding_so_far"],
+                "funding accrued fp=%s coin=%s gross_from_HL=%.6f",
+                fp.id, fp.coin, gross,
             )
 
     # ── Entry decision ────────────────────────────────────────────────────────

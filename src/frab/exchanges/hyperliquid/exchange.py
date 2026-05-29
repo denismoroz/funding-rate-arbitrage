@@ -425,7 +425,10 @@ class HLExchange:
             filled = status0["filled"]
             qty_filled = float(filled["totalSz"])
             fill_price = float(filled["avgPx"])
-            fee = float(filled.get("fee", 0.0))
+            # HL market_open response doesn't include fee; estimate from the
+            # taker rate (matches actual within ~1% absent tier discounts).
+            taker = SPOT_TAKER if req.instrument == Instrument.SPOT else PERP_TAKER
+            fee = float(filled.get("fee", qty_filled * fill_price * taker))
         elif "error" in status0:
             raise RuntimeError(f"HL order error: {status0['error']!r}")
         elif "resting" in status0:
@@ -520,7 +523,9 @@ class HLExchange:
             filled = status0["filled"]
             qty_filled = float(filled["totalSz"])
             fill_price = float(filled["avgPx"])
-            fee = float(filled.get("fee", 0.0))
+            # HL response omits fee; estimate from taker rate per leg.
+            taker = SPOT_TAKER if pos.instrument == Instrument.SPOT else PERP_TAKER
+            fee = float(filled.get("fee", qty_filled * fill_price * taker))
         elif "error" in status0:
             raise RuntimeError(f"HL close error: {status0['error']!r}")
         else:
