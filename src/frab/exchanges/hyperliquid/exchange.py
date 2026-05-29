@@ -25,14 +25,15 @@ from frab.db.models import (
     Exchange as DBExchange,
     Fill as DBFill,
     Position as DBPosition,
-    WalletSnapshot as DBWalletSnapshot,
 )
 from frab.db.session import session_scope
 from frab.domain import Instrument, Position, PositionStatus, Side
 from frab.exchanges.hyperliquid.actions.close_position import ClosePositionAction
+from frab.exchanges.hyperliquid.actions.get_wallet import GetWalletAction
 from frab.exchanges.hyperliquid.actions.load_funding import LoadAccruedFundingAction
 from frab.exchanges.hyperliquid.actions.load_positions import LoadOpenPositionsAction
 from frab.exchanges.hyperliquid.actions.open_position import OpenPositionAction, PartialFillError
+from frab.exchanges.hyperliquid.actions.transfer import TransferAction
 from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
 from frab.exchanges.hyperliquid.symbols import HLSymbols, SPOT_TOKEN_INVERSE
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
@@ -59,10 +60,6 @@ _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
 def _ms_to_dt(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000, tz=UTC)
-
-
-def _dt_to_ms(dt: datetime) -> int:
-    return int(dt.timestamp() * 1000)
 
 
 def _base_url(network: Literal["testnet", "mainnet"]) -> str:
@@ -175,11 +172,29 @@ class HLExchange:
                 session_factory=session_factory,
                 address=self._address,
             )
+            self._get_wallet_action: GetWalletAction | None = GetWalletAction(
+                client=self._hl_client,
+                symbols=self._symbols,
+                session_factory=session_factory,
+                exchange_name=self.name,
+                address=self._address,
+                clock_fn=self._clock_fn,
+            )
+            self._transfer_action: TransferAction | None = TransferAction(
+                client=self._hl_client,
+                symbols=self._symbols,
+                session_factory=session_factory,
+                exchange_name=self.name,
+                address=self._address,
+                clock_fn=self._clock_fn,
+            )
         else:
             self._open_action = None
             self._close_action = None
             self._load_positions_action = None
             self._load_funding_action = None
+            self._get_wallet_action = None
+            self._transfer_action = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -490,72 +505,9 @@ class HLExchange:
 
     async def get_wallet(self, coin: str, kind: WalletKind) -> float:
         """Get free balance for (coin, kind), write wallet_snapshot, return balance."""
-        address = self._require_address()
-        if self._session_factory is None:
+        if self._get_wallet_action is None:
             raise RuntimeError("session_factory required for get_wallet")
-
-        perp_state, spot_state = await asyncio.gather(
-            self._hl_client.user_state(address),
-            self._hl_client.spot_user_state(address),
-        )
-
-        now_ms = _dt_to_ms(self._clock_fn())
-
-        # Per-kind balance (returned to caller; state-machine code uses this)
-        if kind == WalletKind.PERP:
-            if coin in ("USDC", "USD"):
-                balance = perp_state.account_value
-            else:
-                balance = 0.0
-        else:  # SPOT
-            spot_coin = self._symbols.spot_token_map.get(coin, coin)
-            balance = 0.0
-            for bal in spot_state.balances:
-                if bal.coin == spot_coin or bal.coin == coin:
-                    balance = bal.total
-                    break
-
-        # Total balance across BOTH sub-wallets (equity-relevant cash).
-        if coin in ("USDC", "USD"):
-            account_value = perp_state.account_value
-            unrealized_total = sum(ap.unrealized_pnl for ap in perp_state.asset_positions)
-            # HL sign convention: cumFunding.sinceOpen is negative when received (a credit).
-            # Flip to "received" semantics.
-            cum_funding_received = sum(
-                -ap.cum_funding_since_open for ap in perp_state.asset_positions
-            )
-            spot_coin = self._symbols.spot_token_map.get(coin, coin)
-            spot_total = 0.0
-            spot_hold = 0.0
-            for bal in spot_state.balances:
-                if bal.coin == spot_coin or bal.coin == coin:
-                    spot_total = bal.total
-                    spot_hold = bal.hold
-                    break
-            perp_standalone = (
-                account_value - spot_hold - unrealized_total - cum_funding_received
-            )
-            total_balance = spot_total + perp_standalone
-        else:
-            # Non-USDC: only spot balance matters for this strategy
-            spot_coin = self._symbols.spot_token_map.get(coin, coin)
-            total_balance = 0.0
-            for bal in spot_state.balances:
-                if bal.coin == spot_coin or bal.coin == coin:
-                    total_balance = bal.total
-                    break
-
-        async with session_scope(self._session_factory) as s:
-            exchange_id = await self._get_exchange_id(s)
-            s.add(DBWalletSnapshot(
-                exchange_id=exchange_id,
-                coin=coin,
-                ts_ms=now_ms,
-                balance=total_balance,
-                source="hl_account_total",
-            ))
-
-        return balance
+        return await self._get_wallet_action.execute(coin, kind)
 
     # ------------------------------------------------------------------
     # Protocol: transfer
@@ -570,56 +522,17 @@ class HLExchange:
     ) -> None:
         """Transfer funds between wallets. Writes wallet_snapshots after transfer."""
         self._require_exchange()
-        if amount <= 0:
-            raise ValueError(f"amount must be positive, got {amount!r}")
-
-        if from_wallet == WalletKind.SPOT and to_wallet == WalletKind.PERP:
-            to_perp = True
-        elif from_wallet == WalletKind.PERP and to_wallet == WalletKind.SPOT:
-            to_perp = False
-        else:
-            raise ValueError(
-                f"unsupported transfer direction: {from_wallet} → {to_wallet}"
+        # session_factory may be None: TransferAction handles that internally (skips snapshot)
+        if self._transfer_action is None:
+            # No session_factory at all: still must call SDK; build a transient action without DB
+            action = TransferAction(
+                client=self._hl_client, symbols=self._symbols,
+                session_factory=None, exchange_name=self.name,
+                address=self._address, clock_fn=self._clock_fn,
             )
-
-        await self._hl_client.usd_class_transfer(amount, to_perp)
-        logger.info(
-            "transfer coin=%s amount=%.4f %s→%s ok",
-            coin, amount, from_wallet, to_wallet,
-        )
-
-        # Write wallet_snapshots after transfer if session_factory available
-        if self._session_factory is not None:
-            now_ms = _dt_to_ms(self._clock_fn())
-            address = self._address
-            if address is not None:
-                # Capture post-transfer balances
-                perp_state, spot_state = await asyncio.gather(
-                    self._hl_client.user_state(address),
-                    self._hl_client.spot_user_state(address),
-                )
-                perp_balance = perp_state.account_value
-                spot_coin = self._symbols.spot_token_map.get(coin, coin)
-                spot_balance = 0.0
-                for bal in spot_state.balances:
-                    if bal.coin == spot_coin or bal.coin == coin:
-                        spot_balance = bal.total
-                        break
-
-                if coin in ("USDC", "USD"):
-                    total_balance = perp_balance + spot_balance
-                else:
-                    total_balance = spot_balance
-
-                async with session_scope(self._session_factory) as s:
-                    exchange_id = await self._get_exchange_id(s)
-                    s.add(DBWalletSnapshot(
-                        exchange_id=exchange_id,
-                        coin=coin,
-                        ts_ms=now_ms,
-                        balance=total_balance,
-                        source="hl_account_total",
-                    ))
+            await action.execute(coin, amount, from_wallet, to_wallet)
+            return
+        await self._transfer_action.execute(coin, amount, from_wallet, to_wallet)
 
     # ------------------------------------------------------------------
     # Internal: SDK helpers
