@@ -11,7 +11,7 @@ from tenacity import wait_none
 
 import frab.exchanges.hyperliquid.client as hl_client_mod
 import frab.exchanges.hyperliquid.exchange as hl_mod
-from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader, _ms_to_dt
+from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader
 from frab.exchanges.protocol import FundingTick, Quote, MarketSpec
 
 BASE_URL = "https://api.hyperliquid.xyz"

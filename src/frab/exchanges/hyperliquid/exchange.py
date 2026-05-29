@@ -21,13 +21,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 
-from frab.db.models import (
-    Exchange as DBExchange,
-    Fill as DBFill,
-    Position as DBPosition,
-)
-from frab.db.session import session_scope
-from frab.domain import Instrument, Position, PositionStatus, Side
+from frab.db.models import Exchange as DBExchange
+from frab.domain import Position
+from frab.exchanges.hyperliquid.actions.backfill_fees import BackfillFeesAction
 from frab.exchanges.hyperliquid.actions.close_position import ClosePositionAction
 from frab.exchanges.hyperliquid.actions.get_wallet import GetWalletAction
 from frab.exchanges.hyperliquid.actions.load_funding import LoadAccruedFundingAction
@@ -56,10 +52,6 @@ _SPOT_TOKEN_INVERSE = SPOT_TOKEN_INVERSE
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
-
-
-def _ms_to_dt(ms: int) -> datetime:
-    return datetime.fromtimestamp(ms / 1000, tz=UTC)
 
 
 def _base_url(network: Literal["testnet", "mainnet"]) -> str:
@@ -188,6 +180,11 @@ class HLExchange:
                 address=self._address,
                 clock_fn=self._clock_fn,
             )
+            self._backfill_fees_action: BackfillFeesAction | None = BackfillFeesAction(
+                client=self._hl_client,
+                session_factory=session_factory,
+                address=self._address,
+            )
         else:
             self._open_action = None
             self._close_action = None
@@ -195,6 +192,7 @@ class HLExchange:
             self._load_funding_action = None
             self._get_wallet_action = None
             self._transfer_action = None
+            self._backfill_fees_action = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -241,21 +239,6 @@ class HLExchange:
                 f"Exchange {self.name!r} not found in DB; run `frab seed` first."
             )
         return exc.id
-
-    def _db_pos_to_domain(self, row: DBPosition) -> Position:
-        return Position(
-            id=row.id,
-            exchange_name=self.name,
-            coin=row.coin,
-            instrument=Instrument(row.instrument),
-            side=Side(row.side),
-            qty=row.qty,
-            entry_price=row.entry_price,
-            opened_at=_ms_to_dt(row.opened_at),
-            closed_at=_ms_to_dt(row.closed_at) if row.closed_at is not None else None,
-            status=PositionStatus(row.status),
-            farb_position_id=row.farb_position_id,
-        )
 
     # ------------------------------------------------------------------
     # Protocol: Read methods
@@ -399,105 +382,11 @@ class HLExchange:
     # Fees from HL userFills (authoritative)
     # ------------------------------------------------------------------
 
-    async def _fetch_real_fee_usdc(
-        self,
-        oid: int,
-        *,
-        since_ms: int,
-        attempts: int = 3,
-        sleep_s: float = 0.5,
-    ) -> float | None:
-        """Delegate to the stateless fee-lookup helper in actions._fees."""
-        from frab.exchanges.hyperliquid.actions._fees import fetch_real_fee_usdc
-        return await fetch_real_fee_usdc(
-            client=self._hl_client,
-            address=self._require_address(),
-            oid=oid,
-            since_ms=since_ms,
-            clock_fn=self._clock_fn,
-            attempts=attempts,
-            sleep_s=sleep_s,
-        )
-
     async def backfill_fill_fees(self, strategy_id: int) -> int:
         """Update DB fills whose fee == 0 with the real fee from HL userFills."""
-        from frab.db.models import FarbPosition as DBFarbPosition
-
-        if self._session_factory is None:
+        if self._backfill_fees_action is None:
             raise RuntimeError("session_factory required for backfill_fill_fees")
-        address = self._require_address()
-
-        async with session_scope(self._session_factory) as s:
-            result = await s.execute(
-                select(DBFill, DBPosition).join(
-                    DBPosition, DBFill.position_id == DBPosition.id
-                ).join(
-                    DBFarbPosition, DBPosition.farb_position_id == DBFarbPosition.id
-                ).where(
-                    DBFarbPosition.strategy_id == strategy_id,
-                    DBFill.fee == 0.0,
-                )
-            )
-            zero_fee_fills = result.all()
-
-        if not zero_fee_fills:
-            return 0
-
-        min_ts = min(f.ts_ms for f, _ in zero_fee_fills) - 60_000
-        try:
-            hl_fills = await self._hl_client.user_fills_by_time(address, min_ts)
-        except Exception as exc:
-            logger.warning("backfill_fill_fees: user_fills_by_time failed: %s", exc)
-            return 0
-
-        updated = 0
-        for fill_row, pos_row in zero_fee_fills:
-            match = self._match_hl_fill(hl_fills, fill_row, pos_row)
-            if match is None:
-                continue
-            fee_raw = match.fee_raw
-            fee_token = match.fee_token
-            if fee_token in ("USDC", "USD"):
-                fee_usdc = fee_raw
-            elif fee_token in SPOT_TOKEN_INVERSE:
-                px = match.px
-                fee_usdc = fee_raw * px
-            else:
-                fee_usdc = fee_raw
-            if fee_usdc <= 0:
-                continue
-            async with session_scope(self._session_factory) as s:
-                row = await s.get(DBFill, fill_row.id)
-                if row is not None:
-                    row.fee = fee_usdc
-                    updated += 1
-            logger.info(
-                "backfill_fill_fees: fill_id=%d coin=%s qty=%s → fee=%.6f USDC",
-                fill_row.id, pos_row.coin, fill_row.qty, fee_usdc,
-            )
-        return updated
-
-    @staticmethod
-    def _match_hl_fill(hl_fills: list[HLUserFill], db_fill: Any, db_pos: Any) -> HLUserFill | None:
-        """Find an HLUserFill matching a DB (fill, position) row by side/qty/time."""
-        want_side = "B" if db_fill.side == Side.LONG.value else "A"
-        for f in hl_fills or []:
-            if f.side != want_side:
-                continue
-            if abs(f.sz - db_fill.qty) > max(db_fill.qty * 0.01, 1e-9):
-                continue
-            if abs(f.ts_ms - db_fill.ts_ms) > 30_000:
-                continue
-            # Coin matching: PERP fills carry the coin name; SPOT fills carry pair symbol
-            instrument = db_pos.instrument
-            if instrument == Instrument.PERP.value:
-                if f.coin != db_pos.coin:
-                    continue
-            else:  # SPOT — accept either the symbolic or @-prefixed form
-                if not (f.coin.startswith("@") or "/" in f.coin):
-                    continue
-            return f
-        return None
+        return await self._backfill_fees_action.execute(strategy_id)
 
     # ------------------------------------------------------------------
     # Protocol: get_wallet
@@ -545,13 +434,6 @@ class HLExchange:
                 "(or an injected exchange object)"
             )
         return self._exchange
-
-    async def _set_leverage(self, coin: str, leverage: int) -> None:
-        """Set cross-margin leverage for a perp asset before opening a position."""
-        if leverage <= 0:
-            raise ValueError(f"leverage must be > 0, got {leverage!r}")
-        self._require_exchange()
-        await self._hl_client.update_leverage(coin, leverage)
 
     def _require_address(self) -> str:
         if self._address is None:
