@@ -108,7 +108,7 @@ async def test_normalize_hl_coin_rejects_avax0():
     import httpx
     ex = HLExchange(client=httpx.AsyncClient())
     with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
-        await ex._normalize_hl_coin("AVAX0/USDC")
+        await ex._symbols.normalize_hl_coin("AVAX0/USDC")
 
 
 @pytest.mark.asyncio
@@ -117,7 +117,7 @@ async def test_normalize_hl_coin_rejects_link0():
     import httpx
     ex = HLExchange(client=httpx.AsyncClient())
     with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
-        await ex._normalize_hl_coin("LINK0/USDC")
+        await ex._symbols.normalize_hl_coin("LINK0/USDC")
 
 
 @pytest.mark.asyncio
@@ -126,7 +126,7 @@ async def test_normalize_hl_coin_rejects_aave0():
     import httpx
     ex = HLExchange(client=httpx.AsyncClient())
     with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
-        await ex._normalize_hl_coin("AAVE0/USDC")
+        await ex._symbols.normalize_hl_coin("AAVE0/USDC")
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_normalize_hl_coin_future_bridge_token_rejected():
     fake_token = next(iter(BRIDGE_TOKEN_BLACKLIST))  # any existing one
     ex = HLExchange(client=httpx.AsyncClient())
     with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
-        await ex._normalize_hl_coin(f"{fake_token}/USDC")
+        await ex._symbols.normalize_hl_coin(f"{fake_token}/USDC")
 
 
 def test_server_back_compat_re_export():

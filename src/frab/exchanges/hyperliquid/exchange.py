@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any, Callable, Literal
 
 import httpx
@@ -32,6 +31,7 @@ from frab.db.models import (
 from frab.db.session import session_scope
 from frab.domain import Instrument, Position, PositionStatus, Side
 from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
+from frab.exchanges.hyperliquid.symbols import HLSymbols, SPOT_TOKEN_INVERSE
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
 from frab.exchanges.hyperliquid.wire import HLUserFill
 from frab.exchanges.protocol import (
@@ -45,21 +45,16 @@ from frab.exchanges.protocol import (
 logger = logging.getLogger(__name__)
 
 # Re-export so existing importers of HLTransferError from exchange.py still work.
-__all__ = ["HLExchange", "HLTransferError", "PartialFillError", "BRIDGE_TOKEN_BLACKLIST"]
+__all__ = ["HLExchange", "HLTransferError", "PartialFillError", "BRIDGE_TOKEN_BLACKLIST", "SPOT_TOKEN_INVERSE"]
+
+# Backward-compat alias: code that imported _SPOT_TOKEN_INVERSE from exchange.py keeps working.
+_SPOT_TOKEN_INVERSE = SPOT_TOKEN_INVERSE
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
 MIN_SPOT_RESIDUE_NOTIONAL_USDC = 11.0   # HL spot min order ≈ $10 — below this we accept dust
 MAX_CLOSE_RETRIES = 3                   # total attempts: 1 initial + up to 2 retries
 CLOSE_RETRY_SLIPPAGE_MULTIPLIER = 2.0   # each retry doubles slippage to chase the remainder
-
-# Inverse of MAINNET_SPOT_TOKEN_MAP: HL wrapped token → canonical perp coin.
-# BRIDGE_TOKEN_BLACKLIST names are explicitly excluded (independent price discovery).
-_SPOT_TOKEN_INVERSE: dict[str, str] = {
-    "UBTC": "BTC",
-    "UETH": "ETH",
-    "USOL": "SOL",
-}
 
 
 def _ms_to_dt(ms: int) -> datetime:
@@ -150,16 +145,16 @@ class HLExchange:
             candidate = getattr(exchange, "account_address", None) if exchange is not None else None
             self._address = candidate if isinstance(candidate, str) else None
 
-        # Lazy cache: spot pair asset_id → pair name (e.g. 142 → "UBTC/USDC").
-        self._spot_idx_to_name: dict[int, str] | None = None
+        self._symbols = HLSymbols(
+            client=self._hl_client,
+            spot_token_map=spot_token_map,
+            spot_quote_token=spot_quote_token,
+        )
 
         self._session_factory = session_factory
-        self._spot_token_map: dict[str, str] = spot_token_map if spot_token_map is not None else {}
-        self._spot_quote_token = spot_quote_token
         self._slippage = slippage
         self._partial_fill_tolerance = partial_fill_tolerance
         self._clock_fn = clock_fn if clock_fn is not None else lambda: datetime.now(UTC)
-        self._sz_decimals_cache: dict[str, int] | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -173,57 +168,6 @@ class HLExchange:
 
     async def __aexit__(self, *_: Any) -> None:
         await self.aclose()
-
-    # ------------------------------------------------------------------
-    # Internal: spot index map (lazy cache)
-    # ------------------------------------------------------------------
-
-    async def _load_spot_idx_map(self) -> None:
-        """Cache pair_idx → 'BASE/QUOTE' (e.g. 142 → 'UBTC/USDC')."""
-        if self._spot_idx_to_name is not None:
-            return
-        spot_meta = await self._hl_client.spot_meta()
-        mapping: dict[int, str] = {}
-        for pair in spot_meta.pairs:
-            if "/" in pair.name:
-                mapping[pair.index] = pair.name
-        self._spot_idx_to_name = mapping
-
-    # ------------------------------------------------------------------
-    # Internal: coin normalization
-    # ------------------------------------------------------------------
-
-    async def _normalize_hl_coin(self, hl_coin: str) -> tuple[str, str]:
-        """Normalize HL coin field to (coin, leg_str) where leg_str is 'spot' or 'perp'.
-
-        Raises ValueError if the resolved token is in BRIDGE_TOKEN_BLACKLIST.
-        """
-        if hl_coin.startswith("@"):
-            try:
-                idx = int(hl_coin[1:])
-            except ValueError:
-                return hl_coin, "perp"
-            await self._load_spot_idx_map()
-            name = (self._spot_idx_to_name or {}).get(idx)
-            if name and "/" in name:
-                wrapped = name.split("/")[0]
-                if wrapped in BRIDGE_TOKEN_BLACKLIST:
-                    raise ValueError(
-                        f"HL spot token {wrapped!r} is in BRIDGE_TOKEN_BLACKLIST "
-                        f"(independent price discovery — not safe to map to perp coin)"
-                    )
-                return _SPOT_TOKEN_INVERSE.get(wrapped, wrapped), "spot"
-            return hl_coin, "perp"
-        if "/" in hl_coin:
-            wrapped = hl_coin.split("/")[0]
-            if wrapped in BRIDGE_TOKEN_BLACKLIST:
-                raise ValueError(
-                    f"HL spot token {wrapped!r} is in BRIDGE_TOKEN_BLACKLIST "
-                    f"(independent price discovery — not safe to map to perp coin)"
-                )
-            coin = _SPOT_TOKEN_INVERSE.get(wrapped, wrapped)
-            return coin, "spot"
-        return hl_coin, "perp"
 
     def _record_to_tick(self, coin: str, record: HLUserFill | Any) -> FundingTick:
         # Works with both typed HLFundingRecord and raw dict (for get_funding_rate)
@@ -367,7 +311,7 @@ class HLExchange:
 
         if req.instrument == Instrument.SPOT:
             is_buy = req.side == Side.LONG
-            spot_name = self._make_spot_name(req.coin)
+            spot_name = self._symbols.make_spot_name(req.coin)
             order_resp = await self._hl_client.market_open(spot_name, is_buy, wire_qty, self._slippage)
         else:  # PERP
             if req.leverage is not None:
@@ -467,7 +411,7 @@ class HLExchange:
         if pos.instrument == Instrument.SPOT:
             # Sell the spot holdings — retry loop to drain residue above min notional
             is_buy = False  # SELL
-            spot_name = self._make_spot_name(pos.coin)
+            spot_name = self._symbols.make_spot_name(pos.coin)
             qty_filled_total = 0.0
             fee_total = 0.0
             fill_parts: list[tuple[float, float]] = []  # (qty_i, price_i) for VWAP
@@ -651,7 +595,7 @@ class HLExchange:
                     row.coin,
                 )
             # Check reconciliation for SPOT positions
-            spot_hl_coin = self._spot_token_map.get(row.coin, row.coin)
+            spot_hl_coin = self._symbols.spot_token_map.get(row.coin, row.coin)
             if row.instrument == Instrument.SPOT.value and spot_hl_coin not in hl_spot_coins:
                 logger.warning(
                     "get_open_positions: DB has OPEN SPOT %s but HL reports no balance",
@@ -725,8 +669,6 @@ class HLExchange:
         except Exception as exc:
             logger.warning("get_spot_mids_by_coin: allMids failed: %s", exc)
             return {}
-        await self._load_spot_idx_map()
-        idx_to_name = self._spot_idx_to_name or {}
         out: dict[str, float] = {}
         for key, val in mids.items():
             if not key.startswith("@"):
@@ -735,13 +677,13 @@ class HLExchange:
                 idx = int(key[1:])
             except ValueError:
                 continue
-            name = idx_to_name.get(idx)
+            name = await self._symbols.resolve_spot_pair(idx)
             if not name or "/" not in name:
                 continue
             wrapped, quote = name.split("/", 1)
-            if quote != self._spot_quote_token:
+            if quote != self._symbols.spot_quote_token:
                 continue
-            canonical = _SPOT_TOKEN_INVERSE.get(wrapped)
+            canonical = SPOT_TOKEN_INVERSE.get(wrapped)
             if canonical is None:
                 continue
             out[canonical] = val
@@ -789,7 +731,7 @@ class HLExchange:
                 if fee_token in ("USDC", "USD"):
                     return fee_raw
                 px = match.px
-                if fee_token in _SPOT_TOKEN_INVERSE and px > 0:
+                if fee_token in SPOT_TOKEN_INVERSE and px > 0:
                     return fee_raw * px
                 logger.warning(
                     "unknown feeToken %r oid=%s — skipping conversion", fee_token, oid
@@ -849,7 +791,7 @@ class HLExchange:
             fee_token = match.fee_token
             if fee_token in ("USDC", "USD"):
                 fee_usdc = fee_raw
-            elif fee_token in _SPOT_TOKEN_INVERSE:
+            elif fee_token in SPOT_TOKEN_INVERSE:
                 px = match.px
                 fee_usdc = fee_raw * px
             else:
@@ -913,7 +855,7 @@ class HLExchange:
             else:
                 balance = 0.0
         else:  # SPOT
-            spot_coin = self._spot_token_map.get(coin, coin)
+            spot_coin = self._symbols.spot_token_map.get(coin, coin)
             balance = 0.0
             for bal in spot_state.balances:
                 if bal.coin == spot_coin or bal.coin == coin:
@@ -929,7 +871,7 @@ class HLExchange:
             cum_funding_received = sum(
                 -ap.cum_funding_since_open for ap in perp_state.asset_positions
             )
-            spot_coin = self._spot_token_map.get(coin, coin)
+            spot_coin = self._symbols.spot_token_map.get(coin, coin)
             spot_total = 0.0
             spot_hold = 0.0
             for bal in spot_state.balances:
@@ -943,7 +885,7 @@ class HLExchange:
             total_balance = spot_total + perp_standalone
         else:
             # Non-USDC: only spot balance matters for this strategy
-            spot_coin = self._spot_token_map.get(coin, coin)
+            spot_coin = self._symbols.spot_token_map.get(coin, coin)
             total_balance = 0.0
             for bal in spot_state.balances:
                 if bal.coin == spot_coin or bal.coin == coin:
@@ -1004,7 +946,7 @@ class HLExchange:
                     self._hl_client.spot_user_state(address),
                 )
                 perp_balance = perp_state.account_value
-                spot_coin = self._spot_token_map.get(coin, coin)
+                spot_coin = self._symbols.spot_token_map.get(coin, coin)
                 spot_balance = 0.0
                 for bal in spot_state.balances:
                     if bal.coin == spot_coin or bal.coin == coin:
@@ -1050,30 +992,13 @@ class HLExchange:
             raise RuntimeError("account_address required")
         return self._address
 
-    def _make_spot_name(self, coin: str) -> str:
-        base = self._spot_token_map.get(coin, coin)
-        return f"{base}/{self._spot_quote_token}"
-
-    async def _sz_decimals(self, coin: str) -> int:
-        if self._sz_decimals_cache is None:
-            specs = await self._hl_client.perp_meta()
-            self._sz_decimals_cache = {s.name: s.sz_decimals for s in specs}
-        sz_dec = self._sz_decimals_cache.get(coin)
-        if sz_dec is None:
-            raise ValueError(f"unknown coin {coin!r} (not in perp meta)")
-        return sz_dec
-
     async def round_qty(self, coin: str, qty: float) -> float:
         """Floor qty to asset's szDecimals (conservative; used for initial sizing)."""
-        sz_dec = await self._sz_decimals(coin)
-        quant = Decimal(10) ** -sz_dec
-        return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_DOWN))
+        return await self._symbols.round_qty(coin, qty)
 
     async def round_qty_to_nearest(self, coin: str, qty: float) -> float:
         """Round qty to asset's szDecimals with ROUND_HALF_UP."""
-        sz_dec = await self._sz_decimals(coin)
-        quant = Decimal(10) ** -sz_dec
-        return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_HALF_UP))
+        return await self._symbols.round_qty_to_nearest(coin, qty)
 
     # ------------------------------------------------------------------
     # Additional read helpers (non-Protocol, for CLI/internal use)
@@ -1122,11 +1047,6 @@ class HLExchange:
         }
         return {"perp": perp_dict, "spot": spot_dict}
 
-    def _inverse_spot_token_map(self) -> dict[str, str]:
-        return {v: k for k, v in self._spot_token_map.items()}
-
-    def _normalize_spot_coin(self, hl_coin: str) -> str:
-        return self._inverse_spot_token_map().get(hl_coin, hl_coin)
 
     async def fetch_wallet_state(
         self,
@@ -1157,7 +1077,7 @@ class HLExchange:
             if total <= 0:
                 continue
 
-            canonical = self._normalize_spot_coin(hl_coin)
+            canonical = self._symbols.normalize_spot_coin(hl_coin)
 
             if canonical in ("USDC", "USD"):
                 usdc_spot += total
