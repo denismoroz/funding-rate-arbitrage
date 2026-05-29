@@ -14,6 +14,7 @@ import {
   fetchStrategies,
   fetchStrategy,
   fetchEquity,
+  fetchEquitySummary,
   fetchFarbPositions,
   fetchFundingHistory,
   fetchEvents,
@@ -191,6 +192,12 @@ function EquityCard() {
     enabled: !!strategyId,
   });
 
+  const { data: summary } = useQuery({
+    queryKey: ["equity-summary"],
+    queryFn: fetchEquitySummary,
+    refetchInterval: 30_000,
+  });
+
   const slice: ChartPoint[] = useMemo(() => {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     const all = (stratData ?? []).map<ChartPoint>((s) => ({
@@ -253,14 +260,30 @@ function EquityCard() {
         <h2 className="text-sm font-semibold text-gray-700">
           {chartTitle}
         </h2>
-        {(totalDisplay != null || latestStrat) && (
-          <div className="flex items-baseline gap-3 text-xs text-gray-500">
+        {(totalDisplay != null || latestStrat || summary) && (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-gray-500">
             <span>
               Total{" "}
               <span className="text-base font-semibold text-gray-900">
                 {totalDisplay != null ? formatCurrency(totalDisplay) : "—"}
               </span>
             </span>
+            {summary && (
+              <>
+                <span className="text-emerald-600">
+                  long <span className="font-mono">{formatCurrency(summary.long)}</span>
+                </span>
+                <span className="text-rose-600">
+                  short <span className="font-mono">{formatCurrency(summary.short)}</span>
+                </span>
+                <span className="text-sky-600">
+                  free <span className="font-mono">{formatCurrency(summary.free)}</span>
+                </span>
+                <span className="text-amber-600">
+                  margin <span className="font-mono">{formatCurrency(summary.margin)}</span>
+                </span>
+              </>
+            )}
             {latestStrat && (
               <>
                 <span className="text-green-600 font-mono">

@@ -162,6 +162,19 @@ export function fetchEquity(
   return apiFetch<EquitySnapshot[]>(`/equity?${params}`);
 }
 
+export type EquitySummary = {
+  ts_ms: number;
+  total: number;
+  long: number;
+  short: number;
+  free: number;
+  margin: number;
+};
+
+export function fetchEquitySummary(): Promise<EquitySummary> {
+  return apiFetch<EquitySummary>("/equity/summary");
+}
+
 export function fetchFarbPositions(
   strategyId: number,
   status?: string,
