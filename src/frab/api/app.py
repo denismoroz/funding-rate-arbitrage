@@ -22,11 +22,13 @@ def create_app(
     *,
     event_bus: EventBus | None = None,
     executor: object | None = None,
+    farb_repo: object | None = None,
 ) -> FastAPI:
     app = FastAPI(title="frab")
     app.state.session_factory = session_factory
     app.state.event_bus = event_bus
     app.state.executor = executor
+    app.state.farb_repo = farb_repo
     app.include_router(strategies_routes.router, prefix="/api/strategies", tags=["strategies"])
     app.include_router(equity_routes.router, prefix="/api/equity", tags=["equity"])
     app.include_router(wallet_routes.router, prefix="/api/equity", tags=["equity"])

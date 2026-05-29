@@ -1,4 +1,4 @@
-"""Tests for GET /api/farb-positions and GET /api/farb-positions/{id}."""
+"""Tests for GET /api/farb-positions, GET /api/farb-positions/{id}, and force-close endpoints."""
 from __future__ import annotations
 
 import time
@@ -8,6 +8,7 @@ import pytest
 from frab.db.models import Exchange, FarbPosition as FarbPositionRow, Position, Price, Strategy
 from frab.db.session import session_scope
 from frab.domain.enums import FarbState, Instrument, PositionStatus, Side
+from frab.repo.farb_repo import FarbRepo
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -327,3 +328,112 @@ async def test_list_farb_positions_unknown_status_422(api_client, session_factor
     strat_id = await _seed_strategy(session_factory)
     resp = await api_client.get(f"/api/farb-positions?strategy_id={strat_id}&status=bogus")
     assert resp.status_code == 422
+
+
+# ── force-close single FP ─────────────────────────────────────────────────────
+
+
+async def test_close_open_fp_returns_closing_short(api_client, session_factory, farb_repo):
+    """POST /api/farb-positions/{id}/close on OPEN FP → 200, new_state=CLOSING_SHORT."""
+    strat_id = await _seed_strategy(session_factory)
+    fp_id = await _seed_farb_position(
+        session_factory,
+        strategy_id=strat_id,
+        coin="SOL",
+        state=FarbState.OPEN.value,
+        state_data={"gross_funding_so_far": 10.0},
+    )
+
+    resp = await api_client.post(f"/api/farb-positions/{fp_id}/close")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == fp_id
+    assert data["coin"] == "SOL"
+    assert data["new_state"] == "CLOSING_SHORT"
+    assert "ts_ms" in data
+
+    # Verify the DB row is now in CLOSING_SHORT with exit markers in state_data
+    updated = await farb_repo.get(fp_id)
+    assert updated is not None
+    assert updated.state == FarbState.CLOSING_SHORT
+    assert updated.state_data["exit_decision"] == "forced"
+    assert "exit_requested_at_ms" in updated.state_data
+    # Original state_data fields are preserved
+    assert updated.state_data["gross_funding_so_far"] == pytest.approx(10.0)
+
+
+async def test_close_non_open_fp_returns_409(api_client, session_factory):
+    """POST /api/farb-positions/{id}/close on CHECK_MARGIN FP → 409."""
+    strat_id = await _seed_strategy(session_factory)
+    fp_id = await _seed_farb_position(
+        session_factory,
+        strategy_id=strat_id,
+        coin="ETH",
+        state=FarbState.CHECK_MARGIN.value,
+    )
+
+    resp = await api_client.post(f"/api/farb-positions/{fp_id}/close")
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "CHECK_MARGIN" in detail or "check_margin" in detail
+
+
+async def test_close_nonexistent_fp_returns_404(api_client):
+    """POST /api/farb-positions/{id}/close on nonexistent id → 404."""
+    resp = await api_client.post("/api/farb-positions/99999/close")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+# ── force-close all open FPs ──────────────────────────────────────────────────
+
+
+async def test_close_all_closes_open_and_skips_non_open(api_client, session_factory, farb_repo):
+    """POST /api/farb-positions/close-all with 2 OPEN + 1 CHECK_MARGIN.
+
+    Behaviour: the two OPEN positions are transitioned; the CHECK_MARGIN one is
+    not touched (list_open only returns OPEN rows) so it appears in neither
+    closed_ids nor failed — it is simply not returned by list_open.
+    """
+    strat_id = await _seed_strategy(session_factory)
+
+    open_id1 = await _seed_farb_position(
+        session_factory, strategy_id=strat_id, coin="BTC", state=FarbState.OPEN.value
+    )
+    open_id2 = await _seed_farb_position(
+        session_factory, strategy_id=strat_id, coin="ETH", state=FarbState.OPEN.value
+    )
+    # CHECK_MARGIN — not returned by list_open, so not attempted
+    await _seed_farb_position(
+        session_factory, strategy_id=strat_id, coin="SOL", state=FarbState.CHECK_MARGIN.value
+    )
+
+    resp = await api_client.post(f"/api/farb-positions/close-all?strategy_id={strat_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    closed_ids = [entry["id"] for entry in data["closed_ids"]]
+    assert set(closed_ids) == {open_id1, open_id2}
+    assert data["failed"] == []
+    assert "ts_ms" in data
+
+    # Both OPEN FPs are now CLOSING_SHORT in the DB
+    for fp_id in (open_id1, open_id2):
+        updated = await farb_repo.get(fp_id)
+        assert updated.state == FarbState.CLOSING_SHORT
+        assert updated.state_data["exit_decision"] == "forced"
+
+
+async def test_close_all_with_no_open_returns_empty(api_client, session_factory):
+    """POST /api/farb-positions/close-all with 0 OPEN positions → 200, closed_ids: []."""
+    strat_id = await _seed_strategy(session_factory)
+    await _seed_farb_position(
+        session_factory, strategy_id=strat_id, coin="BTC", state=FarbState.CLOSED.value,
+        closed_at=_now_ms(),
+    )
+
+    resp = await api_client.post(f"/api/farb-positions/close-all?strategy_id={strat_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["closed_ids"] == []
+    assert data["failed"] == []

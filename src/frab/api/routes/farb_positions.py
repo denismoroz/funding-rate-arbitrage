@@ -313,6 +313,118 @@ async def list_farb_positions(
     ]
 
 
+@router.post("/close-all")
+async def close_all_farb_positions(
+    request: Request,
+    strategy_id: int,
+) -> dict:
+    """
+    Force-close all OPEN FarbPositions for a strategy.
+
+    Transitions each OPEN FP to CLOSING_SHORT (with exit_decision="forced").
+    The engine's advance_all_pending will drive them the rest of the way to CLOSED.
+
+    Returns 200 always with lists of successes and failures.
+    """
+    farb_repo = getattr(request.app.state, "farb_repo", None)
+    if farb_repo is None:
+        raise HTTPException(status_code=503, detail="FarbRepo not configured")
+
+    event_bus = getattr(request.app.state, "event_bus", None)
+    now_ms = _now_ms()
+
+    open_fps = await farb_repo.list_open(strategy_id)
+    closed_ids: list[dict] = []
+    failed: list[dict] = []
+
+    for fp in open_fps:
+        new_state_data = {**(fp.state_data or {}), "exit_decision": "forced", "exit_requested_at_ms": now_ms}
+        try:
+            from frab.repo.farb_repo import StateConflict
+            await farb_repo.transition(
+                fp.id,
+                from_state=FarbState.OPEN,
+                to_state=FarbState.CLOSING_SHORT,
+                state_data=new_state_data,
+            )
+        except StateConflict as exc:
+            failed.append({"id": fp.id, "coin": fp.coin, "reason": str(exc)})
+            continue
+        except Exception as exc:
+            failed.append({"id": fp.id, "coin": fp.coin, "reason": str(exc)})
+            continue
+
+        closed_ids.append({"id": fp.id, "coin": fp.coin})
+
+        if event_bus is not None:
+            from frab.events.bus import Event
+            from datetime import datetime, timezone
+            await event_bus.publish(Event(
+                ts=datetime.now(timezone.utc),
+                level="WARNING",
+                source="api",
+                kind="farb.close_requested",
+                message=f"{fp.coin} FP#{fp.id} force-close requested",
+            ))
+
+    return {"closed_ids": closed_ids, "failed": failed, "ts_ms": now_ms}
+
+
+@router.post("/{farb_position_id}/close")
+async def close_farb_position(
+    farb_position_id: int,
+    request: Request,
+) -> dict:
+    """
+    Force-close a single FarbPosition.
+
+    Only works on OPEN positions (returns 409 for any other state).
+    Transitions OPEN → CLOSING_SHORT with exit_decision="forced".
+    The engine's advance_all_pending will drive it the rest of the way to CLOSED.
+    """
+    farb_repo = getattr(request.app.state, "farb_repo", None)
+    if farb_repo is None:
+        raise HTTPException(status_code=503, detail="FarbRepo not configured")
+
+    fp = await farb_repo.get(farb_position_id)
+    if fp is None:
+        raise HTTPException(status_code=404, detail="FarbPosition not found")
+
+    if fp.state != FarbState.OPEN:
+        raise HTTPException(
+            status_code=409,
+            detail=f"FarbPosition {farb_position_id} is in state {fp.state.value!r}, not OPEN; force-close requires OPEN state",
+        )
+
+    now_ms = _now_ms()
+    new_state_data = {**(fp.state_data or {}), "exit_decision": "forced", "exit_requested_at_ms": now_ms}
+
+    try:
+        from frab.repo.farb_repo import StateConflict
+        await farb_repo.transition(
+            fp.id,
+            from_state=FarbState.OPEN,
+            to_state=FarbState.CLOSING_SHORT,
+            state_data=new_state_data,
+        )
+    except StateConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus is not None:
+        from frab.events.bus import Event
+        from datetime import datetime, timezone
+        await event_bus.publish(Event(
+            ts=datetime.now(timezone.utc),
+            level="WARNING",
+            source="api",
+            kind="farb.close_requested",
+            message=f"{fp.coin} FP#{fp.id} force-close requested",
+        ))
+
+    return {"id": fp.id, "coin": fp.coin, "new_state": "CLOSING_SHORT", "ts_ms": now_ms}
+
+
 @router.get("/{farb_position_id}")
 async def get_farb_position(
     request: Request,
