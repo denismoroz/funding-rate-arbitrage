@@ -239,3 +239,25 @@ export type ForceTickResponse = {
 export function forceHourTick(id: number): Promise<ForceTickResponse> {
   return apiPost<ForceTickResponse>(`/strategies/${id}/force-tick`);
 }
+
+export type StrategyStatusResponse = { id: number; status: string; ts_ms: number };
+export function pauseStrategy(id: number): Promise<StrategyStatusResponse> {
+  return apiPost<StrategyStatusResponse>(`/strategies/${id}/pause`);
+}
+export function resumeStrategy(id: number): Promise<StrategyStatusResponse> {
+  return apiPost<StrategyStatusResponse>(`/strategies/${id}/resume`);
+}
+
+export type CloseFpResponse = { id: number; coin: string; new_state: string; ts_ms: number };
+export function closeFarbPosition(id: number): Promise<CloseFpResponse> {
+  return apiPost<CloseFpResponse>(`/farb-positions/${id}/close`);
+}
+
+export type CloseAllResponse = {
+  closed_ids: number[];
+  failed: { id: number; coin: string; reason: string }[];
+  ts_ms: number;
+};
+export function closeAllFarbPositions(strategyId: number): Promise<CloseAllResponse> {
+  return apiPost<CloseAllResponse>(`/farb-positions/close-all?strategy_id=${strategyId}`);
+}

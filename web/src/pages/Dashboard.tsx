@@ -20,6 +20,10 @@ import {
   fetchEvents,
   fetchAlerts,
   forceHourTick,
+  pauseStrategy,
+  resumeStrategy,
+  closeFarbPosition,
+  closeAllFarbPositions,
   tsMsToDate,
   type Alert,
   type FarbPosition,
@@ -483,6 +487,26 @@ function FarbPositionCard({
   onSelect: (fp: FarbPosition) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const queryClient = useQueryClient();
+  const strategyId = useActiveStrategyId();
+
+  const closeMutation = useMutation({
+    mutationFn: () => closeFarbPosition(p.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["farb-positions-open", strategyId] });
+      queryClient.invalidateQueries({ queryKey: ["farb-positions-active", strategyId] });
+      queryClient.invalidateQueries({ queryKey: ["equity-summary"] });
+    },
+    onError: (err: Error) => {
+      alert(`Ошибка закрытия ${p.coin} #${p.id}: ${err.message}`);
+    },
+  });
+
+  const handleClose = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Закрыть ${p.coin} FP#${p.id}?`)) return;
+    closeMutation.mutate();
+  };
 
   const leverage = p.leverage;
 
@@ -565,6 +589,18 @@ function FarbPositionCard({
           <span className={`text-xs ${p.consec_negative_hours > 24 ? "text-amber-600 font-semibold" : "text-gray-500"}`}>
             neg {p.consec_negative_hours}h
           </span>
+        )}
+
+        {/* close button — only for OPEN positions */}
+        {p.state === "OPEN" && (
+          <button
+            type="button"
+            className="rounded border border-rose-300 bg-rose-50 px-2 py-0.5 text-xs text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+            disabled={closeMutation.isPending}
+            onClick={handleClose}
+          >
+            {closeMutation.isPending ? "…" : "Close"}
+          </button>
         )}
       </div>
 
@@ -713,6 +749,7 @@ function FarbPositionCard({
 function OpenFarbPositions() {
   const now = useNow();
   const strategyId = useActiveStrategyId();
+  const queryClient = useQueryClient();
   const [selected, setSelected] = useState<FarbPosition | null>(null);
 
   const { data, isLoading, error } = useQuery({
@@ -722,11 +759,43 @@ function OpenFarbPositions() {
     refetchInterval: 30_000,
   });
 
+  const closeAllMutation = useMutation({
+    mutationFn: () => closeAllFarbPositions(strategyId!),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["farb-positions-open", strategyId] });
+      queryClient.invalidateQueries({ queryKey: ["farb-positions-active", strategyId] });
+      queryClient.invalidateQueries({ queryKey: ["equity-summary"] });
+      if (result.failed.length > 0) {
+        const lines = result.failed.map((f) => `${f.coin} #${f.id}: ${f.reason}`).join("\n");
+        alert(`Не удалось закрыть:\n${lines}`);
+      }
+    },
+  });
+
+  const handleCloseAll = () => {
+    if (!data || data.length === 0) return;
+    if (!window.confirm(`Закрыть ВСЕ ${data.length} открытые позиции?`)) return;
+    closeAllMutation.mutate();
+  };
+
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-sm font-semibold text-gray-700">
-        Open Positions
-      </h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-700">Open Positions</h2>
+        {data && data.length > 0 && (
+          <button
+            type="button"
+            className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+            disabled={closeAllMutation.isPending}
+            onClick={handleCloseAll}
+          >
+            {closeAllMutation.isPending ? "Closing…" : "Close ALL"}
+          </button>
+        )}
+      </div>
+      {closeAllMutation.isError && (
+        <p className="mb-2 text-xs text-red-600">{(closeAllMutation.error as Error).message}</p>
+      )}
       {isLoading && <Skeleton rows={3} />}
       {error instanceof Error && <ErrorMsg message={error.message} />}
       {!isLoading && !error && data?.length === 0 && (
@@ -1091,6 +1160,69 @@ function AlertBanner() {
   );
 }
 
+// ── Strategy pause/resume toggle ──────────────────────────────────────────────
+
+function StrategyToggle() {
+  const strategyId = useActiveStrategyId();
+  const queryClient = useQueryClient();
+
+  const { data: strategy } = useQuery({
+    queryKey: ["strategy", strategyId],
+    queryFn: () => fetchStrategy(strategyId!),
+    enabled: !!strategyId,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: () => {
+      if (!strategyId) throw new Error("No strategy");
+      return strategy?.status === "paused"
+        ? resumeStrategy(strategyId)
+        : pauseStrategy(strategyId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["strategy", strategyId] });
+    },
+  });
+
+  if (!strategyId || !strategy) return null;
+
+  const isPaused = strategy.status === "paused";
+  const statusDotCls = isPaused ? "bg-amber-400" : "bg-green-500";
+  const statusLabel = isPaused ? "paused" : "running";
+  const btnCls = isPaused
+    ? "rounded border border-green-300 bg-green-50 px-3 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+    : "rounded border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50";
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 shadow-sm">
+      <span
+        className={`inline-block h-2 w-2 rounded-full ${statusDotCls}`}
+        title={statusLabel}
+      />
+      <span className="text-xs text-gray-500">{statusLabel}</span>
+      <button
+        type="button"
+        className={btnCls}
+        disabled={!strategyId || toggleMutation.isPending}
+        onClick={() => toggleMutation.mutate()}
+      >
+        {toggleMutation.isPending
+          ? "…"
+          : isPaused
+            ? "▶ Resume"
+            : "⏸ Pause"}
+      </button>
+      {toggleMutation.isError && (
+        <span className="text-xs text-red-600">
+          {(toggleMutation.error as Error).message}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Dashboard page ─────────────────────────────────────────────────────────────
 
 export { Header };
@@ -1104,6 +1236,7 @@ export default function Dashboard() {
       <Header wsStatus={status} route="dashboard" />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <AlertBanner />
+        <StrategyToggle />
         <ActiveFarbPositions />
         <EquityCard />
         <SignalsStrip />
