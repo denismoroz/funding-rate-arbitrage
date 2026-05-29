@@ -1,9 +1,9 @@
 """HLExchange: stateless Hyperliquid exchange implementation.
 
-Satisfies the Exchange Protocol. Read methods use httpx against the HL /info
-REST endpoint. Write methods use the hyperliquid-python-sdk (sync, run via
-asyncio.to_thread). DB session is opened per-method (short-lived), committed,
-and closed — no in-memory caches of positions or wallet state.
+Satisfies the Exchange Protocol. Read methods and write methods are
+delegated to HLClient (transport + typed wire layer). DB session is
+opened per-method (short-lived), committed, and closed — no in-memory
+caches of positions or wallet state.
 """
 from __future__ import annotations
 
@@ -20,12 +20,6 @@ from hyperliquid.info import Info
 from hyperliquid.utils import constants
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from frab.constants import PERP_TAKER, SPOT_TAKER
 from frab.db.models import (
@@ -37,7 +31,9 @@ from frab.db.models import (
 )
 from frab.db.session import session_scope
 from frab.domain import Instrument, Position, PositionStatus, Side
+from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
+from frab.exchanges.hyperliquid.wire import HLUserFill
 from frab.exchanges.protocol import (
     FundingTick,
     MarketSpec,
@@ -47,6 +43,9 @@ from frab.exchanges.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Re-export so existing importers of HLTransferError from exchange.py still work.
+__all__ = ["HLExchange", "HLTransferError", "PartialFillError", "BRIDGE_TOKEN_BLACKLIST"]
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
@@ -77,21 +76,6 @@ def _base_url(network: Literal["testnet", "mainnet"]) -> str:
     if network == "mainnet":
         return constants.MAINNET_API_URL
     raise ValueError(f"unsupported network: {network!r}")
-
-
-class _RetryableHTTPError(Exception):
-    pass
-
-
-_RETRYABLE = retry_if_exception_type(
-    (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, _RetryableHTTPError)
-)
-_WAIT = wait_exponential(multiplier=0.3, min=0.3, max=4)
-_STOP = stop_after_attempt(4)
-
-
-class HLTransferError(RuntimeError):
-    """Raised when a usdClassTransfer action is rejected by Hyperliquid."""
 
 
 class PartialFillError(RuntimeError):
@@ -134,18 +118,6 @@ class HLExchange:
         partial_fill_tolerance: float = 0.01,
         clock_fn: Callable[[], datetime] | None = None,
     ) -> None:
-        # --- httpx client for read methods ---
-        self._api_url = api_url
-        if client is not None:
-            self._client = client
-            self._owns_client = False
-        else:
-            self._client = httpx.AsyncClient(timeout=timeout_s)
-            self._owns_client = True
-
-        # Lazy cache: spot pair asset_id → pair name (e.g. 142 → "UBTC/USDC").
-        self._spot_idx_to_name: dict[int, str] | None = None
-
         # --- SDK objects for write methods ---
         if info is None:
             info = Info(_base_url(network), skip_ws=True)
@@ -157,14 +129,29 @@ class HLExchange:
                 account_address=account_address,
             )
 
+        # Build the transport client
+        self._hl_client = HLClient(
+            api_url=api_url,
+            timeout_s=timeout_s,
+            client=client,
+            info=info,
+            exchange=exchange,
+        )
+
+        # Keep references for legacy attribute access (e.g., test_tokens.py accesses _info)
         self._info = info
         self._exchange = exchange
+        # Legacy: expose _api_url for registry test / external callers
+        self._api_url = api_url
 
         if account_address is not None:
             self._address: str | None = account_address
         else:
             candidate = getattr(exchange, "account_address", None) if exchange is not None else None
             self._address = candidate if isinstance(candidate, str) else None
+
+        # Lazy cache: spot pair asset_id → pair name (e.g. 142 → "UBTC/USDC").
+        self._spot_idx_to_name: dict[int, str] | None = None
 
         self._session_factory = session_factory
         self._spot_token_map: dict[str, str] = spot_token_map if spot_token_map is not None else {}
@@ -179,8 +166,7 @@ class HLExchange:
     # ------------------------------------------------------------------
 
     async def aclose(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
+        await self._hl_client.aclose()
 
     async def __aenter__(self) -> "HLExchange":
         return self
@@ -189,59 +175,18 @@ class HLExchange:
         await self.aclose()
 
     # ------------------------------------------------------------------
-    # Internal: httpx retry wrapper
-    # ------------------------------------------------------------------
-
-    async def _post(self, body: dict) -> Any:
-        async for attempt in AsyncRetrying(
-            retry=_RETRYABLE,
-            wait=_WAIT,
-            stop=_STOP,
-            reraise=True,
-        ):
-            with attempt:
-                resp = await self._client.post(self._api_url, json=body)
-                if resp.status_code >= 500:
-                    raise _RetryableHTTPError(f"HTTP {resp.status_code}")
-                resp.raise_for_status()
-                return resp.json()
-
-    # ------------------------------------------------------------------
     # Internal: spot index map (lazy cache)
     # ------------------------------------------------------------------
 
     async def _load_spot_idx_map(self) -> None:
-        """Cache pair_idx → 'BASE/QUOTE' (e.g. 142 → 'UBTC/USDC').
-
-        HL hosts the same base token paired against multiple quote stablecoins
-        (USDC token 0, USDH token 360, USDE token 235, etc.). We resolve the
-        actual quote symbol from the second tokens entry rather than assuming
-        USDC — otherwise UBTC/USDH at @234 collides with UBTC/USDC at @142.
-        """
+        """Cache pair_idx → 'BASE/QUOTE' (e.g. 142 → 'UBTC/USDC')."""
         if self._spot_idx_to_name is not None:
             return
-        meta = await self._post({"type": "spotMeta"})
-        token_by_idx: dict[int, str] = {}
-        for t in meta.get("tokens", []):
-            tidx = t.get("index")
-            tname = t.get("name", "")
-            if isinstance(tidx, int) and tname:
-                token_by_idx[tidx] = tname
+        spot_meta = await self._hl_client.spot_meta()
         mapping: dict[int, str] = {}
-        for entry in meta.get("universe", []):
-            idx = entry.get("index")
-            if not isinstance(idx, int):
-                continue
-            name = entry.get("name", "")
-            if "/" in name:
-                mapping[idx] = name
-                continue
-            toks = entry.get("tokens") or []
-            if len(toks) >= 2 and isinstance(toks[0], int) and isinstance(toks[1], int):
-                base = token_by_idx.get(toks[0])
-                quote = token_by_idx.get(toks[1])
-                if base and quote:
-                    mapping[idx] = f"{base}/{quote}"
+        for pair in spot_meta.pairs:
+            if "/" in pair.name:
+                mapping[pair.index] = pair.name
         self._spot_idx_to_name = mapping
 
     # ------------------------------------------------------------------
@@ -280,10 +225,16 @@ class HLExchange:
             return coin, "spot"
         return hl_coin, "perp"
 
-    def _record_to_tick(self, coin: str, record: dict) -> FundingTick:
-        rate = float(record["fundingRate"])
-        premium = float(record["premium"])
-        ts_ms = int(record["time"])
+    def _record_to_tick(self, coin: str, record: HLUserFill | Any) -> FundingTick:
+        # Works with both typed HLFundingRecord and raw dict (for get_funding_rate)
+        if hasattr(record, "rate"):
+            rate = record.rate
+            premium = record.premium
+            ts_ms = record.ts_ms
+        else:
+            rate = float(record["fundingRate"])
+            premium = float(record["premium"])
+            ts_ms = int(record["time"])
         return FundingTick(
             coin=coin,
             ts_ms=ts_ms,
@@ -327,40 +278,40 @@ class HLExchange:
     # ------------------------------------------------------------------
 
     async def get_quote(self, coin: str) -> Quote:
-        mids_data, book = await asyncio.gather(
-            self._post({"type": "allMids"}),
-            self._post({"type": "l2Book", "coin": coin}),
+        mids_data, snap = await asyncio.gather(
+            self._hl_client.all_mids(),
+            self._hl_client.l2_book(coin),
         )
-        mark = float(mids_data[coin])
-        levels = book.get("levels") or []
-        bids = levels[0] if len(levels) >= 1 else []
-        asks = levels[1] if len(levels) >= 2 else []
-        bid = float(bids[0]["px"]) if bids else mark
-        ask = float(asks[0]["px"]) if asks else mark
-        ts_ms = int(book["time"])
+        mark = mids_data.get(coin, 0.0)
+        bid = snap.bid if snap.bid else mark
+        ask = snap.ask if snap.ask else mark
+        ts_ms = snap.ts_ms
         return Quote(coin=coin, mark=mark, spot=None, bid=bid, ask=ask, ts_ms=ts_ms)
 
     async def get_funding_rate(self, coin: str) -> FundingTick:
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        data: list[dict] = await self._post({
-            "type": "fundingHistory",
-            "coin": coin,
-            "startTime": now_ms - 2 * 3600 * 1000,
-        })
-        if not data:
+        records = await self._hl_client.funding_history(coin, since_ms=now_ms - 2 * 3600 * 1000)
+        if not records:
             raise ValueError(f"no recent funding for {coin}")
-        return self._record_to_tick(coin, data[-1])
+        last = records[-1]
+        return FundingTick(
+            coin=coin,
+            ts_ms=last.ts_ms,
+            rate=last.rate,
+            premium=last.premium,
+            annualized_pct=last.rate * _PERIODS_PER_YEAR * 100,
+        )
 
     async def get_meta(self) -> list[MarketSpec]:
-        data = await self._post({"type": "meta"})
+        specs_raw = await self._hl_client.perp_meta()
         specs: list[MarketSpec] = []
-        for entry in data["universe"]:
-            sz = int(entry["szDecimals"])
+        for entry in specs_raw:
+            sz = entry.sz_decimals
             min_size = 10 ** -sz
             exp = 6 - sz
             tick_size = 10 ** -exp if exp >= 0 else 1.0
             specs.append(MarketSpec(
-                coin=entry["name"],
+                coin=entry.name,
                 has_spot=False,
                 has_perp=True,
                 min_size=min_size,
@@ -405,11 +356,9 @@ class HLExchange:
             return pos
 
         # SPOT or PERP
-        exchange_sdk = self._require_exchange()
+        self._require_exchange()
 
-        # Floor qty to coin's szDecimals — HL SDK's float_to_wire rejects
-        # quantities with sub-szDecimal precision (e.g. 0.000163124... for BTC
-        # which requires a 0.00001 step). We also reject sub-step requests.
+        # Floor qty to coin's szDecimals
         wire_qty = await self.round_qty(req.coin, req.qty)
         if wire_qty <= 0:
             raise RuntimeError(
@@ -419,43 +368,34 @@ class HLExchange:
         if req.instrument == Instrument.SPOT:
             is_buy = req.side == Side.LONG
             spot_name = self._make_spot_name(req.coin)
-            resp = await asyncio.to_thread(
-                exchange_sdk.market_open, spot_name, is_buy, wire_qty, None, self._slippage
-            )
+            order_resp = await self._hl_client.market_open(spot_name, is_buy, wire_qty, self._slippage)
         else:  # PERP
             if req.leverage is not None:
                 await self._set_leverage(req.coin, req.leverage)
             is_buy = req.side == Side.LONG
-            resp = await asyncio.to_thread(
-                exchange_sdk.market_open, req.coin, is_buy, wire_qty, None, self._slippage
-            )
+            order_resp = await self._hl_client.market_open(req.coin, is_buy, wire_qty, self._slippage)
 
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            raise RuntimeError(f"HL order rejected: {resp!r}")
-        try:
-            status0 = resp["response"]["data"]["statuses"][0]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError(f"HL order response shape unexpected: {resp!r}") from exc
+        status0 = order_resp.first
 
-        if "filled" in status0:
-            filled = status0["filled"]
-            qty_filled = float(filled["totalSz"])
-            fill_price = float(filled["avgPx"])
-            oid = int(filled.get("oid", 0)) or None
+        if status0.filled is not None:
+            filled = status0.filled
+            qty_filled = filled.qty
+            fill_price = filled.price
+            oid = filled.oid
             taker = SPOT_TAKER if req.instrument == Instrument.SPOT else PERP_TAKER
             estimate = qty_filled * fill_price * taker
-            if "fee" in filled:
-                fee = float(filled["fee"])
+            if filled.fee_usdc is not None:
+                fee = filled.fee_usdc
             else:
                 real_fee = (
                     await self._fetch_real_fee_usdc(oid, since_ms=now_ms - 5_000)
                     if oid else None
                 )
                 fee = real_fee if real_fee is not None else estimate
-        elif "error" in status0:
-            raise RuntimeError(f"HL order error: {status0['error']!r}")
-        elif "resting" in status0:
-            raise RuntimeError(f"HL market order unexpectedly resting: {status0!r}")
+        elif status0.error is not None:
+            raise RuntimeError(f"HL order error: {status0.error!r}")
+        elif status0.resting_oid is not None:
+            raise RuntimeError(f"HL market order unexpectedly resting: oid={status0.resting_oid!r}")
         else:
             raise RuntimeError(f"HL order unrecognized status: {status0!r}")
 
@@ -522,7 +462,7 @@ class HLExchange:
             return closed_pos
 
         # SPOT or PERP: market close
-        exchange_sdk = self._require_exchange()
+        self._require_exchange()
 
         if pos.instrument == Instrument.SPOT:
             # Sell the spot holdings — retry loop to drain residue above min notional
@@ -539,33 +479,25 @@ class HLExchange:
 
             for attempt in range(MAX_CLOSE_RETRIES):
                 attempts = attempt + 1
-                resp = await asyncio.to_thread(
-                    exchange_sdk.market_open, spot_name, is_buy, remaining_qty, None, current_slippage
-                )
+                order_resp = await self._hl_client.market_open(spot_name, is_buy, remaining_qty, current_slippage)
+                status0 = order_resp.first
 
-                if not isinstance(resp, dict) or resp.get("status") != "ok":
-                    raise RuntimeError(f"HL close rejected: {resp!r}")
-                try:
-                    status0 = resp["response"]["data"]["statuses"][0]
-                except (KeyError, IndexError, TypeError) as exc:
-                    raise RuntimeError(f"HL close response shape unexpected: {resp!r}") from exc
-
-                if "filled" in status0:
-                    filled = status0["filled"]
-                    qty_filled_i = float(filled["totalSz"])
-                    fill_price_i = float(filled["avgPx"])
-                    oid_i = int(filled.get("oid", 0)) or None
+                if status0.filled is not None:
+                    filled = status0.filled
+                    qty_filled_i = filled.qty
+                    fill_price_i = filled.price
+                    oid_i = filled.oid
                     estimate_i = qty_filled_i * fill_price_i * SPOT_TAKER
-                    if "fee" in filled:
-                        fee_i = float(filled["fee"])
+                    if filled.fee_usdc is not None:
+                        fee_i = filled.fee_usdc
                     else:
                         real_fee = (
                             await self._fetch_real_fee_usdc(oid_i, since_ms=now_ms - 5_000)
                             if oid_i else None
                         )
                         fee_i = real_fee if real_fee is not None else estimate_i
-                elif "error" in status0:
-                    raise RuntimeError(f"HL close error: {status0['error']!r}")
+                elif status0.error is not None:
+                    raise RuntimeError(f"HL close error: {status0.error!r}")
                 else:
                     raise RuntimeError(f"HL close unrecognized status: {status0!r}")
 
@@ -622,34 +554,27 @@ class HLExchange:
             return closed_pos
 
         else:  # PERP: use market_close
-            resp = await asyncio.to_thread(
-                exchange_sdk.market_close, pos.coin, None, None, self._slippage
-            )
+            order_resp = await self._hl_client.market_close(pos.coin, self._slippage)
 
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            raise RuntimeError(f"HL close rejected: {resp!r}")
-        try:
-            status0 = resp["response"]["data"]["statuses"][0]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError(f"HL close response shape unexpected: {resp!r}") from exc
+        status0 = order_resp.first
 
-        if "filled" in status0:
-            filled = status0["filled"]
-            qty_filled = float(filled["totalSz"])
-            fill_price = float(filled["avgPx"])
-            oid = int(filled.get("oid", 0)) or None
+        if status0.filled is not None:
+            filled = status0.filled
+            qty_filled = filled.qty
+            fill_price = filled.price
+            oid = filled.oid
             taker = PERP_TAKER
             estimate = qty_filled * fill_price * taker
-            if "fee" in filled:
-                fee = float(filled["fee"])
+            if filled.fee_usdc is not None:
+                fee = filled.fee_usdc
             else:
                 real_fee = (
                     await self._fetch_real_fee_usdc(oid, since_ms=now_ms - 5_000)
                     if oid else None
                 )
                 fee = real_fee if real_fee is not None else estimate
-        elif "error" in status0:
-            raise RuntimeError(f"HL close error: {status0['error']!r}")
+        elif status0.error is not None:
+            raise RuntimeError(f"HL close error: {status0.error!r}")
         else:
             raise RuntimeError(f"HL close unrecognized status: {status0!r}")
 
@@ -692,23 +617,20 @@ class HLExchange:
             raise RuntimeError("session_factory required for get_open_positions")
 
         perp_state, spot_state = await asyncio.gather(
-            asyncio.to_thread(self._info.user_state, address),
-            asyncio.to_thread(self._info.spot_user_state, address),
+            self._hl_client.user_state(address),
+            self._hl_client.spot_user_state(address),
         )
 
         # Build set of coins with open positions on HL
         hl_perp_coins: set[str] = set()
-        for entry in perp_state.get("assetPositions", []):
-            pos = entry.get("position", {})
-            szi = float(pos.get("szi", 0))
-            if abs(szi) > 1e-12:
-                hl_perp_coins.add(pos["coin"])
+        for ap in perp_state.asset_positions:
+            if abs(ap.szi) > 1e-12:
+                hl_perp_coins.add(ap.coin)
 
         hl_spot_coins: set[str] = set()
-        for balance in spot_state.get("balances", []):
-            total = float(balance.get("total", 0))
-            if total > 1e-12:
-                hl_spot_coins.add(balance["coin"])
+        for bal in spot_state.balances:
+            if bal.total > 1e-12:
+                hl_spot_coins.add(bal.coin)
 
         async with session_scope(self._session_factory) as s:
             exchange_id = await self._get_exchange_id(s)
@@ -755,23 +677,14 @@ class HLExchange:
             raise RuntimeError("session_factory required for get_accrued_funding")
 
         since_ms = _dt_to_ms(pos.opened_at)
-        data: list[dict] = await self._post({
-            "type": "userFunding",
-            "user": address,
-            "startTime": since_ms,
-        })
+        deltas = await self._hl_client.user_funding(address, since_ms)
 
         # Filter to matching coin
-        total = 0.0
         new_accruals: list[tuple[int, float]] = []
-        for record in data:
-            delta = record.get("delta", {})
-            if delta.get("coin") != pos.coin:
+        for delta in deltas:
+            if delta.coin != pos.coin:
                 continue
-            ts_ms = int(record["time"])
-            amount = float(delta["usdc"])
-            new_accruals.append((ts_ms, amount))
-            total += amount
+            new_accruals.append((delta.ts_ms, delta.amount_usdc))
 
         async with session_scope(self._session_factory) as s:
             # Load existing accrual ts_ms values for this position to avoid duplicates
@@ -806,19 +719,11 @@ class HLExchange:
     # ------------------------------------------------------------------
 
     async def get_spot_mids_by_coin(self) -> dict[str, float]:
-        """Return {canonical_coin: spot_mid_USDC} for spot pairs we support.
-
-        Uses HL allMids: keys like "@142" identify spot pairs; we resolve them
-        to "UBTC/USDC", "UETH/USDC", "USOL/USDC" via the spot index map and
-        map the wrapped base back to the canonical perp coin (UBTC→BTC, etc.).
-        Missing/unknown pairs are skipped silently.
-        """
+        """Return {canonical_coin: spot_mid_USDC} for spot pairs we support."""
         try:
-            mids = await self._post({"type": "allMids"})
+            mids = await self._hl_client.all_mids()
         except Exception as exc:
             logger.warning("get_spot_mids_by_coin: allMids failed: %s", exc)
-            return {}
-        if not isinstance(mids, dict):
             return {}
         await self._load_spot_idx_map()
         idx_to_name = self._spot_idx_to_name or {}
@@ -839,10 +744,7 @@ class HLExchange:
             canonical = _SPOT_TOKEN_INVERSE.get(wrapped)
             if canonical is None:
                 continue
-            try:
-                out[canonical] = float(val)
-            except (TypeError, ValueError):
-                continue
+            out[canonical] = val
         return out
 
     # ------------------------------------------------------------------
@@ -850,28 +752,14 @@ class HLExchange:
     # ------------------------------------------------------------------
 
     async def get_perp_unrealized_by_coin(self) -> dict[str, float]:
-        """Return {coin: unrealizedPnl_USDC} from HL assetPositions.
-
-        Empty dict if HL reports no open perp positions. Caller decides whether
-        to use this as a per-coin override or to fall back to local m-to-m.
-        """
+        """Return {coin: unrealizedPnl_USDC} from HL assetPositions."""
         address = self._require_address()
         try:
-            state = await asyncio.to_thread(self._info.user_state, address)
+            state = await self._hl_client.user_state(address)
         except Exception as exc:
             logger.warning("get_perp_unrealized_by_coin: user_state failed: %s", exc)
             return {}
-        out: dict[str, float] = {}
-        for entry in state.get("assetPositions") or []:
-            pos = entry.get("position", {})
-            coin = pos.get("coin")
-            if not coin:
-                continue
-            try:
-                out[coin] = float(pos.get("unrealizedPnl", 0.0))
-            except (TypeError, ValueError):
-                continue
-        return out
+        return {ap.coin: ap.unrealized_pnl for ap in state.asset_positions if ap.coin}
 
     # ------------------------------------------------------------------
     # Fees from HL userFills (authoritative)
@@ -885,34 +773,22 @@ class HLExchange:
         attempts: int = 3,
         sleep_s: float = 0.5,
     ) -> float | None:
-        """Look up the fee for a specific oid from HL userFillsByTime.
-
-        Returns the fee converted to USDC (multiplies wrapped-token fees by the
-        fill price). Returns None if the fill has not appeared after `attempts`
-        polls — caller should fall back to a taker-rate estimate.
-        """
+        """Look up the fee for a specific oid from HL userFillsByTime."""
         address = self._require_address()
         end_ms = _dt_to_ms(self._clock_fn()) + 60_000
         for i in range(attempts):
             try:
-                fills = await asyncio.to_thread(
-                    self._info.user_fills_by_time, address, since_ms, end_ms
-                )
+                fills = await self._hl_client.user_fills_by_time(address, since_ms, end_ms)
             except Exception as exc:
                 logger.warning("user_fills_by_time failed (attempt %d): %s", i + 1, exc)
                 fills = []
-            if not isinstance(fills, list):
-                return None
-            for f in fills:
-                if not isinstance(f, dict) or int(f.get("oid", 0)) != oid:
-                    continue
-                fee_raw = float(f.get("fee", 0))
-                fee_token = str(f.get("feeToken") or "USDC").upper()
+            match = self._match_hl_fill_by_oid(fills, oid)
+            if match is not None:
+                fee_raw = match.fee_raw
+                fee_token = match.fee_token
                 if fee_token in ("USDC", "USD"):
                     return fee_raw
-                # Wrapped spot tokens: fee is in the base asset; convert to USDC
-                # using the fill price (px is in USDC per base unit).
-                px = float(f.get("px", 0))
+                px = match.px
                 if fee_token in _SPOT_TOKEN_INVERSE and px > 0:
                     return fee_raw * px
                 logger.warning(
@@ -925,13 +801,16 @@ class HLExchange:
                        oid, attempts)
         return None
 
-    async def backfill_fill_fees(self, strategy_id: int) -> int:
-        """Update DB fills whose fee == 0 with the real fee from HL userFills.
+    @staticmethod
+    def _match_hl_fill_by_oid(fills: list[HLUserFill], oid: int) -> HLUserFill | None:
+        """Find an HLUserFill by oid."""
+        for f in fills:
+            if f.oid == oid:
+                return f
+        return None
 
-        Matches HL fills to DB fills by (coin canonical, ts_ms ± 30s, qty, side).
-        Returns the number of rows updated. Used at startup to fix historical
-        fills that were written before the real-fee capture was wired up.
-        """
+    async def backfill_fill_fees(self, strategy_id: int) -> int:
+        """Update DB fills whose fee == 0 with the real fee from HL userFills."""
         from frab.db.models import FarbPosition as DBFarbPosition
 
         if self._session_factory is None:
@@ -956,9 +835,7 @@ class HLExchange:
 
         min_ts = min(f.ts_ms for f, _ in zero_fee_fills) - 60_000
         try:
-            hl_fills = await asyncio.to_thread(
-                self._info.user_fills_by_time, address, min_ts
-            )
+            hl_fills = await self._hl_client.user_fills_by_time(address, min_ts)
         except Exception as exc:
             logger.warning("backfill_fill_fees: user_fills_by_time failed: %s", exc)
             return 0
@@ -968,12 +845,12 @@ class HLExchange:
             match = self._match_hl_fill(hl_fills, fill_row, pos_row)
             if match is None:
                 continue
-            fee_raw = float(match.get("fee", 0))
-            fee_token = str(match.get("feeToken") or "USDC").upper()
+            fee_raw = match.fee_raw
+            fee_token = match.fee_token
             if fee_token in ("USDC", "USD"):
                 fee_usdc = fee_raw
             elif fee_token in _SPOT_TOKEN_INVERSE:
-                px = float(match.get("px", 0))
+                px = match.px
                 fee_usdc = fee_raw * px
             else:
                 fee_usdc = fee_raw
@@ -991,31 +868,23 @@ class HLExchange:
         return updated
 
     @staticmethod
-    def _match_hl_fill(hl_fills: list[dict], db_fill: Any, db_pos: Any) -> dict | None:
-        """Find an HL fill matching a DB (fill, position) row by side/qty/time."""
-        # HL side: "B" = buy, "A" = ask/sell. DB side: "long" or "short".
+    def _match_hl_fill(hl_fills: list[HLUserFill], db_fill: Any, db_pos: Any) -> HLUserFill | None:
+        """Find an HLUserFill matching a DB (fill, position) row by side/qty/time."""
         want_side = "B" if db_fill.side == Side.LONG.value else "A"
         for f in hl_fills or []:
-            if f.get("side") != want_side:
+            if f.side != want_side:
                 continue
-            try:
-                sz = float(f.get("sz", 0))
-                ts = int(f.get("time", 0))
-            except (TypeError, ValueError):
+            if abs(f.sz - db_fill.qty) > max(db_fill.qty * 0.01, 1e-9):
                 continue
-            if abs(sz - db_fill.qty) > max(db_fill.qty * 0.01, 1e-9):
+            if abs(f.ts_ms - db_fill.ts_ms) > 30_000:
                 continue
-            if abs(ts - db_fill.ts_ms) > 30_000:
-                continue
-            # Coin matching: PERP fills carry the coin name (e.g. "BTC");
-            # SPOT fills carry the pair symbol (e.g. "@142" or "UBTC/USDC").
-            hl_coin = str(f.get("coin", ""))
+            # Coin matching: PERP fills carry the coin name; SPOT fills carry pair symbol
             instrument = db_pos.instrument
             if instrument == Instrument.PERP.value:
-                if hl_coin != db_pos.coin:
+                if f.coin != db_pos.coin:
                     continue
             else:  # SPOT — accept either the symbolic or @-prefixed form
-                if not (hl_coin.startswith("@") or "/" in hl_coin):
+                if not (f.coin.startswith("@") or "/" in f.coin):
                     continue
             return f
         return None
@@ -1031,67 +900,42 @@ class HLExchange:
             raise RuntimeError("session_factory required for get_wallet")
 
         perp_state, spot_state = await asyncio.gather(
-            asyncio.to_thread(self._info.user_state, address),
-            asyncio.to_thread(self._info.spot_user_state, address),
+            self._hl_client.user_state(address),
+            self._hl_client.spot_user_state(address),
         )
 
         now_ms = _dt_to_ms(self._clock_fn())
 
         # Per-kind balance (returned to caller; state-machine code uses this)
         if kind == WalletKind.PERP:
-            margin = perp_state.get("marginSummary", {})
             if coin in ("USDC", "USD"):
-                balance = float(margin.get("accountValue", 0.0))
+                balance = perp_state.account_value
             else:
-                # For other coins in perp — not standard HL usage
                 balance = 0.0
         else:  # SPOT
             spot_coin = self._spot_token_map.get(coin, coin)
             balance = 0.0
-            for bal in spot_state.get("balances", []):
-                if bal.get("coin") == spot_coin or bal.get("coin") == coin:
-                    balance = float(bal.get("total", 0.0))
+            for bal in spot_state.balances:
+                if bal.coin == spot_coin or bal.coin == coin:
+                    balance = bal.total
                     break
 
         # Total balance across BOTH sub-wallets (equity-relevant cash).
-        #
-        # HL cross-margin double-counts: the portion of spot USDC held as
-        # collateral for a perp position is reflected BOTH in spot.USDC.total
-        # (as the "hold" component) AND in perp.totalRawUsd (as a synthetic
-        # credit). Naively summing perp.accountValue + spot.USDC.total over-
-        # states equity by exactly spot.USDC.hold.
-        #
-        # Likewise, perp.accountValue already contains the unrealized PnL and
-        # the cumulative funding for open positions — both of which the ledger
-        # surfaces as their own line items (perp_unrealized, funding_cum). So
-        # we strip them out of perp's contribution and keep only the perp
-        # wallet's "standalone" cash (i.e. direct deposits, if any).
         if coin in ("USDC", "USD"):
-            margin = perp_state.get("marginSummary", {})
-            account_value = float(margin.get("accountValue", 0.0))
-            asset_positions = perp_state.get("assetPositions") or []
-            unrealized_total = 0.0
-            cum_funding_received = 0.0
-            for entry in asset_positions:
-                pos = entry.get("position") or {}
-                try:
-                    unrealized_total += float(pos.get("unrealizedPnl", 0.0))
-                except (TypeError, ValueError):
-                    pass
-                cf = pos.get("cumFunding") or {}
-                try:
-                    # HL sign convention: cumFunding.sinceOpen is negative when
-                    # received (a credit to the trader); flip to "received".
-                    cum_funding_received += -float(cf.get("sinceOpen", 0.0))
-                except (TypeError, ValueError):
-                    pass
+            account_value = perp_state.account_value
+            unrealized_total = sum(ap.unrealized_pnl for ap in perp_state.asset_positions)
+            # HL sign convention: cumFunding.sinceOpen is negative when received (a credit).
+            # Flip to "received" semantics.
+            cum_funding_received = sum(
+                -ap.cum_funding_since_open for ap in perp_state.asset_positions
+            )
             spot_coin = self._spot_token_map.get(coin, coin)
             spot_total = 0.0
             spot_hold = 0.0
-            for bal in spot_state.get("balances", []):
-                if bal.get("coin") == spot_coin or bal.get("coin") == coin:
-                    spot_total = float(bal.get("total", 0.0))
-                    spot_hold = float(bal.get("hold", 0.0))
+            for bal in spot_state.balances:
+                if bal.coin == spot_coin or bal.coin == coin:
+                    spot_total = bal.total
+                    spot_hold = bal.hold
                     break
             perp_standalone = (
                 account_value - spot_hold - unrealized_total - cum_funding_received
@@ -1101,9 +945,9 @@ class HLExchange:
             # Non-USDC: only spot balance matters for this strategy
             spot_coin = self._spot_token_map.get(coin, coin)
             total_balance = 0.0
-            for bal in spot_state.get("balances", []):
-                if bal.get("coin") == spot_coin or bal.get("coin") == coin:
-                    total_balance = float(bal.get("total", 0.0))
+            for bal in spot_state.balances:
+                if bal.coin == spot_coin or bal.coin == coin:
+                    total_balance = bal.total
                     break
 
         async with session_scope(self._session_factory) as s:
@@ -1130,7 +974,7 @@ class HLExchange:
         to_wallet: WalletKind,
     ) -> None:
         """Transfer funds between wallets. Writes wallet_snapshots after transfer."""
-        exchange_sdk = self._require_exchange()
+        self._require_exchange()
         if amount <= 0:
             raise ValueError(f"amount must be positive, got {amount!r}")
 
@@ -1143,11 +987,7 @@ class HLExchange:
                 f"unsupported transfer direction: {from_wallet} → {to_wallet}"
             )
 
-        resp = await asyncio.to_thread(exchange_sdk.usd_class_transfer, amount, to_perp)
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            raise HLTransferError(
-                f"HL usdClassTransfer {from_wallet}→{to_wallet} rejected: {resp!r}"
-            )
+        await self._hl_client.usd_class_transfer(amount, to_perp)
         logger.info(
             "transfer coin=%s amount=%.4f %s→%s ok",
             coin, amount, from_wallet, to_wallet,
@@ -1160,22 +1000,17 @@ class HLExchange:
             if address is not None:
                 # Capture post-transfer balances
                 perp_state, spot_state = await asyncio.gather(
-                    asyncio.to_thread(self._info.user_state, address),
-                    asyncio.to_thread(self._info.spot_user_state, address),
+                    self._hl_client.user_state(address),
+                    self._hl_client.spot_user_state(address),
                 )
-                perp_balance = float(
-                    perp_state.get("marginSummary", {}).get("accountValue", 0.0)
-                )
+                perp_balance = perp_state.account_value
                 spot_coin = self._spot_token_map.get(coin, coin)
                 spot_balance = 0.0
-                for bal in spot_state.get("balances", []):
-                    if bal.get("coin") == spot_coin or bal.get("coin") == coin:
-                        spot_balance = float(bal.get("total", 0.0))
+                for bal in spot_state.balances:
+                    if bal.coin == spot_coin or bal.coin == coin:
+                        spot_balance = bal.total
                         break
 
-                # Write ONE snapshot with the post-transfer TOTAL balance.
-                # Same semantics as get_wallet: equity-relevant quantity is the
-                # account total, not the per-sub-wallet split.
                 if coin in ("USDC", "USD"):
                     total_balance = perp_balance + spot_balance
                 else:
@@ -1204,23 +1039,11 @@ class HLExchange:
         return self._exchange
 
     async def _set_leverage(self, coin: str, leverage: int) -> None:
-        """Set cross-margin leverage for a perp asset before opening a position.
-
-        HL applies leverage at the account level per asset; without an explicit
-        update the account default is used (commonly 20× for BTC). We call this
-        on every PERP open so the position reflects the strategy's configured
-        leverage rather than whatever HL left in place.
-        """
+        """Set cross-margin leverage for a perp asset before opening a position."""
         if leverage <= 0:
             raise ValueError(f"leverage must be > 0, got {leverage!r}")
-        exchange_sdk = self._require_exchange()
-        resp = await asyncio.to_thread(
-            exchange_sdk.update_leverage, int(leverage), coin, True
-        )
-        if not isinstance(resp, dict) or resp.get("status") != "ok":
-            raise RuntimeError(
-                f"HL updateLeverage rejected for coin={coin} leverage={leverage}: {resp!r}"
-            )
+        self._require_exchange()
+        await self._hl_client.update_leverage(coin, leverage)
 
     def _require_address(self) -> str:
         if self._address is None:
@@ -1233,8 +1056,8 @@ class HLExchange:
 
     async def _sz_decimals(self, coin: str) -> int:
         if self._sz_decimals_cache is None:
-            meta = await asyncio.to_thread(self._info.meta)
-            self._sz_decimals_cache = {u["name"]: int(u["szDecimals"]) for u in meta["universe"]}
+            specs = await self._hl_client.perp_meta()
+            self._sz_decimals_cache = {s.name: s.sz_decimals for s in specs}
         sz_dec = self._sz_decimals_cache.get(coin)
         if sz_dec is None:
             raise ValueError(f"unknown coin {coin!r} (not in perp meta)")
@@ -1257,30 +1080,47 @@ class HLExchange:
     # ------------------------------------------------------------------
 
     async def fetch_funding_history(self, coin: str, since_ms: int) -> list[FundingTick]:
-        ticks: list[FundingTick] = []
-        start = since_ms
-        while True:
-            data: list[dict] = await self._post({
-                "type": "fundingHistory",
-                "coin": coin,
-                "startTime": start,
-            })
-            for rec in data:
-                ticks.append(self._record_to_tick(coin, rec))
-            if len(data) < 500:
-                break
-            start = int(data[-1]["time"]) + 1
-        ticks.sort(key=lambda t: t.ts_ms)
-        return ticks
+        records = await self._hl_client.funding_history(coin, since_ms)
+        return [
+            FundingTick(
+                coin=coin,
+                ts_ms=r.ts_ms,
+                rate=r.rate,
+                premium=r.premium,
+                annualized_pct=r.rate * _PERIODS_PER_YEAR * 100,
+            )
+            for r in records
+        ]
 
     async def fetch_account_state(self) -> dict[str, Any]:
         """Return raw perp + spot account state dicts."""
         address = self._require_address()
         perp_state, spot_state = await asyncio.gather(
-            asyncio.to_thread(self._info.user_state, address),
-            asyncio.to_thread(self._info.spot_user_state, address),
+            self._hl_client.user_state(address),
+            self._hl_client.spot_user_state(address),
         )
-        return {"perp": perp_state, "spot": spot_state}
+        # Re-serialize to match the dict shape callers (API routes) expect
+        perp_dict = {
+            "marginSummary": {"accountValue": str(perp_state.account_value)},
+            "assetPositions": [
+                {
+                    "position": {
+                        "coin": ap.coin,
+                        "szi": str(ap.szi),
+                        "unrealizedPnl": str(ap.unrealized_pnl),
+                        "cumFunding": {"sinceOpen": str(ap.cum_funding_since_open)},
+                    }
+                }
+                for ap in perp_state.asset_positions
+            ],
+        }
+        spot_dict = {
+            "balances": [
+                {"coin": b.coin, "total": str(b.total), "hold": str(b.hold)}
+                for b in spot_state.balances
+            ]
+        }
+        return {"perp": perp_dict, "spot": spot_dict}
 
     def _inverse_spot_token_map(self) -> dict[str, str]:
         return {v: k for k, v in self._spot_token_map.items()}

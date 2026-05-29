@@ -9,6 +9,7 @@ import pytest
 import respx
 from tenacity import wait_none
 
+import frab.exchanges.hyperliquid.client as hl_client_mod
 import frab.exchanges.hyperliquid.exchange as hl_mod
 from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader, _ms_to_dt
 from frab.exchanges.protocol import FundingTick, Quote, MarketSpec
@@ -194,7 +195,7 @@ async def test_get_meta_parses_universe():
 
 @pytest.mark.asyncio
 async def test_retry_on_5xx(mocker):
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+    mocker.patch.object(hl_client_mod, "_WAIT", wait_none())
 
     record = _funding_record()
     call_count = 0
@@ -222,7 +223,7 @@ async def test_retry_on_5xx(mocker):
 
 @pytest.mark.asyncio
 async def test_no_retry_on_4xx(mocker):
-    mocker.patch.object(hl_mod, "_WAIT", wait_none())
+    mocker.patch.object(hl_client_mod, "_WAIT", wait_none())
 
     call_count = 0
 
@@ -251,11 +252,11 @@ async def test_owned_client_closed_on_exit(mocker):
     async with respx.mock(base_url=BASE_URL):
         respx.post(INFO_URL).respond(200, json=[record])
         md = HLExchangeReader(api_url=INFO_URL)
-        spy = mocker.spy(md._client, "aclose")
+        spy = mocker.spy(md._hl_client._http, "aclose")
         async with md:
             pass
         spy.assert_called_once()
-        assert md._client.is_closed
+        assert md._hl_client._http.is_closed
 
 
 # ---------------------------------------------------------------------------
