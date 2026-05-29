@@ -34,7 +34,7 @@ from frab.exchanges.hyperliquid.actions.transfer import TransferAction
 from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
 from frab.exchanges.hyperliquid.symbols import HLSymbols, SPOT_TOKEN_INVERSE
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
-from frab.exchanges.hyperliquid.wire import HLUserFill
+from frab.exchanges.hyperliquid.wire import HLPerpState, HLSpotState, HLUserFill
 from frab.exchanges.protocol import (
     FundingTick,
     MarketSpec,
@@ -47,9 +47,6 @@ logger = logging.getLogger(__name__)
 
 # Re-export so existing importers of HLTransferError / PartialFillError from exchange.py still work.
 __all__ = ["HLExchange", "HLTransferError", "PartialFillError", "BRIDGE_TOKEN_BLACKLIST", "SPOT_TOKEN_INVERSE"]
-
-# Backward-compat alias: code that imported _SPOT_TOKEN_INVERSE from exchange.py keeps working.
-_SPOT_TOKEN_INVERSE = SPOT_TOKEN_INVERSE
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
@@ -435,9 +432,9 @@ class HLExchange:
             for r in records
         ]
 
-    async def fetch_account_state(self) -> dict[str, Any]:
-        """Return raw perp + spot account state dicts."""
-        return await self._account_snapshot_action.get_state()
+    async def get_account_snapshot(self) -> tuple[HLPerpState, HLSpotState]:
+        """Return typed perp + spot account state in one round-trip pair."""
+        return await self._account_snapshot_action.get_snapshot()
 
     async def fetch_wallet_state(
         self,

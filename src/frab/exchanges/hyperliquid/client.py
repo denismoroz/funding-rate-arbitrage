@@ -262,11 +262,30 @@ class HLClient:
                 cum_funding_since_open = float(cf.get("sinceOpen", 0.0))
             except (TypeError, ValueError):
                 cum_funding_since_open = 0.0
+            try:
+                margin_used = float(pos.get("marginUsed", 0.0))
+            except (TypeError, ValueError):
+                margin_used = 0.0
+            try:
+                position_value = float(pos.get("positionValue", 0.0))
+            except (TypeError, ValueError):
+                position_value = 0.0
+            lev_raw = (pos.get("leverage") or {}).get("value")
+            if lev_raw is None:
+                leverage_value: int | None = None
+            else:
+                try:
+                    leverage_value = int(lev_raw)
+                except (TypeError, ValueError):
+                    leverage_value = None
             positions.append(HLPerpAssetPosition(
                 coin=coin,
                 szi=szi,
                 unrealized_pnl=unrealized_pnl,
                 cum_funding_since_open=cum_funding_since_open,
+                margin_used=margin_used,
+                position_value=position_value,
+                leverage_value=leverage_value,
             ))
         return HLPerpState(account_value=account_value, asset_positions=positions)
 

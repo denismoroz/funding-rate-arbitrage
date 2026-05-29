@@ -277,35 +277,22 @@ async def list_farb_positions(
         unrealized_pnl_by_coin = {}
         spot_mids = {}
         try:
-            hl_state, spot_mids = await asyncio.gather(
-                exchange.fetch_account_state(),
+            (perp_state, _spot_state), spot_mids = await asyncio.gather(
+                exchange.get_account_snapshot(),
                 exchange.get_spot_mids_by_coin(),
             )
-            hl_positions = hl_state.get("perp", {}).get("assetPositions") or []
+            hl_positions = perp_state.asset_positions
         except Exception:
             hl_positions = []
             spot_mids = {}
         for ap in hl_positions:
-            p = ap.get("position") or {}
-            coin = p.get("coin")
-            try:
-                m = float(p.get("marginUsed", 0))
-            except (TypeError, ValueError):
+            coin = ap.coin
+            if not coin:
                 continue
-            if coin:
-                margin_used_by_coin[coin] = m
-            lev = (p.get("leverage") or {}).get("value")
-            if coin and lev is not None:
-                try:
-                    leverage_by_coin[coin] = int(lev)
-                except (TypeError, ValueError):
-                    pass
-            try:
-                upnl = float(p.get("unrealizedPnl", 0))
-                if coin:
-                    unrealized_pnl_by_coin[coin] = upnl
-            except (TypeError, ValueError):
-                pass
+            margin_used_by_coin[coin] = ap.margin_used
+            if ap.leverage_value is not None:
+                leverage_by_coin[coin] = ap.leverage_value
+            unrealized_pnl_by_coin[coin] = ap.unrealized_pnl
 
     return [
         await _enrich(session, fp, margin_used_by_coin, leverage_by_coin, spot_mids, unrealized_pnl_by_coin)
@@ -446,34 +433,21 @@ async def get_farb_position(
         unrealized_pnl_by_coin = {}
         spot_mids = {}
         try:
-            hl_state, spot_mids = await asyncio.gather(
-                exchange.fetch_account_state(),
+            (perp_state, _spot_state), spot_mids = await asyncio.gather(
+                exchange.get_account_snapshot(),
                 exchange.get_spot_mids_by_coin(),
             )
-            hl_positions = hl_state.get("perp", {}).get("assetPositions") or []
+            hl_positions = perp_state.asset_positions
         except Exception:
             hl_positions = []
             spot_mids = {}
         for ap in hl_positions:
-            p = ap.get("position") or {}
-            coin = p.get("coin")
-            try:
-                m = float(p.get("marginUsed", 0))
-            except (TypeError, ValueError):
+            coin = ap.coin
+            if not coin:
                 continue
-            if coin:
-                margin_used_by_coin[coin] = m
-            lev = (p.get("leverage") or {}).get("value")
-            if coin and lev is not None:
-                try:
-                    leverage_by_coin[coin] = int(lev)
-                except (TypeError, ValueError):
-                    pass
-            try:
-                upnl = float(p.get("unrealizedPnl", 0))
-                if coin:
-                    unrealized_pnl_by_coin[coin] = upnl
-            except (TypeError, ValueError):
-                pass
+            margin_used_by_coin[coin] = ap.margin_used
+            if ap.leverage_value is not None:
+                leverage_by_coin[coin] = ap.leverage_value
+            unrealized_pnl_by_coin[coin] = ap.unrealized_pnl
 
     return await _enrich(session, fp, margin_used_by_coin, leverage_by_coin, spot_mids, unrealized_pnl_by_coin)

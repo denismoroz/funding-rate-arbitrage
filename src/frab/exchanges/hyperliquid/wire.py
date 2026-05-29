@@ -48,9 +48,12 @@ class HLUserFill:
 @dataclass(frozen=True)
 class HLPerpAssetPosition:
     coin: str
-    szi: float                    # signed size (>0 long, <0 short)
+    szi: float                     # signed size (>0 long, <0 short)
     unrealized_pnl: float
     cum_funding_since_open: float  # raw HL value (negative when received); caller decides sign
+    margin_used: float = 0.0       # HL position.marginUsed
+    position_value: float = 0.0    # HL position.positionValue (notional in USDC)
+    leverage_value: int | None = None  # HL position.leverage.value; None when missing
 
 
 @dataclass(frozen=True)

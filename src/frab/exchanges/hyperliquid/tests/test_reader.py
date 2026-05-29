@@ -279,8 +279,8 @@ async def test_injected_client_not_closed():
 
 def test_spot_token_inverse_does_not_alias_bridge_tokens():
     """The reverse map must contain only wrapped tokens 1:1 with their perp."""
-    from frab.exchanges.hyperliquid.exchange import _SPOT_TOKEN_INVERSE
+    from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
 
-    assert _SPOT_TOKEN_INVERSE == {"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL"}
+    assert SPOT_TOKEN_INVERSE == {"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL"}
     for forbidden in ("LINK0", "AAVE0", "AVAX0"):
-        assert forbidden not in _SPOT_TOKEN_INVERSE
+        assert forbidden not in SPOT_TOKEN_INVERSE

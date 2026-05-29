@@ -348,7 +348,92 @@ async def test_user_state_parses_perp_state(mocker, make_client):
     assert ap.szi == pytest.approx(0.1)
     assert ap.unrealized_pnl == pytest.approx(50.0)
     assert ap.cum_funding_since_open == pytest.approx(-3.5)
+    # New fields default when absent
+    assert ap.margin_used == pytest.approx(0.0)
+    assert ap.position_value == pytest.approx(0.0)
+    assert ap.leverage_value is None
     await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# 12b. test_user_state_parses_extended_position_fields
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_user_state_parses_extended_position_fields(mocker, make_client):
+    fake_info = mocker.MagicMock()
+    fake_raw = {
+        "marginSummary": {"accountValue": "1000.0"},
+        "assetPositions": [
+            {"position": {
+                "coin": "BTC",
+                "szi": "-0.5",
+                "unrealizedPnl": "10.0",
+                "cumFunding": {"sinceOpen": "-1.0"},
+                "marginUsed": "200.5",
+                "positionValue": "30000.0",
+                "leverage": {"type": "cross", "value": 3},
+            }}
+        ],
+    }
+    fake_info.user_state.return_value = fake_raw
+    client = make_client(info_obj=fake_info)
+
+    state = await client.user_state("0xaddr")
+
+    ap = state.asset_positions[0]
+    assert ap.margin_used == pytest.approx(200.5)
+    assert ap.position_value == pytest.approx(30000.0)
+    assert ap.leverage_value == 3
+    await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# 12c. test_user_state_extended_fields_malformed_inputs
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_user_state_extended_fields_malformed_inputs(mocker, make_client):
+    """Malformed / missing nested leverage keys → safe defaults."""
+    fake_info = mocker.MagicMock()
+
+    # leverage present but value key missing
+    fake_raw_no_value = {
+        "marginSummary": {"accountValue": "100.0"},
+        "assetPositions": [
+            {"position": {
+                "coin": "ETH",
+                "szi": "1.0",
+                "unrealizedPnl": "0.0",
+                "cumFunding": {"sinceOpen": "0.0"},
+                "leverage": {"type": "cross"},
+            }}
+        ],
+    }
+    fake_info.user_state.return_value = fake_raw_no_value
+    client = make_client(info_obj=fake_info)
+    state = await client.user_state("0xaddr")
+    assert state.asset_positions[0].leverage_value is None
+    await client.aclose()
+
+    # leverage value not int-able
+    fake_raw_bad_value = {
+        "marginSummary": {"accountValue": "100.0"},
+        "assetPositions": [
+            {"position": {
+                "coin": "ETH",
+                "szi": "1.0",
+                "unrealizedPnl": "0.0",
+                "cumFunding": {"sinceOpen": "0.0"},
+                "leverage": {"type": "cross", "value": "abc"},
+            }}
+        ],
+    }
+    fake_info.user_state.return_value = fake_raw_bad_value
+    client2 = make_client(info_obj=fake_info)
+    state2 = await client2.user_state("0xaddr")
+    assert state2.asset_positions[0].leverage_value is None
+    await client2.aclose()
 
 
 # ---------------------------------------------------------------------------

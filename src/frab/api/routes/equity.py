@@ -59,8 +59,8 @@ async def get_summary(request: Request) -> dict:
         raise HTTPException(status_code=503, detail="Exchange not configured")
 
     try:
-        state, spot_mids = await asyncio.gather(
-            exchange.fetch_account_state(),
+        (perp_state, spot_state), spot_mids = await asyncio.gather(
+            exchange.get_account_snapshot(),
             exchange.get_spot_mids_by_coin(),
         )
     except Exception as exc:
@@ -69,69 +69,39 @@ async def get_summary(request: Request) -> dict:
             detail=f"Failed to fetch HL state: {exc}",
         ) from exc
 
-    perp_state = state.get("perp") or {}
-    spot_state = state.get("spot") or {}
-
-    margin = perp_state.get("marginSummary") or {}
-    account_value = float(margin.get("accountValue", 0.0))
-    margin_used = float(margin.get("totalMarginUsed", 0.0))
+    account_value = perp_state.account_value
 
     short_notional = 0.0
     long_notional = 0.0
     unrealized = 0.0
     cum_funding_received = 0.0
-    for entry in perp_state.get("assetPositions") or []:
-        pos = entry.get("position") or {}
-        try:
-            szi = float(pos.get("szi", 0.0))
-            pv = float(pos.get("positionValue", 0.0))
-        except (TypeError, ValueError):
-            continue
-        if szi < 0:
-            short_notional += pv
-        elif szi > 0:
-            long_notional += pv
-        try:
-            unrealized += float(pos.get("unrealizedPnl", 0.0))
-        except (TypeError, ValueError):
-            pass
-        cf = pos.get("cumFunding") or {}
-        try:
-            cum_funding_received += -float(cf.get("sinceOpen", 0.0))
-        except (TypeError, ValueError):
-            pass
+    for ap in perp_state.asset_positions:
+        if ap.szi < 0:
+            short_notional += ap.position_value
+        elif ap.szi > 0:
+            long_notional += ap.position_value
+        unrealized += ap.unrealized_pnl
+        # HL sign flip: cum_funding_since_open is negative when received
+        cum_funding_received += -ap.cum_funding_since_open
 
-    # Local imports keep this route self-contained
-    from frab.exchanges.hyperliquid.exchange import _SPOT_TOKEN_INVERSE
+    from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
 
     spot_total_usdc = 0.0
     spot_hold_usdc = 0.0
     spot_tokens_value = 0.0
-    for bal in spot_state.get("balances") or []:
-        hl_coin = str(bal.get("coin", ""))
-        try:
-            total = float(bal.get("total", 0.0))
-            hold = float(bal.get("hold", 0.0))
-        except (TypeError, ValueError):
+    for bal in spot_state.balances:
+        if bal.coin in ("USDC", "USD"):
+            spot_total_usdc += bal.total
+            spot_hold_usdc += bal.hold
             continue
-        if hl_coin in ("USDC", "USD"):
-            spot_total_usdc += total
-            spot_hold_usdc += hold
-            continue
-        canonical = _SPOT_TOKEN_INVERSE.get(hl_coin)
+        canonical = SPOT_TOKEN_INVERSE.get(bal.coin)
         if canonical is None:
             continue
         mid = spot_mids.get(canonical, 0.0)
-        spot_tokens_value += total * mid
+        spot_tokens_value += bal.total * mid
 
-    # locked: sum of marginUsed across HL assetPositions (same as totalMarginUsed, renamed)
-    locked_usdc = 0.0
-    for entry in perp_state.get("assetPositions") or []:
-        pos = entry.get("position") or {}
-        try:
-            locked_usdc += float(pos.get("marginUsed", 0.0))
-        except (TypeError, ValueError):
-            pass
+    # locked: sum of marginUsed across HL assetPositions
+    locked_usdc = sum(ap.margin_used for ap in perp_state.asset_positions)
 
     # reserved: sum of state_data.required_margin over all currently OPEN FarbPositions in DB
     sf = getattr(request.app.state, "session_factory", None)

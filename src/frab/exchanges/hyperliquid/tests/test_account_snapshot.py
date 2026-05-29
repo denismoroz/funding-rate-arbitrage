@@ -56,14 +56,15 @@ def _empty_spot_state() -> HLSpotState:
 
 
 # ---------------------------------------------------------------------------
-# 1. address=None raises RuntimeError for all three methods
+# 1. address=None raises RuntimeError for get_snapshot, get_wallet_state,
+#    and get_perp_unrealized_by_coin
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_state_no_address_raises(mock_client, symbols):
+async def test_get_snapshot_no_address_raises(mock_client, symbols):
     action = AccountSnapshotAction(client=mock_client, symbols=symbols, address=None)
     with pytest.raises(RuntimeError, match="account_address required"):
-        await action.get_state()
+        await action.get_snapshot()
 
 
 @pytest.mark.asyncio
@@ -81,74 +82,63 @@ async def test_get_perp_unrealized_no_address_raises(mock_client, symbols):
 
 
 # ---------------------------------------------------------------------------
-# 2. get_state returns legacy dict shape
+# 2. get_snapshot returns (HLPerpState, HLSpotState) tuple
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_state_returns_legacy_dict_shape(mock_client, symbols):
-    mock_client.user_state.return_value = HLPerpState(
+async def test_get_snapshot_returns_typed_tuple(mock_client, symbols):
+    perp = HLPerpState(
         account_value=1000.5,
         asset_positions=[
             HLPerpAssetPosition(coin="BTC", szi=0.5, unrealized_pnl=50.0, cum_funding_since_open=-3.0),
         ],
     )
-    mock_client.spot_user_state.return_value = HLSpotState(
-        balances=[HLSpotBalance(coin="USDC", total=200.0, hold=0.0)],
-    )
+    spot = HLSpotState(balances=[HLSpotBalance(coin="USDC", total=200.0, hold=0.0)])
+    mock_client.user_state.return_value = perp
+    mock_client.spot_user_state.return_value = spot
 
     action = make_action(mock_client, symbols)
-    result = await action.get_state()
+    result = await action.get_snapshot()
 
-    assert "perp" in result
-    assert "spot" in result
-
-    perp = result["perp"]
-    assert perp["marginSummary"]["accountValue"] == "1000.5"
-
-    ap = perp["assetPositions"][0]["position"]
-    assert ap["coin"] == "BTC"
-    assert ap["szi"] == "0.5"
-    assert ap["unrealizedPnl"] == "50.0"
-    assert ap["cumFunding"]["sinceOpen"] == "-3.0"
-
-    spot = result["spot"]
-    bal = spot["balances"][0]
-    assert bal["coin"] == "USDC"
-    assert bal["total"] == "200.0"
-    assert bal["hold"] == "0.0"
+    perp_out, spot_out = result
+    assert isinstance(perp_out, HLPerpState)
+    assert isinstance(spot_out, HLSpotState)
+    assert perp_out.account_value == pytest.approx(1000.5)
+    assert len(perp_out.asset_positions) == 1
+    assert spot_out.balances[0].coin == "USDC"
 
 
 # ---------------------------------------------------------------------------
-# 3. get_state: empty perp/spot returns empty arrays, accountValue="0.0"
+# 3. get_snapshot calls user_state and spot_user_state exactly once each
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_state_empty_returns_empty_arrays(mock_client, symbols):
+async def test_get_snapshot_calls_both_endpoints_once(mock_client, symbols):
     mock_client.user_state.return_value = _empty_perp_state()
     mock_client.spot_user_state.return_value = _empty_spot_state()
 
     action = make_action(mock_client, symbols)
-    result = await action.get_state()
-
-    assert result["perp"]["marginSummary"]["accountValue"] == "0.0"
-    assert result["perp"]["assetPositions"] == []
-    assert result["spot"]["balances"] == []
-
-
-# ---------------------------------------------------------------------------
-# 4. get_state calls user_state and spot_user_state in parallel (exactly once each)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_get_state_calls_both_endpoints_once(mock_client, symbols):
-    mock_client.user_state.return_value = _empty_perp_state()
-    mock_client.spot_user_state.return_value = _empty_spot_state()
-
-    action = make_action(mock_client, symbols)
-    await action.get_state()
+    await action.get_snapshot()
 
     mock_client.user_state.assert_called_once_with("0xabc")
     mock_client.spot_user_state.assert_called_once_with("0xabc")
+
+
+# ---------------------------------------------------------------------------
+# 4. get_snapshot with empty positions/balances returns empty typed objects
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_snapshot_empty_returns_empty_typed_objects(mock_client, symbols):
+    mock_client.user_state.return_value = _empty_perp_state()
+    mock_client.spot_user_state.return_value = _empty_spot_state()
+
+    action = make_action(mock_client, symbols)
+    perp_out, spot_out = await action.get_snapshot()
+
+    assert perp_out.account_value == pytest.approx(0.0)
+    assert perp_out.asset_positions == []
+    assert spot_out.balances == []
 
 
 # ---------------------------------------------------------------------------
@@ -352,20 +342,24 @@ async def test_get_wallet_state_usdc_only_wallet(mock_client, symbols):
 
 
 # ---------------------------------------------------------------------------
-# 14. Each method calls user_state / spot_user_state only once per call
+# 14. get_wallet_state calls user_state and spot_user_state exactly once
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_state_no_duplicate_roundtrips(mock_client, symbols):
+async def test_get_wallet_state_no_duplicate_roundtrips(mock_client, symbols):
     mock_client.user_state.return_value = _empty_perp_state()
     mock_client.spot_user_state.return_value = _empty_spot_state()
 
     action = make_action(mock_client, symbols)
-    await action.get_state()
+    await action.get_wallet_state()
 
     mock_client.user_state.assert_called_once_with("0xabc")
     mock_client.spot_user_state.assert_called_once_with("0xabc")
 
+
+# ---------------------------------------------------------------------------
+# 15. get_perp_unrealized_by_coin calls user_state only once
+# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_get_perp_unrealized_no_duplicate_roundtrips(mock_client, symbols):
