@@ -516,10 +516,10 @@ function OpenFarbPositions() {
                       : "—"}
                   </td>
                   <td className="py-1 pr-3 text-right text-green-600">
-                    {formatCurrency(p.funding_usdc)}
+                    {formatCurrencyPrecise(p.funding_usdc)}
                   </td>
                   <td className="py-1 pr-3 text-right text-gray-500">
-                    {formatCurrency(p.fees_usdc)}
+                    {formatCurrencyPrecise(p.fees_usdc)}
                   </td>
                   <td className="py-1 pr-3 text-right">
                     {p.breakeven_hours_remaining == null ? (
@@ -551,7 +551,7 @@ function OpenFarbPositions() {
                     }`}
                   >
                     {p.unrealized_pnl_usdc != null
-                      ? formatCurrency(p.unrealized_pnl_usdc)
+                      ? formatCurrencyPrecise(p.unrealized_pnl_usdc)
                       : "—"}
                   </td>
                 </tr>

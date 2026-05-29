@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchFarbPositions, type FarbPosition } from "../lib/api";
-import { formatCurrency, formatNumber, formatQty, formatRelative } from "../lib/format";
+import { formatCurrencyPrecise, formatNumber, formatQty, formatRelative } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { useLiveEvents } from "../lib/useLiveEvents";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
@@ -144,7 +144,7 @@ export default function Journal() {
                           }`}
                         >
                           {p.unrealized_pnl_usdc != null
-                            ? formatCurrency(p.unrealized_pnl_usdc)
+                            ? formatCurrencyPrecise(p.unrealized_pnl_usdc)
                             : "—"}
                         </td>
                         <td className="py-1 text-gray-500" title={reason ?? undefined}>
