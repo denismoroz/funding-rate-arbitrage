@@ -393,16 +393,25 @@ class HLExchange:
         # SPOT or PERP
         exchange_sdk = self._require_exchange()
 
+        # Floor qty to coin's szDecimals — HL SDK's float_to_wire rejects
+        # quantities with sub-szDecimal precision (e.g. 0.000163124... for BTC
+        # which requires a 0.00001 step). We also reject sub-step requests.
+        wire_qty = await self.round_qty(req.coin, req.qty)
+        if wire_qty <= 0:
+            raise RuntimeError(
+                f"qty {req.qty} rounds to 0 at szDecimals for coin={req.coin}"
+            )
+
         if req.instrument == Instrument.SPOT:
             is_buy = req.side == Side.LONG
             spot_name = self._make_spot_name(req.coin)
             resp = await asyncio.to_thread(
-                exchange_sdk.market_open, spot_name, is_buy, req.qty, None, self._slippage
+                exchange_sdk.market_open, spot_name, is_buy, wire_qty, None, self._slippage
             )
         else:  # PERP
             is_buy = req.side == Side.LONG
             resp = await asyncio.to_thread(
-                exchange_sdk.market_open, req.coin, is_buy, req.qty, None, self._slippage
+                exchange_sdk.market_open, req.coin, is_buy, wire_qty, None, self._slippage
             )
 
         if not isinstance(resp, dict) or resp.get("status") != "ok":
@@ -424,9 +433,9 @@ class HLExchange:
         else:
             raise RuntimeError(f"HL order unrecognized status: {status0!r}")
 
-        if qty_filled < req.qty * (1 - self._partial_fill_tolerance):
+        if qty_filled < wire_qty * (1 - self._partial_fill_tolerance):
             raise PartialFillError(
-                requested_qty=req.qty,
+                requested_qty=wire_qty,
                 filled_qty=qty_filled,
                 fill_price=fill_price,
             )

@@ -31,6 +31,7 @@ from frab.engine.two_phase_signals import (
     decide_two_phase,
     update_consec_negative,
 )
+from frab.events.bus import Event, EventBus
 from frab.exchanges.protocol import Exchange, OpenRequest, WalletKind
 from frab.repo.farb_repo import FarbRepo, StateConflict
 
@@ -97,15 +98,29 @@ class TwoPhaseStrategy:
         farb_repo: FarbRepo,
         session_factory: async_sessionmaker[AsyncSession],
         params: TwoPhaseParams,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.strategy_id = strategy_id
         self.exchange = exchange
         self.farb_repo = farb_repo
         self._sf = session_factory
         self.params = params
+        self._bus = event_bus
         # Set by the force-tick API to bypass the same-hour entry cooldown on a
         # single hour_tick invocation. The API resets it after _hour_tick returns.
         self.force_entry_cooldown_bypass = False
+
+    async def _publish(self, *, level: str, kind: str, message: str, payload: dict | None = None) -> None:
+        if self._bus is None:
+            return
+        await self._bus.publish(Event(
+            ts=datetime.now(timezone.utc),
+            level=level,
+            source="strategy",
+            kind=kind,
+            message=message,
+            payload_json=payload,
+        ))
 
     # ── Public entry points ───────────────────────────────────────────────────
 
@@ -164,6 +179,17 @@ class TwoPhaseStrategy:
                 )
                 await self._rollback(current, partial_state=current.state, error=exc)
                 await self.farb_repo.mark_failed(current.id, reason=str(exc))
+                await self._publish(
+                    level="ERROR",
+                    kind="farb.failed",
+                    message=f"{current.coin} FAILED at {current.state.value}: {exc}",
+                    payload={
+                        "farb_position_id": current.id,
+                        "coin": current.coin,
+                        "state": current.state.value,
+                        "error": str(exc),
+                    },
+                )
                 break
 
             # Refetch to see the new state written by the handler
@@ -211,14 +237,25 @@ class TwoPhaseStrategy:
         required = self.params.required_margin()
         balance = await self.exchange.get_wallet("USDC", WalletKind.SPOT)
         if balance < required:
+            reason = f"insufficient_margin: need {required:.4f}, have {balance:.4f}"
             logger.warning(
                 "check_margin failed farb_position_id=%s coin=%s "
                 "required=%.4f available=%.4f → FAILED",
                 fp.id, fp.coin, required, balance,
             )
-            await self.farb_repo.mark_failed(
-                fp.id,
-                reason=f"insufficient_margin: need {required:.4f}, have {balance:.4f}",
+            await self.farb_repo.mark_failed(fp.id, reason=reason)
+            await self._publish(
+                level="WARNING",
+                kind="farb.failed",
+                message=f"{fp.coin} FAILED at CHECK_MARGIN: {reason}",
+                payload={
+                    "farb_position_id": fp.id,
+                    "coin": fp.coin,
+                    "state": FarbState.CHECK_MARGIN.value,
+                    "required": required,
+                    "available": balance,
+                    "reason": reason,
+                },
             )
             return
         await self.farb_repo.transition(
@@ -250,11 +287,13 @@ class TwoPhaseStrategy:
         )
         pos = await self.exchange.open_position(req)
         await self.farb_repo.set_leg(fp.id, instrument=Instrument.SPOT, position_id=pos.id)
+        # Use the actual filled qty (pos.qty) for the perp short so spot and
+        # perp legs match in size after HL's szDecimals flooring + partial fills.
         await self.farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_LONG,
             to_state=FarbState.OPENING_SHORT,
-            state_data={**fp.state_data, "spot_qty": spot_qty, "spot_entry_price": price},
+            state_data={**fp.state_data, "spot_qty": pos.qty, "spot_entry_price": pos.entry_price},
         )
 
     async def _step_opening_short(self, fp: FarbPosition) -> None:
