@@ -21,6 +21,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import Exchange as ExchangeRow
+from frab.db.models import FundingAccrual as FundingAccrualRow
 from frab.db.models import FundingRate as FundingRateRow
 from frab.db.session import session_scope
 from frab.domain import FarbPosition, FarbState, Instrument, Position, Side
@@ -131,7 +132,8 @@ class TwoPhaseStrategy:
             await self._advance_one(fp)
 
     async def on_hour_tick(self, *, now_ms: int) -> None:
-        """Hourly decision: evaluate exits on OPEN positions, then enter new ones."""
+        """Hourly: accrue funding on open positions, evaluate exits, then entries."""
+        await self._accrue_funding(now_ms=now_ms)
         await self._evaluate_exits(now_ms=now_ms)
         await self._evaluate_entries(now_ms=now_ms)
 
@@ -424,6 +426,70 @@ class TwoPhaseStrategy:
         # Rates come newest-first from ORDER BY DESC; mean is order-independent
         mean_rate = sum(rates) / len(rates)
         return mean_rate * intervals_per_year
+
+    async def _latest_funding_rate(self, coin: str) -> float | None:
+        """Most recent funding_rates.rate for the coin on this exchange."""
+        async with session_scope(self._sf) as session:
+            exc_row = (await session.execute(
+                select(ExchangeRow).where(ExchangeRow.name == self.exchange.name)
+            )).scalar_one_or_none()
+            if exc_row is None:
+                return None
+            row = (await session.execute(
+                select(FundingRateRow.rate)
+                .where(
+                    FundingRateRow.exchange_id == exc_row.id,
+                    FundingRateRow.coin == coin,
+                )
+                .order_by(desc(FundingRateRow.ts_ms))
+                .limit(1)
+            )).first()
+        return float(row[0]) if row is not None else None
+
+    # ── Funding accrual ───────────────────────────────────────────────────────
+
+    async def _accrue_funding(self, *, now_ms: int) -> None:
+        """For each OPEN FP, accrue this hour's funding payment and refresh
+        the cached current smoothed signal on state_data.
+
+        Funding = perp.qty * mark * latest_rate. SHORT receives positive funding
+        when rate>0 (our default arb posture).
+        """
+        open_fps = await self.farb_repo.list_open(self.strategy_id)
+        for fp in open_fps:
+            if fp.perp_position_id is None:
+                continue
+            rate = await self._latest_funding_rate(fp.coin)
+            smoothed = await self._compute_signal(fp.coin)
+            try:
+                quote = await self.exchange.get_quote(fp.coin)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "accrue_funding: failed to get_quote coin=%s farb_position_id=%s: %s",
+                    fp.coin, fp.id, exc,
+                )
+                continue
+            perp_pos = await self._get_position(fp.perp_position_id)
+            amount = perp_pos.qty * quote.mark * rate if rate is not None else 0.0
+
+            sd = dict(fp.state_data)
+            sd["gross_funding_so_far"] = sd.get("gross_funding_so_far", 0.0) + amount
+            if smoothed is not None:
+                sd["current_signal_apr"] = smoothed
+            await self.farb_repo.update_state_data(fp.id, sd)
+
+            async with session_scope(self._sf) as s:
+                s.add(FundingAccrualRow(
+                    position_id=fp.perp_position_id,
+                    ts_ms=now_ms,
+                    amount=amount,
+                ))
+
+            logger.info(
+                "funding accrued farb_position_id=%s coin=%s rate=%.6f mark=%.2f amount=%.6f total=%.6f",
+                fp.id, fp.coin, rate or 0.0, quote.mark, amount,
+                sd["gross_funding_so_far"],
+            )
 
     # ── Entry decision ────────────────────────────────────────────────────────
 

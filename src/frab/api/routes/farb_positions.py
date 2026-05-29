@@ -96,21 +96,22 @@ def _fp_to_dict(fp: FarbPositionRow, legs: dict, hours_held: float | None, unrea
 
     funding_usdc = float(sd.get("gross_funding_so_far") or 0.0)
     fees_usdc = float(sd.get("total_fees_paid") or 0.0)
+    current_apr = sd.get("current_signal_apr")
 
-    # Break-even: hours of forward funding accrual at the *target* signal needed
+    # Break-even based on the *current* smoothed signal (refreshed each hour by
+    # the strategy's accrual step). Hours of forward funding at this APR needed
     # to cover (fees - funding_so_far). None if signal ≤ 0 or no spot leg.
-    target_apr = sd.get("target_signal_apr")
     spot = legs.get("spot")
     breakeven_hours: float | None = None
     if (
-        target_apr is not None
-        and target_apr > 0
+        current_apr is not None
+        and current_apr > 0
         and spot is not None
         and spot.get("qty")
         and spot.get("entry_price")
     ):
         notional = spot["qty"] * spot["entry_price"]
-        hourly_income = notional * target_apr / _HOURS_PER_YEAR
+        hourly_income = notional * current_apr / _HOURS_PER_YEAR
         if hourly_income > 0:
             remaining = max(fees_usdc - funding_usdc, 0.0)
             breakeven_hours = remaining / hourly_income
@@ -127,6 +128,7 @@ def _fp_to_dict(fp: FarbPositionRow, legs: dict, hours_held: float | None, unrea
         "hours_held": hours_held,
         "target_signal_apr": sd.get("target_signal_apr"),
         "exit_signal_apr": sd.get("exit_signal_apr"),
+        "current_signal_apr": current_apr,
         "consec_negative_hours": sd.get("consec_negative_hours"),
         "unrealized_pnl_usdc": unrealized_pnl,
         "funding_usdc": funding_usdc,

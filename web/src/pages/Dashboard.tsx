@@ -482,7 +482,7 @@ function OpenFarbPositions() {
                 <th className="pb-1 pr-3 text-right">Target APR</th>
                 <th className="pb-1 pr-3 text-right">Funding</th>
                 <th className="pb-1 pr-3 text-right">Fees</th>
-                <th className="pb-1 pr-3 text-right" title="Hours of forward funding (at target APR) needed to cover remaining fees">Break-even</th>
+                <th className="pb-1 pr-3 text-right" title="Hours of forward funding at the current smoothed signal APR needed to cover remaining fees">Break-even</th>
                 <th className="pb-1 pr-3 text-right">Consec neg</th>
                 <th className="pb-1 text-right">Unrealized</th>
               </tr>
