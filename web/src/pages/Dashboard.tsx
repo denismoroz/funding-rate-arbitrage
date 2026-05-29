@@ -480,6 +480,9 @@ function OpenFarbPositions() {
                 <th className="pb-1 pr-3 text-right">Perp qty</th>
                 <th className="pb-1 pr-3 text-right">Held (h)</th>
                 <th className="pb-1 pr-3 text-right">Target APR</th>
+                <th className="pb-1 pr-3 text-right">Funding</th>
+                <th className="pb-1 pr-3 text-right">Fees</th>
+                <th className="pb-1 pr-3 text-right" title="Hours of forward funding (at target APR) needed to cover remaining fees">Break-even</th>
                 <th className="pb-1 pr-3 text-right">Consec neg</th>
                 <th className="pb-1 text-right">Unrealized</th>
               </tr>
@@ -511,6 +514,23 @@ function OpenFarbPositions() {
                     {p.target_signal_apr != null
                       ? `${formatNumber(p.target_signal_apr * 100, 2)}%`
                       : "—"}
+                  </td>
+                  <td className="py-1 pr-3 text-right text-green-600">
+                    {formatCurrency(p.funding_usdc)}
+                  </td>
+                  <td className="py-1 pr-3 text-right text-gray-500">
+                    {formatCurrency(p.fees_usdc)}
+                  </td>
+                  <td className="py-1 pr-3 text-right">
+                    {p.breakeven_hours_remaining == null ? (
+                      <span className="text-gray-400">—</span>
+                    ) : p.breakeven_hours_remaining <= 0 ? (
+                      <span className="text-green-600 font-semibold">✓</span>
+                    ) : (
+                      <span className="text-gray-700">
+                        {formatNumber(p.breakeven_hours_remaining, 1)}h
+                      </span>
+                    )}
                   </td>
                   <td className="py-1 pr-3 text-right">
                     {p.consec_negative_hours != null ? (

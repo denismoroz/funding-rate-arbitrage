@@ -87,9 +87,34 @@ async def _compute_unrealized_pnl(
     return pnl
 
 
+_HOURS_PER_YEAR = 8760
+
+
 def _fp_to_dict(fp: FarbPositionRow, legs: dict, hours_held: float | None, unrealized_pnl: float | None) -> dict:
     """Serialize a FarbPositionRow to the response shape."""
     sd = fp.state_data or {}
+
+    funding_usdc = float(sd.get("gross_funding_so_far") or 0.0)
+    fees_usdc = float(sd.get("total_fees_paid") or 0.0)
+
+    # Break-even: hours of forward funding accrual at the *target* signal needed
+    # to cover (fees - funding_so_far). None if signal ≤ 0 or no spot leg.
+    target_apr = sd.get("target_signal_apr")
+    spot = legs.get("spot")
+    breakeven_hours: float | None = None
+    if (
+        target_apr is not None
+        and target_apr > 0
+        and spot is not None
+        and spot.get("qty")
+        and spot.get("entry_price")
+    ):
+        notional = spot["qty"] * spot["entry_price"]
+        hourly_income = notional * target_apr / _HOURS_PER_YEAR
+        if hourly_income > 0:
+            remaining = max(fees_usdc - funding_usdc, 0.0)
+            breakeven_hours = remaining / hourly_income
+
     return {
         "id": fp.id,
         "strategy_id": fp.strategy_id,
@@ -104,6 +129,9 @@ def _fp_to_dict(fp: FarbPositionRow, legs: dict, hours_held: float | None, unrea
         "exit_signal_apr": sd.get("exit_signal_apr"),
         "consec_negative_hours": sd.get("consec_negative_hours"),
         "unrealized_pnl_usdc": unrealized_pnl,
+        "funding_usdc": funding_usdc,
+        "fees_usdc": fees_usdc,
+        "breakeven_hours_remaining": breakeven_hours,
     }
 
 
