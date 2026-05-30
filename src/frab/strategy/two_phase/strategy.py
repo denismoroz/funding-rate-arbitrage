@@ -13,27 +13,17 @@ Signal math: two_phase_signals.decide_two_phase + compute_position_min_hold.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from frab.db.models import Exchange as ExchangeRow
-from frab.db.models import FundingRate as FundingRateRow
 from frab.db.models import Strategy as StrategyRow
 from frab.db.session import session_scope
 from frab.domain import FarbPosition, FarbState
-from frab.engine.two_phase_signals import (
-    TwoPhaseDecision,
-    decide_two_phase,
-    update_consec_negative,
-)
-from frab.events.bus import Event, EventBus
-from frab.exchanges.protocol import Exchange, WalletKind
+from frab.events.bus import EventBus
+from frab.exchanges.protocol import Exchange
 from frab.repo.farb_repo import FarbRepo, StateConflict
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.params import TwoPhaseParams
-from frab.strategy.two_phase.states._helpers import load_position
+from frab.strategy.two_phase.states._helpers import publish_event
 from frab.strategy.two_phase.state_machine import StateMachine
 from frab.strategy.two_phase.states.check_margin import CheckMarginState
 from frab.strategy.two_phase.states.closing_long import ClosingLongState
@@ -42,9 +32,11 @@ from frab.strategy.two_phase.states.opening_long import OpeningLongState
 from frab.strategy.two_phase.states.opening_margin import OpeningMarginState
 from frab.strategy.two_phase.states.opening_short import OpeningShortState
 from frab.strategy.two_phase.states.releasing_margin import ReleasingMarginState
-
-# HL hourly funding intervals per year
-_HOURS_PER_YEAR = 8760
+from frab.strategy.two_phase.evaluators.signal import SignalComputer
+from frab.strategy.two_phase.evaluators.entry import EntryEvaluator
+from frab.strategy.two_phase.evaluators.exit import ExitEvaluator
+from frab.strategy.two_phase.actions.funding_accrual import FundingAccrual
+from frab.strategy.two_phase.actions.rollback import RollbackAction
 
 
 # ─── Strategy ────────────────────────────────────────────────────────────────
@@ -75,6 +67,36 @@ class TwoPhaseStrategy:
         # Set by the force-tick API to bypass the same-hour entry cooldown on a
         # single hour_tick invocation. The API resets it after _hour_tick returns.
         self.force_entry_cooldown_bypass = False
+
+        signal_computer = SignalComputer(
+            exchange_name=exchange.name,
+            session_factory=session_factory,
+            signal_window_hours=params.signal_window_hours,
+        )
+        self._entry_evaluator = EntryEvaluator(
+            strategy_id=strategy_id,
+            farb_repo=farb_repo,
+            params=params,
+            signal_computer=signal_computer,
+        )
+        self._exit_evaluator = ExitEvaluator(
+            strategy_id=strategy_id,
+            farb_repo=farb_repo,
+            params=params,
+            signal_computer=signal_computer,
+        )
+        self._funding_accrual = FundingAccrual(
+            strategy_id=strategy_id,
+            exchange=exchange,
+            farb_repo=farb_repo,
+            session_factory=session_factory,
+            signal_computer=signal_computer,
+        )
+        self._rollback_action = RollbackAction(
+            exchange=exchange,
+            session_factory=session_factory,
+            params=params,
+        )
         self._state_machine = StateMachine({
             FarbState.CHECK_MARGIN: CheckMarginState(
                 exchange=exchange,
@@ -115,18 +137,6 @@ class TwoPhaseStrategy:
                 session_factory=session_factory,
             ),
         })
-
-    async def _publish(self, *, level: str, kind: str, message: str, payload: dict | None = None) -> None:
-        if self._bus is None:
-            return
-        await self._bus.publish(Event(
-            ts=datetime.now(timezone.utc),
-            level=level,
-            source="strategy",
-            kind=kind,
-            message=message,
-            payload_json=payload,
-        ))
 
     # ── Public entry points ───────────────────────────────────────────────────
 
@@ -196,7 +206,8 @@ class TwoPhaseStrategy:
                 )
                 await self._rollback(current, partial_state=current.state, error=exc)
                 await self.farb_repo.mark_failed(current.id, reason=str(exc))
-                await self._publish(
+                await publish_event(
+                    self._bus,
                     level="ERROR",
                     kind="farb.failed",
                     message=f"{current.coin} FAILED at {current.state.value}: {exc}",
@@ -231,340 +242,19 @@ class TwoPhaseStrategy:
         handler registered → StateMachine.step returns None (no-op)."""
         await self._state_machine.step(fp)
 
-    # ── Signal computation ────────────────────────────────────────────────────
-
-    async def _compute_signal(self, coin: str) -> float | None:
-        """Fetch last signal_window_hours funding rates from DB and compute smoothed signal."""
-        window = self.params.signal_window_hours
-        async with session_scope(self._sf) as session:
-            # Look up exchange id
-            result = await session.execute(
-                select(ExchangeRow).where(ExchangeRow.name == self.exchange.name)
-            )
-            exc_row = result.scalar_one_or_none()
-            if exc_row is None:
-                return None
-            intervals_per_year = _HOURS_PER_YEAR // exc_row.funding_interval_h
-
-            # Fetch recent rates
-            rates_result = await session.execute(
-                select(FundingRateRow.rate)
-                .where(
-                    FundingRateRow.exchange_id == exc_row.id,
-                    FundingRateRow.coin == coin,
-                )
-                .order_by(desc(FundingRateRow.ts_ms))
-                .limit(window)
-            )
-            rates = [r for (r,) in rates_result.all()]
-
-        if len(rates) < window:
-            return None
-        # Rates come newest-first from ORDER BY DESC; mean is order-independent
-        mean_rate = sum(rates) / len(rates)
-        return mean_rate * intervals_per_year
-
-    async def _latest_funding_rate(self, coin: str) -> float | None:
-        """Most recent funding_rates.rate for the coin on this exchange."""
-        async with session_scope(self._sf) as session:
-            exc_row = (await session.execute(
-                select(ExchangeRow).where(ExchangeRow.name == self.exchange.name)
-            )).scalar_one_or_none()
-            if exc_row is None:
-                return None
-            row = (await session.execute(
-                select(FundingRateRow.rate)
-                .where(
-                    FundingRateRow.exchange_id == exc_row.id,
-                    FundingRateRow.coin == coin,
-                )
-                .order_by(desc(FundingRateRow.ts_ms))
-                .limit(1)
-            )).first()
-        return float(row[0]) if row is not None else None
-
-    # ── Funding accrual ───────────────────────────────────────────────────────
-
-    async def _accrue_funding(self, *, now_ms: int) -> None:
-        """For each OPEN FP, refresh funding accruals from HL's authoritative
-        userFunding endpoint via Exchange.get_accrued_funding. That helper is
-        already idempotent (dedupes by (position_id, ts_ms) before insert) and
-        returns the cumulative DB sum. We just mirror that sum into state_data
-        and refresh the cached current smoothed signal.
-        """
-        open_fps = await self.farb_repo.list_open(self.strategy_id)
-        for fp in open_fps:
-            if fp.perp_position_id is None:
-                continue
-            perp_pos = await load_position(self._sf,fp.perp_position_id)
-            try:
-                gross = await self.exchange.get_accrued_funding(perp_pos)
-            except Exception as exc:  # noqa: BLE001
-                _pkg.logger.warning(
-                    "accrue_funding: get_accrued_funding failed fp=%s coin=%s: %s",
-                    fp.id, fp.coin, exc,
-                )
-                continue
-
-            sd = dict(fp.state_data)
-            sd["gross_funding_so_far"] = float(gross)
-            smoothed = await self._compute_signal(fp.coin)
-            if smoothed is not None:
-                sd["current_signal_apr"] = smoothed
-            await self.farb_repo.update_state_data(fp.id, sd)
-
-            _pkg.logger.info(
-                "funding accrued fp=%s coin=%s gross_from_HL=%.6f",
-                fp.id, fp.coin, gross,
-            )
-
-    # ── Entry decision ────────────────────────────────────────────────────────
+    # ── Thin delegates (required for test compat) ─────────────────────────────
 
     async def _evaluate_entries(self, *, now_ms: int) -> None:
-        """For each coin: compute signal, check concurrency cap, create new arbs."""
-        p = self.params
-
-        # Count non-terminal positions (includes OPEN + in-flight)
-        all_active = await self.farb_repo.list_active(self.strategy_id)
-        open_fps = await self.farb_repo.list_open(self.strategy_id)
-        non_terminal_count = len(all_active) + len(open_fps)
-
-        slots = p.concurrency_cap - non_terminal_count
-        if slots <= 0:
-            return
-
-        # Budget cap: further constrain slots by available committed capital
-        footprint = p.per_position_footprint()
-        committed_usdc = non_terminal_count * footprint
-        remaining_budget = p.budget_cap_usdc - committed_usdc
-        slots_by_budget = int(remaining_budget // footprint) if footprint > 0 else 0
-        if slots_by_budget <= 0:
-            _pkg.logger.info(
-                "budget_cap blocks new entries: committed=%.2f cap=%.2f remaining=%.2f",
-                committed_usdc,
-                p.budget_cap_usdc,
-                remaining_budget,
-            )
-            return
-        slots = min(slots, slots_by_budget)
-
-        # Evaluate each coin for entry
-        candidates: list[tuple[str, float]] = []
-        current_hour = now_ms // 3_600_000
-        for coin in p.coins:
-            # Skip if already has a non-terminal position
-            existing = await self.farb_repo.list_by_coin(
-                self.strategy_id, coin, include_terminal=False
-            )
-            # list_by_coin with include_terminal=False excludes OPEN/CLOSED/FAILED
-            # but we also want to skip if there's an OPEN position
-            open_for_coin = [fp for fp in open_fps if fp.coin == coin]
-            if existing or open_for_coin:
-                continue
-
-            # Cooldown: if a FP for this coin failed in the current hour, wait
-            # for the next hour-tick before retrying (avoids tight failure loop).
-            all_for_coin = await self.farb_repo.list_by_coin(
-                self.strategy_id, coin, include_terminal=True
-            )
-            last_failed_ms = max(
-                (int(fp.closed_at.timestamp() * 1000)
-                 for fp in all_for_coin
-                 if fp.state == FarbState.FAILED and fp.closed_at is not None),
-                default=None,
-            )
-            if (
-                last_failed_ms is not None
-                and last_failed_ms // 3_600_000 == current_hour
-                and not self.force_entry_cooldown_bypass
-            ):
-                _pkg.logger.info(
-                    "entry cooldown: coin=%s last_failed_at_ms=%d this_hour=%d, skip",
-                    coin, last_failed_ms, current_hour,
-                )
-                continue
-
-            signal = await self._compute_signal(coin)
-            if signal is None:
-                continue
-
-            decision = decide_two_phase(
-                in_position=False,
-                smoothed_signal_annual=signal,
-                entry_threshold=p.entry_threshold_apr,
-                # Below fields irrelevant when not in_position:
-                hours_in_position=0,
-                position_min_hold_hours=0,
-                gross_funding_so_far=0.0,
-                total_fees_paid=0.0,
-                consec_negative_hours=0,
-                current_hourly_income_quote=0.0,
-                phase1_negative_patience=p.phase1_negative_patience,
-                phase1_breakeven_cap_hours=p.phase1_breakeven_cap_hours,
-                phase2_exit_threshold=p.phase2_exit_threshold,
-            )
-            if decision == TwoPhaseDecision.OPEN:
-                candidates.append((coin, signal))
-
-        # Sort by signal strength descending, pick top `slots`
-        candidates.sort(key=lambda x: -x[1])
-        for coin, signal in candidates[:slots]:
-            await self.farb_repo.create(
-                strategy_id=self.strategy_id,
-                coin=coin,
-                initial_state=FarbState.CHECK_MARGIN,
-                state_data={
-                    "target_signal_apr": signal,
-                    "entry_ts_ms": now_ms,
-                },
-            )
-            _pkg.logger.info(
-                "entry candidate farb created coin=%s signal_apr=%.4f", coin, signal
-            )
-
-    # ── Exit decision ─────────────────────────────────────────────────────────
+        await self._entry_evaluator.evaluate(
+            now_ms=now_ms,
+            force_cooldown_bypass=self.force_entry_cooldown_bypass,
+        )
 
     async def _evaluate_exits(self, *, now_ms: int) -> None:
-        """For each OPEN FarbPosition: check if we should begin closing."""
-        open_fps = await self.farb_repo.list_open(self.strategy_id)
-        for fp in open_fps:
-            await self._evaluate_exit_one(fp, now_ms=now_ms)
+        await self._exit_evaluator.evaluate(now_ms=now_ms)
 
-    async def _evaluate_exit_one(self, fp: FarbPosition, *, now_ms: int) -> None:
-        signal = await self._compute_signal(fp.coin)
-
-        sd = fp.state_data
-        opened_at_ms: int = sd.get("opened_at_ms", _dt_to_ms(fp.opened_at))
-        hours_held = (now_ms - opened_at_ms) / 3_600_000
-
-        pos_min_hold = sd.get("position_min_hold_hours", self.params.base_min_hold_hours)
-        gross_funding = sd.get("gross_funding_so_far", 0.0)
-        total_fees = sd.get("total_fees_paid", 0.0)
-        consec_neg = sd.get("consec_negative_hours", 0)
-
-        # Compute current hourly income quote (position_size × signal / hours_per_year)
-        if signal is not None and signal > 0:
-            current_hourly_income = self.params.position_size_usdc * signal / _HOURS_PER_YEAR
-        else:
-            current_hourly_income = 0.0
-
-        # Update consec_negative counter in state_data
-        new_consec_neg = update_consec_negative(
-            prev_consec_negative=consec_neg,
-            smoothed_signal_annual=signal,
-        )
-
-        decision = decide_two_phase(
-            in_position=True,
-            smoothed_signal_annual=signal,
-            entry_threshold=self.params.entry_threshold_apr,
-            hours_in_position=int(hours_held),
-            position_min_hold_hours=pos_min_hold,
-            gross_funding_so_far=gross_funding,
-            total_fees_paid=total_fees,
-            consec_negative_hours=new_consec_neg,
-            current_hourly_income_quote=current_hourly_income,
-            phase1_negative_patience=self.params.phase1_negative_patience,
-            phase1_breakeven_cap_hours=self.params.phase1_breakeven_cap_hours,
-            phase2_exit_threshold=self.params.phase2_exit_threshold,
-        )
-
-        # Always persist updated counters
-        updated_sd = {
-            **sd,
-            "consec_negative_hours": new_consec_neg,
-        }
-
-        if decision != TwoPhaseDecision.NONE:
-            try:
-                await self.farb_repo.transition(
-                    fp.id,
-                    from_state=FarbState.OPEN,
-                    to_state=FarbState.CLOSING_SHORT,
-                    state_data={**updated_sd, "exit_signal_apr": signal, "exit_decision": decision.value},
-                )
-                _pkg.logger.info(
-                    "exit triggered farb_position_id=%s decision=%s signal=%.4f",
-                    fp.id,
-                    decision.value,
-                    signal if signal is not None else float("nan"),
-                )
-            except StateConflict:
-                _pkg.logger.debug(
-                    "state_conflict on exit transition farb_position_id=%s — skipping",
-                    fp.id,
-                )
-        else:
-            # Checkpoint updated counters without changing state
-            await self.farb_repo.update_state_data(fp.id, updated_sd)
-
-    # ── Rollback ──────────────────────────────────────────────────────────────
+    async def _accrue_funding(self, *, now_ms: int) -> None:
+        await self._funding_accrual.accrue(now_ms=now_ms)
 
     async def _rollback(self, fp: FarbPosition, *, partial_state: FarbState, error: Exception) -> None:
-        """Best-effort cleanup of partially-opened positions.
-
-        Does NOT re-raise. Logs all inner failures at ERROR level.
-        """
-        _pkg.logger.info(
-            "rollback starting farb_position_id=%s partial_state=%s error=%s",
-            fp.id,
-            partial_state.value,
-            error,
-        )
-        try:
-            if partial_state == FarbState.OPENING_SHORT:
-                # Spot leg is open; close it
-                if fp.spot_position_id is not None:
-                    try:
-                        spot_pos = await load_position(self._sf,fp.spot_position_id)
-                        await self.exchange.close_position(spot_pos)
-                        _pkg.logger.info(
-                            "rollback: closed spot leg farb_position_id=%s spot_position_id=%s",
-                            fp.id,
-                            fp.spot_position_id,
-                        )
-                    except Exception as inner:  # noqa: BLE001
-                        _pkg.logger.error(
-                            "rollback: failed to close spot leg farb_position_id=%s: %s",
-                            fp.id,
-                            inner,
-                        )
-
-            elif partial_state == FarbState.OPENING_LONG:
-                # Margin is reserved; transfer it back to spot
-                required = fp.state_data.get("required_margin", self.params.required_margin())
-                try:
-                    await self.exchange.transfer("USDC", required, WalletKind.PERP, WalletKind.SPOT)
-                    _pkg.logger.info(
-                        "rollback: returned margin farb_position_id=%s amount=%.4f",
-                        fp.id,
-                        required,
-                    )
-                except Exception as inner:  # noqa: BLE001
-                    _pkg.logger.error(
-                        "rollback: failed to return margin farb_position_id=%s: %s",
-                        fp.id,
-                        inner,
-                    )
-
-            elif partial_state in (FarbState.CLOSING_LONG, FarbState.CLOSING_SHORT):
-                # Close-side failure: log for human/oncall, do NOT auto-reopen
-                _pkg.logger.error(
-                    "rollback: close-side failure farb_position_id=%s state=%s — "
-                    "manual intervention required, NOT auto-reopening",
-                    fp.id,
-                    partial_state.value,
-                )
-
-        except Exception as outer:  # noqa: BLE001
-            _pkg.logger.error(
-                "rollback: unexpected error farb_position_id=%s: %s",
-                fp.id,
-                outer,
-            )
-
-
-# ─── Tiny utilities ──────────────────────────────────────────────────────────
-
-def _dt_to_ms(dt: datetime) -> int:
-    return int(dt.timestamp() * 1000)
+        await self._rollback_action.execute(fp, partial_state=partial_state, error=error)
