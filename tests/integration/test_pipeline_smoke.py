@@ -37,6 +37,7 @@ from frab.engine.loop import EngineLoop
 from frab.exchanges.protocol import FundingTick, Quote, WalletKind
 from frab.ledger.ledger import Ledger
 from frab.repo.farb_repo import FarbRepo
+from frab.settings import Settings
 from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 
 _NOW_MS = 1_704_067_200_000  # 2024-01-01 00:00:00 UTC
@@ -192,16 +193,19 @@ async def test_pipeline_smoke(session_factory, seeded):
         concurrency_cap=3,
         position_size_usdc=1000.0,
         margin_buffer_factor=3.0,
-        perp_leverage=5.0,
         phase1_negative_patience=72,
         phase1_breakeven_cap_hours=720,
     )
+    settings = MagicMock(spec=Settings)
+    from frab.constants import CoinMarginSpec
+    settings.get_coin_spec.return_value = CoinMarginSpec(leverage=5, maint_ratio=0.025)
     strategy = TwoPhaseStrategy(
         strategy_id=strategy_id,
         exchange=exchange,
         farb_repo=farb_repo,
         session_factory=session_factory,
         params=params,
+        settings=settings,
     )
 
     loop = EngineLoop(

@@ -18,13 +18,14 @@ class OpeningMarginState(State):
         self._exchange = ctx.exchange
         self._farb_repo = ctx.farb_repo
         self._params = ctx.params
+        self._settings = ctx.settings
 
     async def execute(self, fp: FarbPosition) -> FarbState | None:
         # HL is cross-margin on one account — no spot→perp transfer needed.
         # We still record a COLLATERAL Position row so the FP has a tracked
         # margin obligation (qty = USDC reserved; entry_price = 1.0). The
         # actual hold on spot USDC is created by HL when the perp leg opens.
-        required = fp.state_data.get("required_margin", self._params.required_margin())
+        required = fp.state_data.get("required_margin", self._params.compute_required_margin_for(fp.coin, self._settings))
         coll_req = OpenRequest(
             coin="USDC",
             instrument=Instrument.COLLATERAL,

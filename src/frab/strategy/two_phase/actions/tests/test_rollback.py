@@ -18,7 +18,6 @@ _NOW_MS = 1_704_067_200_000
 def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
         position_size_usdc=1000.0,
-        perp_leverage=5.0,
         margin_buffer_factor=3.0,
     )
     defaults.update(overrides)
@@ -75,14 +74,13 @@ async def test_opening_short_with_spot_id_closes_spot_position(mocker):
 
 @pytest.mark.asyncio
 async def test_opening_long_transfers_margin_back_to_spot(mocker):
-    """partial_state=OPENING_LONG → calls exchange.transfer with required margin amount."""
-    params = _make_params(position_size_usdc=1000.0, perp_leverage=5.0, margin_buffer_factor=3.0)
-    required = params.required_margin()  # 600.0
+    """partial_state=OPENING_LONG → calls exchange.transfer with required margin from state_data."""
+    required = 600.0
     fp = _make_fp(
         state=FarbState.OPENING_LONG,
         state_data={"required_margin": required},
     )
-    rollback, exchange = _make_rollback(mocker, params=params)
+    rollback, exchange = _make_rollback(mocker)
 
     mocker.patch(
         "frab.strategy.two_phase.actions.rollback.load_position",

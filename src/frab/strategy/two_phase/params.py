@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from frab.settings import Settings
 
 
 @dataclass(frozen=True)
@@ -20,7 +24,6 @@ class TwoPhaseParams:
     position_size_usdc: float = 1000.0      # notional per spot leg
     budget_cap_usdc: float = 10000.0        # max total committed capital (spot notional + margin) across open + pending FarbPositions
     margin_buffer_factor: float = 3.0       # perp margin = size/leverage * buffer
-    perp_leverage: float = 5.0             # perp leverage for margin calculation
     # Two-phase exit params
     phase1_negative_patience: int = 72      # hours of consecutive negative before phase1 exit
     phase1_breakeven_cap_hours: int = 720   # if hours-to-breakeven > this → exit phase1
@@ -32,10 +35,14 @@ class TwoPhaseParams:
         filtered = {k: v for k, v in d.items() if k in known}
         return cls(**filtered)
 
-    def required_margin(self) -> float:
-        """USDC to transfer to perp wallet when opening a new position."""
-        return (self.position_size_usdc / self.perp_leverage) * self.margin_buffer_factor
+    def compute_size_for(self, coin: str, settings: "Settings") -> float:
+        spec = settings.get_coin_spec(coin)
+        slot = self.budget_cap_usdc / self.concurrency_cap
+        return slot / (1 + self.margin_buffer_factor / spec.leverage)
 
-    def per_position_footprint(self) -> float:
-        """Total USDC committed by one FarbPosition: spot notional + reserved margin."""
-        return self.position_size_usdc + self.required_margin()
+    def compute_required_margin_for(self, coin: str, settings: "Settings") -> float:
+        spec = settings.get_coin_spec(coin)
+        return (self.compute_size_for(coin, settings) / spec.leverage) * self.margin_buffer_factor
+
+    def compute_footprint(self) -> float:
+        return self.budget_cap_usdc / self.concurrency_cap

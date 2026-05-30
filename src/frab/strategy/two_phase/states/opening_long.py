@@ -18,11 +18,13 @@ class OpeningLongState(State):
         self._exchange = ctx.exchange
         self._farb_repo = ctx.farb_repo
         self._params = ctx.params
+        self._settings = ctx.settings
 
     async def execute(self, fp: FarbPosition) -> FarbState | None:
         quote = await self._exchange.get_quote(fp.coin)
         price = quote.spot if quote.spot is not None else quote.mark
-        spot_qty = self._params.position_size_usdc / price
+        size_usdc = self._params.compute_size_for(fp.coin, self._settings)
+        spot_qty = size_usdc / price
         req = OpenRequest(
             coin=fp.coin,
             instrument=Instrument.SPOT,

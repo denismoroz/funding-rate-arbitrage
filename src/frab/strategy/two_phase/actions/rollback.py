@@ -56,7 +56,7 @@ class RollbackAction:
 
             elif partial_state == FarbState.OPENING_LONG:
                 # Margin is reserved; transfer it back to spot
-                required = fp.state_data.get("required_margin", self._params.required_margin())
+                required = fp.state_data.get("required_margin", 0.0)
                 try:
                     await self._exchange.transfer("USDC", required, WalletKind.PERP, WalletKind.SPOT)
                     _pkg.logger.info(

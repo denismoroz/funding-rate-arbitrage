@@ -4,7 +4,9 @@ from __future__ import annotations
 import pytest
 from datetime import datetime, timezone
 
+from frab.constants import CoinMarginSpec
 from frab.domain import FarbPosition, FarbState
+from frab.settings import Settings
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.check_margin import CheckMarginState
@@ -29,19 +31,27 @@ def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
         coins=["BTC"],
         position_size_usdc=1000.0,
-        perp_leverage=5.0,
         margin_buffer_factor=3.0,
+        budget_cap_usdc=10000.0,
+        concurrency_cap=3,
     )
     defaults.update(overrides)
     return TwoPhaseParams(**defaults)
 
 
-def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, event_bus=None) -> StrategyContext:
+def _make_settings(mocker, coin="BTC", leverage=5, maint_ratio=0.025):
+    settings = mocker.MagicMock(spec=Settings)
+    settings.get_coin_spec.return_value = CoinMarginSpec(leverage=leverage, maint_ratio=maint_ratio)
+    return settings
+
+
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, settings=None, event_bus=None) -> StrategyContext:
     return StrategyContext(
         exchange=exchange or mocker.AsyncMock(),
         farb_repo=farb_repo or mocker.AsyncMock(),
         params=params or _make_params(),
         session_factory=mocker.MagicMock(),
+        settings=settings or _make_settings(mocker),
         event_bus=event_bus,
     )
 
@@ -50,7 +60,8 @@ def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, event_bus=N
 async def test_check_margin_sufficient_balance_transitions(mocker):
     """balance >= required → transition to OPENING_MARGIN, return FarbState.OPENING_MARGIN."""
     params = _make_params()
-    required = params.required_margin()  # 1000/5 * 3 = 600.0
+    settings = _make_settings(mocker, leverage=5)
+    required = params.compute_required_margin_for("BTC", settings)
 
     exchange = mocker.AsyncMock()
     exchange.get_wallet.return_value = required + 100.0
@@ -58,7 +69,7 @@ async def test_check_margin_sufficient_balance_transitions(mocker):
     farb_repo = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
     state = CheckMarginState(ctx)
     fp = _make_fp()
 
@@ -77,7 +88,8 @@ async def test_check_margin_sufficient_balance_transitions(mocker):
 async def test_check_margin_insufficient_balance_marks_failed(mocker):
     """balance < required → mark_failed called, WARNING event published, returns None."""
     params = _make_params()
-    required = params.required_margin()  # 600.0
+    settings = _make_settings(mocker, leverage=5)
+    required = params.compute_required_margin_for("BTC", settings)
 
     exchange = mocker.AsyncMock()
     exchange.get_wallet.return_value = 1.0  # way below required
@@ -88,7 +100,7 @@ async def test_check_margin_insufficient_balance_marks_failed(mocker):
     event_bus = mocker.AsyncMock()
     event_bus.publish = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, event_bus=event_bus)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings, event_bus=event_bus)
     state = CheckMarginState(ctx)
     fp = _make_fp()
 
@@ -111,6 +123,7 @@ async def test_check_margin_insufficient_balance_marks_failed(mocker):
 async def test_check_margin_no_event_bus_on_failure(mocker):
     """event_bus=None on failure path → no exception, no publish attempt."""
     params = _make_params()
+    settings = _make_settings(mocker)
 
     exchange = mocker.AsyncMock()
     exchange.get_wallet.return_value = 0.0  # insufficient
@@ -118,11 +131,10 @@ async def test_check_margin_no_event_bus_on_failure(mocker):
     farb_repo = mocker.AsyncMock()
     farb_repo.mark_failed = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, event_bus=None)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings, event_bus=None)
     state = CheckMarginState(ctx)
     fp = _make_fp()
 
-    # Should not raise even with no event_bus
     result = await state.execute(fp)
 
     assert result is None
@@ -133,7 +145,8 @@ async def test_check_margin_no_event_bus_on_failure(mocker):
 async def test_check_margin_state_data_merging(mocker):
     """Existing state_data keys are preserved; required_margin is added."""
     params = _make_params()
-    required = params.required_margin()
+    settings = _make_settings(mocker, leverage=5)
+    required = params.compute_required_margin_for("BTC", settings)
 
     exchange = mocker.AsyncMock()
     exchange.get_wallet.return_value = 99999.0  # plenty
@@ -141,7 +154,7 @@ async def test_check_margin_state_data_merging(mocker):
     farb_repo = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
     state = CheckMarginState(ctx)
     existing_data = {"target_signal_apr": 0.25, "entry_ts_ms": 1234567890}
     fp = _make_fp(state_data=existing_data)

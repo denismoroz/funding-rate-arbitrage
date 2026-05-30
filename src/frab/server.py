@@ -151,6 +151,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             farb_repo=farb_repo,
             session_factory=session_factory,
             params=params,
+            settings=settings,
             event_bus=bus,
         )
 

@@ -4,8 +4,9 @@ from __future__ import annotations
 import pytest
 from datetime import datetime, timezone
 
-from frab.constants import PERP_TAKER, SPOT_TAKER
+from frab.constants import CoinMarginSpec, PERP_TAKER, SPOT_TAKER
 from frab.domain import FarbPosition, FarbState, Instrument, Side
+from frab.settings import Settings
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.opening_short import OpeningShortState
@@ -30,19 +31,27 @@ def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
         coins=["SOL"],
         position_size_usdc=1000.0,
-        perp_leverage=5.0,
         margin_buffer_factor=3.0,
+        budget_cap_usdc=10000.0,
+        concurrency_cap=3,
     )
     defaults.update(overrides)
     return TwoPhaseParams(**defaults)
 
 
-def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, event_bus=None) -> StrategyContext:
+def _make_settings(mocker, coin="SOL", leverage=5, maint_ratio=0.025):
+    settings = mocker.MagicMock(spec=Settings)
+    settings.get_coin_spec.return_value = CoinMarginSpec(leverage=leverage, maint_ratio=maint_ratio)
+    return settings
+
+
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, settings=None, event_bus=None) -> StrategyContext:
     return StrategyContext(
         exchange=exchange or mocker.AsyncMock(),
         farb_repo=farb_repo or mocker.AsyncMock(),
         params=params or _make_params(),
         session_factory=mocker.MagicMock(),
+        settings=settings or _make_settings(mocker),
         event_bus=event_bus,
     )
 
@@ -51,6 +60,9 @@ def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, event_bus=N
 async def test_opening_short_happy_path(mocker):
     """spot_qty from state_data → SHORT PERP OpenRequest, set_leg PERP, transition to OPEN."""
     params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
+    spec = settings.get_coin_spec("SOL")
+    size_usdc = params.compute_size_for("SOL", settings)
     spot_qty = 10.0
 
     perp_pos = mocker.MagicMock()
@@ -65,7 +77,7 @@ async def test_opening_short_happy_path(mocker):
     farb_repo.set_leg = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
     state = OpeningShortState(ctx)
     fp = _make_fp(state_data={"spot_qty": spot_qty, "spot_entry_price": 22.0, "target_signal_apr": 0.15})
 
@@ -78,7 +90,7 @@ async def test_opening_short_happy_path(mocker):
     assert open_req.instrument == Instrument.PERP
     assert open_req.side == Side.SHORT
     assert open_req.qty == spot_qty
-    assert open_req.leverage == int(params.perp_leverage)
+    assert open_req.leverage == spec.leverage
 
     # set_leg PERP
     farb_repo.set_leg.assert_awaited_once()
@@ -95,8 +107,8 @@ async def test_opening_short_happy_path(mocker):
     assert sd["consec_negative_hours"] == 0
     assert "position_min_hold_hours" in sd
     assert "opened_at_ms" in sd
-    assert sd["leverage"] == int(params.perp_leverage)
-    expected_fees = params.position_size_usdc * (PERP_TAKER + SPOT_TAKER) * 2
+    assert sd["leverage"] == spec.leverage
+    expected_fees = size_usdc * (PERP_TAKER + SPOT_TAKER) * 2
     assert abs(sd["total_fees_paid"] - expected_fees) < 1e-9
 
 
@@ -104,6 +116,7 @@ async def test_opening_short_happy_path(mocker):
 async def test_opening_short_publishes_farb_opened_event(mocker):
     """After successful transition, farb.opened INFO event is published."""
     params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
 
     perp_pos = mocker.MagicMock()
     perp_pos.id = 60
@@ -118,7 +131,7 @@ async def test_opening_short_publishes_farb_opened_event(mocker):
     event_bus = mocker.AsyncMock()
     event_bus.publish = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, event_bus=event_bus)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings, event_bus=event_bus)
     state = OpeningShortState(ctx)
     fp = _make_fp(state_data={"spot_qty": 5.0, "spot_entry_price": 199.0})
 
@@ -136,6 +149,7 @@ async def test_opening_short_publishes_farb_opened_event(mocker):
 async def test_opening_short_no_event_bus(mocker):
     """event_bus=None → no exception, no publish attempt."""
     params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
 
     perp_pos = mocker.MagicMock()
     perp_pos.id = 70
@@ -147,7 +161,7 @@ async def test_opening_short_no_event_bus(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, event_bus=None)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings, event_bus=None)
     state = OpeningShortState(ctx)
     fp = _make_fp(state_data={"spot_qty": 3.0})
 
@@ -157,9 +171,11 @@ async def test_opening_short_no_event_bus(mocker):
 
 @pytest.mark.asyncio
 async def test_opening_short_fallback_recomputes_qty_from_quote(mocker):
-    """If spot_qty not in state_data, recompute from get_quote."""
+    """If spot_qty not in state_data, recompute from get_quote using compute_size_for."""
     params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
     mark_price = 200.0
+    size_usdc = params.compute_size_for("SOL", settings)
 
     quote = mocker.MagicMock()
     quote.spot = None
@@ -167,7 +183,7 @@ async def test_opening_short_fallback_recomputes_qty_from_quote(mocker):
 
     perp_pos = mocker.MagicMock()
     perp_pos.id = 80
-    perp_pos.qty = params.position_size_usdc / mark_price
+    perp_pos.qty = size_usdc / mark_price
     perp_pos.entry_price = mark_price
 
     exchange = mocker.AsyncMock()
@@ -176,7 +192,7 @@ async def test_opening_short_fallback_recomputes_qty_from_quote(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
     state = OpeningShortState(ctx)
     fp = _make_fp(state_data={})  # no spot_qty
 
@@ -185,5 +201,5 @@ async def test_opening_short_fallback_recomputes_qty_from_quote(mocker):
     assert result == FarbState.OPEN
     exchange.get_quote.assert_awaited_once_with(fp.coin)
     open_req = exchange.open_position.await_args.args[0]
-    expected = params.position_size_usdc / mark_price
+    expected = size_usdc / mark_price
     assert abs(open_req.qty - expected) < 1e-9

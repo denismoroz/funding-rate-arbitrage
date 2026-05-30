@@ -4,7 +4,9 @@ from __future__ import annotations
 import pytest
 from datetime import datetime, timezone
 
+from frab.constants import CoinMarginSpec
 from frab.domain import FarbPosition, FarbState, Instrument
+from frab.settings import Settings
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.opening_margin import OpeningMarginState
@@ -29,17 +31,22 @@ def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
         coins=["ETH"],
         position_size_usdc=1000.0,
-        perp_leverage=5.0,
         margin_buffer_factor=3.0,
+        budget_cap_usdc=10000.0,
+        concurrency_cap=3,
     )
     defaults.update(overrides)
     return TwoPhaseParams(**defaults)
 
 
+def _make_settings(mocker, coin="ETH", leverage=5, maint_ratio=0.025):
+    settings = mocker.MagicMock(spec=Settings)
+    settings.get_coin_spec.return_value = CoinMarginSpec(leverage=leverage, maint_ratio=maint_ratio)
+    return settings
+
+
 def _make_position(id: int) -> object:
     """Minimal stand-in for a domain Position."""
-    pos = object.__new__(object.__class__)
-    # Use a simple namespace
     class _Pos:
         pass
     p = _Pos()
@@ -47,12 +54,13 @@ def _make_position(id: int) -> object:
     return p
 
 
-def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None) -> StrategyContext:
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, settings=None) -> StrategyContext:
     return StrategyContext(
         exchange=exchange or mocker.AsyncMock(),
         farb_repo=farb_repo or mocker.AsyncMock(),
         params=params or _make_params(),
         session_factory=mocker.MagicMock(),
+        settings=settings or _make_settings(mocker),
         event_bus=None,
     )
 
@@ -95,7 +103,7 @@ async def test_opening_margin_happy_path(mocker):
 
 @pytest.mark.asyncio
 async def test_opening_margin_uses_required_margin_from_state_data(mocker):
-    """If state_data has required_margin, use that instead of params.required_margin()."""
+    """If state_data has required_margin, use that instead of compute_required_margin_for."""
     params = _make_params()
     custom_required = 999.0
 
@@ -119,9 +127,10 @@ async def test_opening_margin_uses_required_margin_from_state_data(mocker):
 
 @pytest.mark.asyncio
 async def test_opening_margin_falls_back_to_params_required_margin(mocker):
-    """Without required_margin in state_data, uses params.required_margin()."""
+    """Without required_margin in state_data, uses compute_required_margin_for."""
     params = _make_params()
-    expected_required = params.required_margin()
+    settings = _make_settings(mocker, leverage=5)
+    expected_required = params.compute_required_margin_for("ETH", settings)
 
     coll_pos = mocker.MagicMock()
     coll_pos.id = 1
@@ -131,7 +140,7 @@ async def test_opening_margin_falls_back_to_params_required_margin(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
     state = OpeningMarginState(ctx)
     fp = _make_fp(state_data={})
 

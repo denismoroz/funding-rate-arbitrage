@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
@@ -11,6 +11,7 @@ from frab.domain import FarbPosition, FarbState
 from frab.events.bus import EventBus
 from frab.exchanges.protocol import Exchange
 from frab.repo.farb_repo import FarbRepo
+from frab.settings import Settings
 from frab.strategy.two_phase.params import TwoPhaseParams
 
 
@@ -21,6 +22,7 @@ class StrategyContext:
     farb_repo: FarbRepo
     params: TwoPhaseParams
     session_factory: async_sessionmaker[AsyncSession]
+    settings: Settings
     event_bus: EventBus | None = None
 
 

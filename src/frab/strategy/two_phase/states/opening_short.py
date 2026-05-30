@@ -21,15 +21,18 @@ class OpeningShortState(State):
         self._exchange = ctx.exchange
         self._farb_repo = ctx.farb_repo
         self._params = ctx.params
+        self._settings = ctx.settings
         self._bus = ctx.event_bus
 
     async def execute(self, fp: FarbPosition) -> FarbState | None:
+        spec = self._settings.get_coin_spec(fp.coin)
+        size_usdc = self._params.compute_size_for(fp.coin, self._settings)
         spot_qty = fp.state_data.get("spot_qty")
         if spot_qty is None:
             # Fallback: recompute from current price
             quote = await self._exchange.get_quote(fp.coin)
             price = quote.spot if quote.spot is not None else quote.mark
-            spot_qty = self._params.position_size_usdc / price
+            spot_qty = size_usdc / price
 
         req = OpenRequest(
             coin=fp.coin,
@@ -37,7 +40,7 @@ class OpeningShortState(State):
             side=Side.SHORT,
             qty=spot_qty,
             farb_position_id=fp.id,
-            leverage=int(self._params.perp_leverage),
+            leverage=spec.leverage,
         )
         pos = await self._exchange.open_position(req)
         await self._farb_repo.set_leg(fp.id, instrument=Instrument.PERP, position_id=pos.id)
@@ -50,7 +53,7 @@ class OpeningShortState(State):
             cap_min_hold_hours=self._params.cap_min_hold_hours,
         )
         # total_fees_paid: round-trip fees at entry (perp taker + spot taker, both sides)
-        total_fees_paid = self._params.position_size_usdc * (PERP_TAKER + SPOT_TAKER) * 2
+        total_fees_paid = size_usdc * (PERP_TAKER + SPOT_TAKER) * 2
         await self._farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_SHORT,
@@ -62,7 +65,7 @@ class OpeningShortState(State):
                 "total_fees_paid": total_fees_paid,
                 "consec_negative_hours": 0,
                 "opened_at_ms": now_ms(),
-                "leverage": int(self._params.perp_leverage),
+                "leverage": spec.leverage,
             },
         )
         await publish_event(

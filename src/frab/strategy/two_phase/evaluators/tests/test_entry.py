@@ -29,7 +29,6 @@ def _make_params(**overrides) -> TwoPhaseParams:
         position_size_usdc=1000.0,
         budget_cap_usdc=10000.0,
         margin_buffer_factor=3.0,
-        perp_leverage=5.0,
         phase1_negative_patience=72,
         phase1_breakeven_cap_hours=720,
     )
@@ -196,13 +195,12 @@ async def test_top_k_selection_picks_strongest_signals(mocker):
 @pytest.mark.asyncio
 async def test_budget_cap_blocks_all_entries(mocker):
     """Budget cap fully consumed → no new FPs created even with qualifying signals."""
-    # footprint = 1000 + (1000/5 * 3) = 1600; budget_cap_usdc = 1600 = 1 slot
+    # footprint = budget/K = 1600/1 = 1600; 1 OPEN position consumes the entire budget
     params = _make_params(
         coins=["BTC", "ETH"],
-        concurrency_cap=5,
+        concurrency_cap=1,
         budget_cap_usdc=1600.0,
         position_size_usdc=1000.0,
-        perp_leverage=5.0,
         margin_buffer_factor=3.0,
     )
     # 1 OPEN position already consuming the entire budget

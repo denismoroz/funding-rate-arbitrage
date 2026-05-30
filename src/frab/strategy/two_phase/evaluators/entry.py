@@ -39,7 +39,7 @@ class EntryEvaluator:
             return
 
         # Budget cap: further constrain slots by available committed capital
-        footprint = p.per_position_footprint()
+        footprint = p.compute_footprint()
         committed_usdc = non_terminal_count * footprint
         remaining_budget = p.budget_cap_usdc - committed_usdc
         slots_by_budget = int(remaining_budget // footprint) if footprint > 0 else 0

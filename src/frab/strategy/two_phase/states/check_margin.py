@@ -19,10 +19,11 @@ class CheckMarginState(State):
         self._exchange = ctx.exchange
         self._farb_repo = ctx.farb_repo
         self._params = ctx.params
+        self._settings = ctx.settings
         self._bus = ctx.event_bus
 
     async def execute(self, fp: FarbPosition) -> FarbState | None:
-        required = self._params.required_margin()
+        required = self._params.compute_required_margin_for(fp.coin, self._settings)
         balance = await self._exchange.get_wallet("USDC", WalletKind.SPOT)
         if balance < required:
             reason = f"insufficient_margin: need {required:.4f}, have {balance:.4f}"

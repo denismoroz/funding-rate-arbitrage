@@ -21,6 +21,7 @@ from frab.domain import FarbPosition, FarbState
 from frab.events.bus import EventBus
 from frab.exchanges.protocol import Exchange
 from frab.repo.farb_repo import FarbRepo, StateConflict
+from frab.settings import Settings
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states._helpers import publish_event
@@ -50,6 +51,7 @@ class TwoPhaseStrategy:
         farb_repo: FarbRepo,
         session_factory: async_sessionmaker[AsyncSession],
         params: TwoPhaseParams,
+        settings: Settings,
         event_bus: EventBus | None = None,
     ) -> None:
         self.strategy_id = strategy_id
@@ -57,6 +59,7 @@ class TwoPhaseStrategy:
         self.farb_repo = farb_repo
         self._sf = session_factory
         self.params = params
+        self._settings = settings
         self._bus = event_bus
         # Set by the force-tick API to bypass the same-hour entry cooldown on a
         # single hour_tick invocation. The API resets it after _hour_tick returns.
@@ -96,6 +99,7 @@ class TwoPhaseStrategy:
             farb_repo=farb_repo,
             params=params,
             session_factory=session_factory,
+            settings=settings,
             event_bus=event_bus,
         )
         self._state_machine = StateMachine({cls.state: cls(ctx) for cls in STATE_CLASSES})

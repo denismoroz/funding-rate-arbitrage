@@ -16,6 +16,8 @@ from frab.db.models import FundingRate as FundingRateRow, Exchange as ExchangeRo
 from frab.db.session import session_scope
 from frab.exchanges.protocol import WalletKind
 from frab.repo.farb_repo import FarbRepo, StateConflict
+from frab.constants import CoinMarginSpec
+from frab.settings import Settings
 from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 
 from .conftest import make_position, _NOW_MS
@@ -35,7 +37,6 @@ def _make_params(**overrides) -> TwoPhaseParams:
         concurrency_cap=3,
         position_size_usdc=1000.0,
         margin_buffer_factor=3.0,
-        perp_leverage=5.0,
         phase1_negative_patience=72,
         phase1_breakeven_cap_hours=720,
     )
@@ -128,12 +129,15 @@ def _make_exchange(session_factory=None, exchange_id: int = 1) -> AsyncMock:
 
 def _make_strategy(exchange, farb_repo, session_factory, **param_overrides) -> TwoPhaseStrategy:
     params = _make_params(**param_overrides)
+    settings = MagicMock(spec=Settings)
+    settings.get_coin_spec.return_value = CoinMarginSpec(leverage=5, maint_ratio=0.025)
     return TwoPhaseStrategy(
         strategy_id=1,
         exchange=exchange,
         farb_repo=farb_repo,
         session_factory=session_factory,
         params=params,
+        settings=settings,
     )
 
 
@@ -199,7 +203,7 @@ async def test_03_opening_margin(session_factory, farb_repo, strategy_id, exchan
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.strategy_id = strategy_id
 
-    required = strat.params.required_margin()
+    required = strat.params.compute_required_margin_for("BTC", strat._settings)
     fp = await farb_repo.create(
         strategy_id=strategy_id,
         coin="BTC",
@@ -231,7 +235,7 @@ async def test_04_opening_long(session_factory, farb_repo, strategy_id, exchange
         strategy_id=strategy_id,
         coin="BTC",
         initial_state=FarbState.OPENING_LONG,
-        state_data={"required_margin": strat.params.required_margin()},
+        state_data={"required_margin": strat.params.compute_required_margin_for("BTC", strat._settings)},
     )
     await strat._advance_one(fp)
 
@@ -244,7 +248,7 @@ async def test_04_opening_long(session_factory, farb_repo, strategy_id, exchange
     spot_call = exchange.open_position.call_args_list[0][0][0]
     assert spot_call.instrument == Instrument.SPOT
     assert spot_call.side == Side.LONG
-    expected_qty = strat.params.position_size_usdc / price
+    expected_qty = strat.params.compute_size_for("BTC", strat._settings) / price
     assert spot_call.qty == pytest.approx(expected_qty)
 
 
@@ -261,7 +265,7 @@ async def test_05_opening_short(session_factory, farb_repo, strategy_id, exchang
         coin="BTC",
         initial_state=FarbState.OPENING_SHORT,
         state_data={
-            "required_margin": strat.params.required_margin(),
+            "required_margin": strat.params.compute_required_margin_for("BTC", strat._settings),
             "spot_qty": spot_qty,
             "target_signal_apr": 0.20,
         },
@@ -312,7 +316,7 @@ async def test_07_closing_short(session_factory, farb_repo, strategy_id, exchang
         session_factory, exchange_id=exchange_id, coin="BTC",
         instrument=Instrument.SPOT, side=Side.LONG,
     )
-    required = strat.params.required_margin()
+    required = strat.params.compute_required_margin_for("BTC", strat._settings)
     fp = await farb_repo.create(
         strategy_id=strategy_id, coin="BTC",
         initial_state=FarbState.CLOSING_SHORT,
@@ -345,7 +349,7 @@ async def test_08_closing_long(session_factory, farb_repo, strategy_id, exchange
         session_factory, exchange_id=exchange_id, coin="BTC",
         instrument=Instrument.SPOT, side=Side.LONG,
     )
-    required = strat.params.required_margin()
+    required = strat.params.compute_required_margin_for("BTC", strat._settings)
     fp = await farb_repo.create(
         strategy_id=strategy_id, coin="BTC",
         initial_state=FarbState.CLOSING_LONG,
@@ -376,7 +380,7 @@ async def test_09_releasing_margin(session_factory, farb_repo, strategy_id, exch
         session_factory, exchange_id=exchange_id, coin="USDC",
         instrument=Instrument.COLLATERAL, side=Side.NONE, qty=600.0, entry_price=1.0,
     )
-    required = strat.params.required_margin()
+    required = strat.params.compute_required_margin_for("BTC", strat._settings)
     fp = await farb_repo.create(
         strategy_id=strategy_id, coin="BTC",
         initial_state=FarbState.RELEASING_MARGIN,
@@ -600,7 +604,8 @@ async def test_16_concurrency_cap_limits_entries(
     exchange = _make_exchange()
     coins = ["BTC", "ETH", "SOL", "AVAX", "LINK"]
     strat = _make_strategy(exchange, farb_repo, session_factory,
-                           coins=coins, concurrency_cap=3, signal_window_hours=3)
+                           coins=coins, concurrency_cap=3, signal_window_hours=3,
+                           budget_cap_usdc=9000.0)  # 9000/3=3000 exactly, avoids fp truncation
     strat.strategy_id = strategy_id
 
     # Seed different rates so we can assert the top-3 are picked
@@ -1027,26 +1032,6 @@ def test_params_from_dict_known_keys():
     assert params.concurrency_cap == 5
 
 
-def test_params_required_margin():
-    """required_margin = position_size / leverage * buffer."""
-    params = TwoPhaseParams(
-        position_size_usdc=1000.0,
-        perp_leverage=5.0,
-        margin_buffer_factor=3.0,
-    )
-    assert params.required_margin() == pytest.approx(600.0)  # 1000/5 * 3 = 600
-
-
-def test_per_position_footprint_calculation():
-    """per_position_footprint = position_size_usdc + required_margin()."""
-    params = TwoPhaseParams(
-        position_size_usdc=1000.0,
-        perp_leverage=5.0,
-        margin_buffer_factor=3.0,
-    )
-    # footprint = 1000 + (1000/5 * 3) = 1000 + 600 = 1600
-    assert params.per_position_footprint() == pytest.approx(1600.0)
-
 
 @pytest.mark.asyncio
 async def test_evaluate_entries_blocks_when_budget_cap_reached(
@@ -1056,14 +1041,12 @@ async def test_evaluate_entries_blocks_when_budget_cap_reached(
     even when concurrency_cap has room and signals qualify.
     """
     exchange = _make_exchange()
-    # footprint = 1000 + 600 = 1600; cap = 1600 means exactly 1 position fits.
-    # Pre-create 1 OPEN FarbPosition to consume the full budget.
+    # concurrency_cap=1: 1 OPEN position fills the cap entirely; BTC/ETH blocked.
     strat = _make_strategy(
         exchange, farb_repo, session_factory,
         coins=["BTC", "ETH"],
-        concurrency_cap=3,          # concurrency would allow 2 more
+        concurrency_cap=1,
         signal_window_hours=3,
-        budget_cap_usdc=1600.0,     # cap = exactly 1 position footprint
     )
     strat.strategy_id = strategy_id
 
@@ -1145,15 +1128,14 @@ async def test_on_hour_tick_active_runs_all_phases(
 async def test_evaluate_entries_respects_partial_budget(
     session_factory, farb_repo, strategy_id, exchange_id
 ):
-    """Budget cap allows exactly 1 more position; 2 coins qualify → exactly 1 FP created."""
+    """Concurrency cap allows exactly 1 more position; 2 coins qualify → exactly 1 FP created."""
     exchange = _make_exchange()
-    # footprint = 1600; 1 existing OPEN → committed = 1600; cap = 3200 → remaining = 1600 → 1 slot
+    # concurrency_cap=2: 1 existing OPEN leaves exactly 1 slot; BTC picked over ETH by signal.
     strat = _make_strategy(
         exchange, farb_repo, session_factory,
         coins=["BTC", "ETH"],
-        concurrency_cap=5,          # concurrency would allow 4 more
+        concurrency_cap=2,
         signal_window_hours=3,
-        budget_cap_usdc=3200.0,     # cap = 2 position footprints
     )
     strat.strategy_id = strategy_id
 
@@ -1180,6 +1162,6 @@ async def test_evaluate_entries_respects_partial_budget(
         )
         new_fps = result.scalars().all()
 
-    # Exactly 1 new FP created (budget limited), and it must be BTC (stronger signal)
+    # Exactly 1 new FP created (concurrency limited), and it must be BTC (stronger signal)
     assert len(new_fps) == 1
     assert new_fps[0].coin == "BTC"

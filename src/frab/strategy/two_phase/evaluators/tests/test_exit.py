@@ -31,7 +31,6 @@ def _make_params(**overrides) -> TwoPhaseParams:
         position_size_usdc=1000.0,
         budget_cap_usdc=10000.0,
         margin_buffer_factor=3.0,
-        perp_leverage=5.0,
         phase1_negative_patience=72,
         phase1_breakeven_cap_hours=720,
     )

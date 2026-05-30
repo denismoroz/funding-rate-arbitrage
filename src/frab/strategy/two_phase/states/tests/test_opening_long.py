@@ -4,7 +4,9 @@ from __future__ import annotations
 import pytest
 from datetime import datetime, timezone
 
+from frab.constants import CoinMarginSpec
 from frab.domain import FarbPosition, FarbState, Instrument
+from frab.settings import Settings
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.opening_long import OpeningLongState
@@ -29,29 +31,39 @@ def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
         coins=["BTC"],
         position_size_usdc=1000.0,
-        perp_leverage=5.0,
         margin_buffer_factor=3.0,
+        budget_cap_usdc=10000.0,
+        concurrency_cap=3,
     )
     defaults.update(overrides)
     return TwoPhaseParams(**defaults)
 
 
-def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None) -> StrategyContext:
+def _make_settings(mocker, coin="BTC", leverage=5, maint_ratio=0.025):
+    settings = mocker.MagicMock(spec=Settings)
+    settings.get_coin_spec.return_value = CoinMarginSpec(leverage=leverage, maint_ratio=maint_ratio)
+    return settings
+
+
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, settings=None) -> StrategyContext:
     return StrategyContext(
         exchange=exchange or mocker.AsyncMock(),
         farb_repo=farb_repo or mocker.AsyncMock(),
         params=params or _make_params(),
         session_factory=mocker.MagicMock(),
+        settings=settings or _make_settings(mocker),
         event_bus=None,
     )
 
 
 @pytest.mark.asyncio
 async def test_opening_long_happy_path_uses_spot_price(mocker):
-    """get_quote returns spot price → qty = position_size/spot, set_leg SPOT, transition to OPENING_SHORT."""
+    """get_quote returns spot price → qty = size_usdc/spot, set_leg SPOT, transition to OPENING_SHORT."""
     params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
     spot_price = 50000.0
-    expected_qty = params.position_size_usdc / spot_price  # 0.02
+    size_usdc = params.compute_size_for("BTC", settings)
+    expected_qty = size_usdc / spot_price
 
     quote = mocker.MagicMock()
     quote.spot = spot_price
@@ -70,7 +82,7 @@ async def test_opening_long_happy_path_uses_spot_price(mocker):
     farb_repo.set_leg = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
     state = OpeningLongState(ctx)
     fp = _make_fp()
 
@@ -101,7 +113,9 @@ async def test_opening_long_happy_path_uses_spot_price(mocker):
 async def test_opening_long_falls_back_to_mark_when_spot_is_none(mocker):
     """If quote.spot is None, fall back to quote.mark for price."""
     params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
     mark_price = 48000.0
+    size_usdc = params.compute_size_for("BTC", settings)
 
     quote = mocker.MagicMock()
     quote.spot = None
@@ -118,7 +132,7 @@ async def test_opening_long_falls_back_to_mark_when_spot_is_none(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
     state = OpeningLongState(ctx)
     fp = _make_fp()
 
@@ -127,7 +141,7 @@ async def test_opening_long_falls_back_to_mark_when_spot_is_none(mocker):
     assert result == FarbState.OPENING_SHORT
 
     open_req = exchange.open_position.await_args.args[0]
-    expected_qty = params.position_size_usdc / mark_price
+    expected_qty = size_usdc / mark_price
     assert abs(open_req.qty - expected_qty) < 1e-9
 
 
@@ -135,6 +149,7 @@ async def test_opening_long_falls_back_to_mark_when_spot_is_none(mocker):
 async def test_opening_long_preserves_existing_state_data(mocker):
     """Existing state_data keys are preserved in the transition."""
     params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
 
     quote = mocker.MagicMock()
     quote.spot = 40000.0
@@ -151,7 +166,7 @@ async def test_opening_long_preserves_existing_state_data(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
     state = OpeningLongState(ctx)
     fp = _make_fp(state_data={"target_signal_apr": 0.30, "required_margin": 600.0})
 
