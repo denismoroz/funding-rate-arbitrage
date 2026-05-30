@@ -8,6 +8,7 @@ import pytest
 
 from frab.domain import FarbPosition, FarbState
 from frab.repo.farb_repo import StateConflict
+from frab.settings import Settings
 from frab.strategy.two_phase.evaluators.exit import ExitEvaluator
 from frab.strategy.two_phase.evaluators.signal import SignalComputer
 from frab.strategy.two_phase.params import TwoPhaseParams
@@ -19,6 +20,9 @@ _OPENED_MS = _NOW_MS - 100 * 3_600_000
 
 
 def _make_params(**overrides) -> TwoPhaseParams:
+    # budget_cap_usdc=1000, concurrency_cap=1, margin_buffer_factor=0 →
+    # compute_size_for(coin, settings) = (1000/1) / (1 + 0/lev) = 1000.0
+    # (matches legacy position_size_usdc=1000 so existing assertions stay stable)
     defaults = dict(
         coins=["BTC", "ETH"],
         entry_threshold_apr=0.10,
@@ -27,10 +31,10 @@ def _make_params(**overrides) -> TwoPhaseParams:
         cap_min_hold_hours=720,
         safety_mult=5.0,
         signal_window_hours=3,
-        concurrency_cap=3,
+        concurrency_cap=1,
         position_size_usdc=1000.0,
-        budget_cap_usdc=10000.0,
-        margin_buffer_factor=3.0,
+        budget_cap_usdc=1000.0,
+        margin_buffer_factor=0.0,
         phase1_negative_patience=72,
         phase1_breakeven_cap_hours=720,
     )
@@ -64,11 +68,18 @@ def _make_evaluator(mocker, *, params=None, open_fps=None, signal_value=None):
     signal_computer = mocker.AsyncMock(spec=SignalComputer)
     signal_computer.compute.return_value = signal_value
 
+    # Stub settings: leverage=10 (value doesn't matter when margin_buffer_factor=0)
+    settings = mocker.MagicMock(spec=Settings)
+    coin_spec = mocker.MagicMock()
+    coin_spec.leverage = 10
+    settings.get_coin_spec.return_value = coin_spec
+
     evaluator = ExitEvaluator(
         strategy_id=1,
         farb_repo=farb_repo,
         params=params,
         signal_computer=signal_computer,
+        settings=settings,
     )
     return evaluator, farb_repo, signal_computer
 

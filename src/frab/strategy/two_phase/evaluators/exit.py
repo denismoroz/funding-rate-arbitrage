@@ -6,6 +6,7 @@ from datetime import datetime
 from frab.domain import FarbPosition, FarbState
 from frab.engine.two_phase_signals import TwoPhaseDecision, decide_two_phase, update_consec_negative
 from frab.repo.farb_repo import FarbRepo, StateConflict
+from frab.settings import Settings
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.evaluators.signal import SignalComputer, _HOURS_PER_YEAR
@@ -25,11 +26,13 @@ class ExitEvaluator:
         farb_repo: FarbRepo,
         params: TwoPhaseParams,
         signal_computer: SignalComputer,
+        settings: Settings,
     ) -> None:
         self._strategy_id = strategy_id
         self._farb_repo = farb_repo
         self._params = params
         self._signal_computer = signal_computer
+        self._settings = settings
 
     async def evaluate(self, *, now_ms: int) -> None:
         """For each OPEN FarbPosition: check if we should begin closing."""
@@ -49,9 +52,10 @@ class ExitEvaluator:
         total_fees = sd.get("total_fees_paid", 0.0)
         consec_neg = sd.get("consec_negative_hours", 0)
 
-        # Compute current hourly income quote (position_size × signal / hours_per_year)
+        # Compute current hourly income quote (auto-derived size × signal / hours_per_year)
         if signal is not None and signal > 0:
-            current_hourly_income = self._params.position_size_usdc * signal / _HOURS_PER_YEAR
+            size_usdc = self._params.compute_size_for(fp.coin, self._settings)
+            current_hourly_income = size_usdc * signal / _HOURS_PER_YEAR
         else:
             current_hourly_income = 0.0
 

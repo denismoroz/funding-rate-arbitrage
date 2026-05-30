@@ -108,15 +108,6 @@ interface FieldDef {
 const FIELD_DEFS: FieldDef[] = [
   // Capital
   {
-    key: "position_size_usdc",
-    label: "Position size (USDC)",
-    type: "float",
-    min: 0,
-    step: "100",
-    helper: "Notional per spot leg",
-    group: "capital",
-  },
-  {
     key: "budget_cap_usdc",
     label: "Budget cap (USDC)",
     type: "float",
@@ -395,14 +386,17 @@ export default function Settings() {
     hasFieldErrors ||
     patchMutation.isPending;
 
-  // Per-position footprint preview
+  // Per-position footprint preview (auto-derived — mirrors TwoPhaseParams.compute_size_for)
   const footprintPreview = (() => {
-    const size = parseFloat(formValues["position_size_usdc"] ?? "");
+    const budget = parseFloat(formValues["budget_cap_usdc"] ?? "");
+    const K = parseFloat(formValues["concurrency_cap"] ?? "");
     const lev = parseFloat(formValues["perp_leverage"] ?? "");
     const buf = parseFloat(formValues["margin_buffer_factor"] ?? "");
-    if (!isFinite(size) || !isFinite(lev) || !isFinite(buf) || lev === 0) return null;
-    const margin = (size / lev) * buf;
-    return size + margin;
+    if (!isFinite(budget) || !isFinite(K) || !isFinite(lev) || !isFinite(buf) || K === 0 || lev === 0) return null;
+    const slot = budget / K;
+    const size = slot / (1 + buf / lev);
+    const margin = slot - size;
+    return { slot, size, margin, buf, lev };
   })();
 
   // Group fields
@@ -448,13 +442,21 @@ export default function Settings() {
 
             {/* Per-position footprint preview */}
             {footprintPreview != null && (
-              <div className="rounded border border-indigo-700 bg-indigo-900/30 px-4 py-2 text-xs text-indigo-300">
-                1 position consumes{" "}
-                <span className="font-semibold text-indigo-200">
-                  ${footprintPreview.toFixed(2)} USDC
-                </span>{" "}
-                (spot ${parseFloat(formValues["position_size_usdc"] ?? "0").toFixed(2)} + margin $
-                {(footprintPreview - parseFloat(formValues["position_size_usdc"] ?? "0")).toFixed(2)})
+              <div className="rounded border border-indigo-700 bg-indigo-900/30 px-4 py-2 text-xs text-indigo-300 space-y-1">
+                <div>
+                  1 position consumes{" "}
+                  <span className="font-semibold text-indigo-200">
+                    ${footprintPreview.slot.toFixed(2)} USDC
+                  </span>{" "}
+                  = derived size{" "}
+                  <span className="font-semibold text-indigo-200">
+                    ${footprintPreview.size.toFixed(2)}
+                  </span>{" "}
+                  + margin ${footprintPreview.margin.toFixed(2)}
+                </div>
+                <div className="text-indigo-400">
+                  auto-derived: ${footprintPreview.size.toFixed(2)} = ${footprintPreview.slot.toFixed(2)} / (1 + {footprintPreview.buf}/{footprintPreview.lev})
+                </div>
               </div>
             )}
 

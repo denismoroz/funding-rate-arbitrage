@@ -84,6 +84,7 @@ class TwoPhaseStrategy:
             farb_repo=farb_repo,
             params=params,
             signal_computer=signal_computer,
+            settings=settings,
         )
         self._funding_accrual = FundingAccrual(
             strategy_id=strategy_id,
