@@ -82,6 +82,7 @@ class EngineLoop:
 
         self._task: asyncio.Task | None = None
         self._last_hour: int | None = None
+        self._exchange_id_cache: int | None = None
 
     # ── Public lifecycle ──────────────────────────────────────────────────────
 
@@ -232,7 +233,7 @@ class EngineLoop:
 
     async def _resolve_exchange_id(self) -> int:
         """Look up exchange row by name. Cached after first successful lookup."""
-        if not hasattr(self, "_exchange_id_cache"):
+        if self._exchange_id_cache is None:
             async with session_scope(self._sf) as s:
                 result = await s.execute(
                     select(ExchangeRow).where(ExchangeRow.name == self._exchange.name)
@@ -242,7 +243,7 @@ class EngineLoop:
                     raise RuntimeError(
                         f"Exchange {self._exchange.name!r} not in DB; run `frab seed` first."
                     )
-                self._exchange_id_cache: int = row.id
+                self._exchange_id_cache = row.id
         return self._exchange_id_cache
 
     async def _save_prices(self, quotes, now_ms: int) -> None:
