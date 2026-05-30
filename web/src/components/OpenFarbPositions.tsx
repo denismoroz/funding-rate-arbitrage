@@ -21,7 +21,7 @@ import {
   type MarginFpAssessment,
   type MarginStatus,
 } from "../lib/api";
-import { formatCurrency, formatCurrencyPrecise, formatQty, formatRelative, formatNumber } from "../lib/format";
+import { formatCurrency, formatCurrencyPrecise, formatQty, formatRelative, formatNumber, formatHoursAsDH } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Skeleton } from "./ui/Skeleton";
@@ -286,7 +286,7 @@ function FarbPositionCard({
             {p.breakeven_hours_remaining <= 0 ? (
               <span className="text-green-600 font-semibold">done</span>
             ) : (
-              <span className="text-gray-700">{formatNumber(p.breakeven_hours_remaining, 1)}h</span>
+              <span className="text-gray-700">{formatHoursAsDH(p.breakeven_hours_remaining)}</span>
             )}
           </span>
         )}
@@ -335,7 +335,7 @@ function FarbPositionCard({
                 {p.breakeven_hours_remaining <= 0 ? (
                   <span className="text-green-600 font-semibold">done</span>
                 ) : (
-                  <span className="text-gray-700">{formatNumber(p.breakeven_hours_remaining, 1)}h</span>
+                  <span className="text-gray-700">{formatHoursAsDH(p.breakeven_hours_remaining)}</span>
                 )}
               </>
             )}

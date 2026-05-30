@@ -52,3 +52,12 @@ export function formatRelative(ts: string | number, now: number = Date.now()): s
 export function formatNumber(n: number, decimals: number): string {
   return n.toFixed(decimals);
 }
+
+export function formatHoursAsDH(hours: number): string {
+  if (hours < 1) return `${hours.toFixed(1)}h`;
+  if (hours < 24) return `${Math.round(hours)}h`;
+  const days = Math.floor(hours / 24);
+  const rem = Math.round(hours - days * 24);
+  if (rem === 0) return `${days}d`;
+  return `${days}d ${rem}h`;
+}
