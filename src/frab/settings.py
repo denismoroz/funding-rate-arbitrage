@@ -174,6 +174,23 @@ class Settings(BaseSettings):
             )
         return result
 
+    def get_coin_spec(self, coin: str) -> "CoinMarginSpec":
+        from frab.constants import (
+            CoinMarginSpec, RESEARCH_LEVERAGE, RESEARCH_MAINT_RATIO,
+            FALLBACK_LEVERAGE, FALLBACK_MAINT_RATIO,
+        )
+        overrides = self.per_coin_params() or {}
+        if coin in overrides:
+            spec = overrides[coin]
+            return CoinMarginSpec(
+                leverage=spec["leverage"],
+                maint_ratio=spec["maint_ratio"],
+            )
+        return CoinMarginSpec(
+            leverage=RESEARCH_LEVERAGE.get(coin, FALLBACK_LEVERAGE),
+            maint_ratio=RESEARCH_MAINT_RATIO.get(coin, FALLBACK_MAINT_RATIO),
+        )
+
     def universe_tuple(self) -> tuple[str, ...]:
         """Parse hl_universe env string into tuple of coin names. Empty → ()."""
         raw = self.hl_universe.strip()
