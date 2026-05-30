@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from frab.db.models import Base, Exchange as DBExchange, WalletSnapshot as DBWalletSnapshot
+from frab.exchanges.hyperliquid.actions._base import HLActionContext
 from frab.exchanges.hyperliquid.actions.transfer import TransferAction
 from frab.exchanges.hyperliquid.client import HLClient
 from frab.exchanges.hyperliquid.symbols import HLSymbols
@@ -58,7 +59,7 @@ def symbols(mock_client):
 
 
 def make_action(session_factory, mock_client, symbols, *, address="0xabc"):
-    return TransferAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=session_factory,
@@ -66,6 +67,7 @@ def make_action(session_factory, mock_client, symbols, *, address="0xabc"):
         address=address,
         clock_fn=lambda: _FIXED_DT,
     )
+    return TransferAction(ctx)
 
 
 def _perp_state(account_value: float) -> HLPerpState:
@@ -125,7 +127,7 @@ async def test_perp_to_perp_raises_unsupported(session_factory, mock_client, sym
 
 
 async def test_no_session_factory_skips_snapshot(mock_client, symbols):
-    action = TransferAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=None,
@@ -133,6 +135,7 @@ async def test_no_session_factory_skips_snapshot(mock_client, symbols):
         address="0xabc",
         clock_fn=lambda: _FIXED_DT,
     )
+    action = TransferAction(ctx)
     await action.execute("USDC", 10.0, WalletKind.SPOT, WalletKind.PERP)
 
     # usd_class_transfer still called
@@ -142,7 +145,7 @@ async def test_no_session_factory_skips_snapshot(mock_client, symbols):
 
 
 async def test_no_address_skips_snapshot(session_factory, mock_client, symbols):
-    action = TransferAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=session_factory,
@@ -150,6 +153,7 @@ async def test_no_address_skips_snapshot(session_factory, mock_client, symbols):
         address=None,
         clock_fn=lambda: _FIXED_DT,
     )
+    action = TransferAction(ctx)
     await action.execute("USDC", 10.0, WalletKind.SPOT, WalletKind.PERP)
 
     mock_client.usd_class_transfer.assert_called_once_with(10.0, True)

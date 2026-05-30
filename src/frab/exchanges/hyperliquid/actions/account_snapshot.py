@@ -5,26 +5,22 @@ import asyncio
 import logging
 from typing import Any
 
-from frab.exchanges.hyperliquid.client import HLClient
-from frab.exchanges.hyperliquid.symbols import HLSymbols
+from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
 from frab.exchanges.hyperliquid.wire import HLPerpState, HLSpotState
 
 logger = logging.getLogger(__name__)
 
 
-class AccountSnapshotAction:
+class AccountSnapshotAction(HLAction):
     """Read-side projection of HL account state for API + equity consumers."""
 
-    def __init__(
-        self,
-        *,
-        client: HLClient,
-        symbols: HLSymbols,
-        address: str | None,
-    ) -> None:
-        self._client = client
-        self._symbols = symbols
-        self._address = address
+    requires_session = False
+
+    def __init__(self, ctx: HLActionContext) -> None:
+        super().__init__(ctx)
+        self._client = ctx.client
+        self._symbols = ctx.symbols
+        self._address = ctx.address
 
     async def get_snapshot(self) -> tuple[HLPerpState, HLSpotState]:
         """Fetch typed perp + spot account state in parallel."""

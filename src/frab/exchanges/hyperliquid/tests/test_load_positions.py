@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from frab.db.models import Base, Exchange as DBExchange, Position as DBPosition
 from frab.domain import Instrument, Position, PositionStatus, Side
+from frab.exchanges.hyperliquid.actions._base import HLActionContext
 from frab.exchanges.hyperliquid.actions.load_positions import LoadOpenPositionsAction
 from frab.exchanges.hyperliquid.client import HLClient
 from frab.exchanges.hyperliquid.symbols import HLSymbols
@@ -61,13 +62,15 @@ def symbols(mock_client):
 
 
 def make_action(session_factory, mock_client, symbols, *, address="0xabc"):
-    return LoadOpenPositionsAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=session_factory,
         exchange_name="hyperliquid",
         address=address,
+        clock_fn=lambda: _FIXED_DT,
     )
+    return LoadOpenPositionsAction(ctx)
 
 
 def _empty_perp_state() -> HLPerpState:
@@ -129,13 +132,15 @@ async def _seed_position(
 # ---------------------------------------------------------------------------
 
 async def test_no_address_raises_runtime_error(session_factory, mock_client, symbols):
-    action = LoadOpenPositionsAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=session_factory,
         exchange_name="hyperliquid",
         address=None,
+        clock_fn=lambda: _FIXED_DT,
     )
+    action = LoadOpenPositionsAction(ctx)
     with pytest.raises(RuntimeError, match="account_address required"):
         await action.execute()
 
@@ -263,13 +268,15 @@ async def test_missing_exchange_row_raises(mock_client, symbols):
     mock_client.user_state.return_value = _empty_perp_state()
     mock_client.spot_user_state.return_value = _empty_spot_state()
 
-    action = LoadOpenPositionsAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=sf,
         exchange_name="hyperliquid",
         address="0xabc",
+        clock_fn=lambda: _FIXED_DT,
     )
+    action = LoadOpenPositionsAction(ctx)
     with pytest.raises(RuntimeError, match="not found"):
         await action.execute()
 

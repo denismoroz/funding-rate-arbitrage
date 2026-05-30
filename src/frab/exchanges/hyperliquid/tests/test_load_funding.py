@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from frab.db.models import Base, Exchange as DBExchange, FundingAccrual as DBFundingAccrual, Position as DBPosition
 from frab.domain import Instrument, Position, PositionStatus, Side
+from frab.exchanges.hyperliquid.actions._base import HLActionContext
 from frab.exchanges.hyperliquid.actions.load_funding import LoadAccruedFundingAction
 from frab.exchanges.hyperliquid.client import HLClient
+from frab.exchanges.hyperliquid.symbols import HLSymbols
 from frab.exchanges.hyperliquid.wire import HLFundingDelta
 
 
@@ -42,12 +44,20 @@ def mock_client(mocker):
     return mocker.AsyncMock(spec=HLClient)
 
 
+def _make_symbols(mock_client):
+    return HLSymbols(client=mock_client, spot_token_map={}, spot_quote_token="USDC")
+
+
 def make_action(session_factory, mock_client, *, address="0xabc"):
-    return LoadAccruedFundingAction(
+    ctx = HLActionContext(
         client=mock_client,
+        symbols=_make_symbols(mock_client),
         session_factory=session_factory,
+        exchange_name="hyperliquid",
         address=address,
+        clock_fn=lambda: _OPENED_AT,
     )
+    return LoadAccruedFundingAction(ctx)
 
 
 async def _seed_db_position(sf, *, coin: str = "BTC") -> int:
@@ -92,11 +102,15 @@ def _make_position(pos_id: int | None, coin: str = "BTC") -> Position:
 # ---------------------------------------------------------------------------
 
 async def test_no_address_raises_runtime_error(session_factory, mock_client):
-    action = LoadAccruedFundingAction(
+    ctx = HLActionContext(
         client=mock_client,
+        symbols=_make_symbols(mock_client),
         session_factory=session_factory,
+        exchange_name="hyperliquid",
         address=None,
+        clock_fn=lambda: _OPENED_AT,
     )
+    action = LoadAccruedFundingAction(ctx)
     pos = _make_position(1)
     with pytest.raises(RuntimeError, match="account_address required"):
         await action.execute(pos)

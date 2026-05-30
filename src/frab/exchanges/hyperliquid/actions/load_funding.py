@@ -2,25 +2,21 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import FundingAccrual as DBFundingAccrual
 from frab.db.session import session_scope
 from frab.domain import Position
-from frab.exchanges.hyperliquid.client import HLClient
+from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
 
 
-class LoadAccruedFundingAction:
-    def __init__(
-        self,
-        *,
-        client: HLClient,
-        session_factory: async_sessionmaker[AsyncSession],
-        address: str | None,
-    ) -> None:
-        self._client = client
-        self._sf = session_factory
-        self._address = address
+class LoadAccruedFundingAction(HLAction):
+    requires_session = True
+
+    def __init__(self, ctx: HLActionContext) -> None:
+        super().__init__(ctx)
+        self._client = ctx.client
+        self._sf = ctx.session_factory
+        self._address = ctx.address
 
     async def execute(self, pos: Position) -> float:
         if self._address is None:

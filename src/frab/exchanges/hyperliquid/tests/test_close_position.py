@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from frab.constants import PERP_TAKER, SPOT_TAKER
 from frab.db.models import Base, Exchange as DBExchange, Fill as DBFill, Position as DBPosition
 from frab.domain import Instrument, Position, PositionStatus, Side
+from frab.exchanges.hyperliquid.actions._base import HLActionContext
 from frab.exchanges.hyperliquid.actions.close_position import (
     ClosePositionAction,
     MIN_SPOT_RESIDUE_NOTIONAL_USDC,
@@ -61,15 +62,16 @@ def symbols(mock_client):
 
 
 def make_action(session_factory, mock_client, symbols, *, address="0xabc", slippage=0.01):
-    return ClosePositionAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=session_factory,
         exchange_name="hyperliquid",
         address=address,
-        slippage=slippage,
         clock_fn=_CLOCK_FN,
+        slippage=slippage,
     )
+    return ClosePositionAction(ctx)
 
 
 def _filled_response(qty: float, price: float, oid: int | None = 42, fee_usdc: float | None = None) -> HLOrderResponse:

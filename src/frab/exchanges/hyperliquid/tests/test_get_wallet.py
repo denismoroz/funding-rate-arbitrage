@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from frab.db.models import Base, Exchange as DBExchange, WalletSnapshot as DBWalletSnapshot
+from frab.exchanges.hyperliquid.actions._base import HLActionContext
 from frab.exchanges.hyperliquid.actions.get_wallet import GetWalletAction
 from frab.exchanges.hyperliquid.client import HLClient
 from frab.exchanges.hyperliquid.symbols import HLSymbols
@@ -58,7 +59,7 @@ def symbols(mock_client):
 
 
 def make_action(session_factory, mock_client, symbols, *, address="0xabc"):
-    return GetWalletAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=session_factory,
@@ -66,6 +67,7 @@ def make_action(session_factory, mock_client, symbols, *, address="0xabc"):
         address=address,
         clock_fn=lambda: _FIXED_DT,
     )
+    return GetWalletAction(ctx)
 
 
 def _perp_state(account_value: float, *positions) -> HLPerpState:
@@ -87,7 +89,7 @@ def _spot_state(*entries: tuple[str, float, float]) -> HLSpotState:
 # ---------------------------------------------------------------------------
 
 async def test_raises_when_address_is_none(session_factory, mock_client, symbols):
-    action = GetWalletAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=session_factory,
@@ -95,6 +97,7 @@ async def test_raises_when_address_is_none(session_factory, mock_client, symbols
         address=None,
         clock_fn=lambda: _FIXED_DT,
     )
+    action = GetWalletAction(ctx)
     with pytest.raises(RuntimeError, match="account_address required"):
         await action.execute("USDC", WalletKind.PERP)
 
@@ -206,7 +209,7 @@ async def test_raises_when_exchange_not_in_db(mock_client, symbols):
     mock_client.user_state.return_value = _perp_state(0.0)
     mock_client.spot_user_state.return_value = _spot_state()
 
-    action = GetWalletAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
         session_factory=sf,
@@ -214,6 +217,7 @@ async def test_raises_when_exchange_not_in_db(mock_client, symbols):
         address="0xabc",
         clock_fn=lambda: _FIXED_DT,
     )
+    action = GetWalletAction(ctx)
     with pytest.raises(RuntimeError, match="run `frab seed` first"):
         await action.execute("USDC", WalletKind.PERP)
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -16,8 +17,10 @@ from frab.db.models import (
     Strategy as DBStrategy,
 )
 from frab.domain import Instrument, PositionStatus, Side
+from frab.exchanges.hyperliquid.actions._base import HLActionContext
 from frab.exchanges.hyperliquid.actions.backfill_fees import BackfillFeesAction
 from frab.exchanges.hyperliquid.client import HLClient
+from frab.exchanges.hyperliquid.symbols import HLSymbols
 from frab.exchanges.hyperliquid.wire import HLUserFill
 
 
@@ -48,12 +51,20 @@ def mock_client(mocker):
     return mocker.AsyncMock(spec=HLClient)
 
 
+def _make_symbols(mock_client):
+    return HLSymbols(client=mock_client, spot_token_map={}, spot_quote_token="USDC")
+
+
 def make_action(session_factory, mock_client, *, address="0xabc"):
-    return BackfillFeesAction(
+    ctx = HLActionContext(
         client=mock_client,
+        symbols=_make_symbols(mock_client),
         session_factory=session_factory,
+        exchange_name="hyperliquid",
         address=address,
+        clock_fn=lambda: datetime.now(UTC),
     )
+    return BackfillFeesAction(ctx)
 
 
 async def _seed_db(
@@ -142,11 +153,15 @@ def _make_hl_fill(
 # ---------------------------------------------------------------------------
 
 async def test_no_address_raises_runtime_error(session_factory, mock_client):
-    action = BackfillFeesAction(
+    ctx = HLActionContext(
         client=mock_client,
+        symbols=_make_symbols(mock_client),
         session_factory=session_factory,
+        exchange_name="hyperliquid",
         address=None,
+        clock_fn=lambda: datetime.now(UTC),
     )
+    action = BackfillFeesAction(ctx)
     with pytest.raises(RuntimeError, match="account_address required"):
         await action.execute(strategy_id=1)
 

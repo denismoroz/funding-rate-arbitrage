@@ -4,8 +4,10 @@ from __future__ import annotations
 import logging
 
 import pytest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+from frab.exchanges.hyperliquid.actions._base import HLActionContext
 from frab.exchanges.hyperliquid.actions.account_snapshot import AccountSnapshotAction
 from frab.exchanges.hyperliquid.client import HLClient
 from frab.exchanges.hyperliquid.symbols import HLSymbols
@@ -40,11 +42,15 @@ def symbols(mock_client):
 
 
 def make_action(mock_client, symbols, *, address="0xabc"):
-    return AccountSnapshotAction(
+    ctx = HLActionContext(
         client=mock_client,
         symbols=symbols,
+        session_factory=None,
+        exchange_name="hyperliquid",
         address=address,
+        clock_fn=lambda: datetime.now(UTC),
     )
+    return AccountSnapshotAction(ctx)
 
 
 def _empty_perp_state() -> HLPerpState:
@@ -62,21 +68,33 @@ def _empty_spot_state() -> HLSpotState:
 
 @pytest.mark.asyncio
 async def test_get_snapshot_no_address_raises(mock_client, symbols):
-    action = AccountSnapshotAction(client=mock_client, symbols=symbols, address=None)
+    ctx = HLActionContext(
+        client=mock_client, symbols=symbols, session_factory=None,
+        exchange_name="hyperliquid", address=None, clock_fn=lambda: datetime.now(UTC),
+    )
+    action = AccountSnapshotAction(ctx)
     with pytest.raises(RuntimeError, match="account_address required"):
         await action.get_snapshot()
 
 
 @pytest.mark.asyncio
 async def test_get_wallet_state_no_address_raises(mock_client, symbols):
-    action = AccountSnapshotAction(client=mock_client, symbols=symbols, address=None)
+    ctx = HLActionContext(
+        client=mock_client, symbols=symbols, session_factory=None,
+        exchange_name="hyperliquid", address=None, clock_fn=lambda: datetime.now(UTC),
+    )
+    action = AccountSnapshotAction(ctx)
     with pytest.raises(RuntimeError, match="account_address required"):
         await action.get_wallet_state()
 
 
 @pytest.mark.asyncio
 async def test_get_perp_unrealized_no_address_raises(mock_client, symbols):
-    action = AccountSnapshotAction(client=mock_client, symbols=symbols, address=None)
+    ctx = HLActionContext(
+        client=mock_client, symbols=symbols, session_factory=None,
+        exchange_name="hyperliquid", address=None, clock_fn=lambda: datetime.now(UTC),
+    )
+    action = AccountSnapshotAction(ctx)
     with pytest.raises(RuntimeError, match="account_address required"):
         await action.get_perp_unrealized_by_coin()
 

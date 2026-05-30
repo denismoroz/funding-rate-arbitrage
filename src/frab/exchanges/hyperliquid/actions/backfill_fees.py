@@ -5,7 +5,6 @@ import logging
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import (
     FarbPosition as DBFarbPosition,
@@ -14,27 +13,24 @@ from frab.db.models import (
 )
 from frab.db.session import session_scope
 from frab.domain import Instrument, Side
-from frab.exchanges.hyperliquid.client import HLClient
+from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
 from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
 from frab.exchanges.hyperliquid.wire import HLUserFill
 
 logger = logging.getLogger(__name__)
 
 
-class BackfillFeesAction:
+class BackfillFeesAction(HLAction):
     """For all DB fills with fee==0.0 belonging to a strategy, look up
     the real fee from HL userFillsByTime and update the row."""
 
-    def __init__(
-        self,
-        *,
-        client: HLClient,
-        session_factory: async_sessionmaker[AsyncSession],
-        address: str | None,
-    ) -> None:
-        self._client = client
-        self._sf = session_factory
-        self._address = address
+    requires_session = True
+
+    def __init__(self, ctx: HLActionContext) -> None:
+        super().__init__(ctx)
+        self._client = ctx.client
+        self._sf = ctx.session_factory
+        self._address = ctx.address
 
     async def execute(self, strategy_id: int) -> int:
         if self._address is None:

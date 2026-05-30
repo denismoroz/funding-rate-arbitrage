@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import Exchange as DBExchange
 from frab.domain import Position
+from frab.exchanges.hyperliquid.actions._base import HLActionContext
 from frab.exchanges.hyperliquid.actions.account_snapshot import AccountSnapshotAction
 from frab.exchanges.hyperliquid.actions.backfill_fees import BackfillFeesAction
 from frab.exchanges.hyperliquid.actions.close_position import ClosePositionAction
@@ -130,73 +131,30 @@ class HLExchange:
         self._partial_fill_tolerance = partial_fill_tolerance
         self._clock_fn = clock_fn if clock_fn is not None else lambda: datetime.now(UTC)
 
-        if session_factory is not None:
-            self._open_action: OpenPositionAction | None = OpenPositionAction(
-                client=self._hl_client,
-                symbols=self._symbols,
-                session_factory=session_factory,
-                exchange_name=self.name,
-                address=self._address,
-                slippage=self._slippage,
-                partial_fill_tolerance=self._partial_fill_tolerance,
-                clock_fn=self._clock_fn,
-            )
-            self._close_action: ClosePositionAction | None = ClosePositionAction(
-                client=self._hl_client,
-                symbols=self._symbols,
-                session_factory=session_factory,
-                exchange_name=self.name,
-                address=self._address,
-                slippage=self._slippage,
-                clock_fn=self._clock_fn,
-            )
-            self._load_positions_action: LoadOpenPositionsAction | None = LoadOpenPositionsAction(
-                client=self._hl_client,
-                symbols=self._symbols,
-                session_factory=session_factory,
-                exchange_name=self.name,
-                address=self._address,
-            )
-            self._load_funding_action: LoadAccruedFundingAction | None = LoadAccruedFundingAction(
-                client=self._hl_client,
-                session_factory=session_factory,
-                address=self._address,
-            )
-            self._get_wallet_action: GetWalletAction | None = GetWalletAction(
-                client=self._hl_client,
-                symbols=self._symbols,
-                session_factory=session_factory,
-                exchange_name=self.name,
-                address=self._address,
-                clock_fn=self._clock_fn,
-            )
-            self._transfer_action: TransferAction | None = TransferAction(
-                client=self._hl_client,
-                symbols=self._symbols,
-                session_factory=session_factory,
-                exchange_name=self.name,
-                address=self._address,
-                clock_fn=self._clock_fn,
-            )
-            self._backfill_fees_action: BackfillFeesAction | None = BackfillFeesAction(
-                client=self._hl_client,
-                session_factory=session_factory,
-                address=self._address,
-            )
-        else:
-            self._open_action = None
-            self._close_action = None
-            self._load_positions_action = None
-            self._load_funding_action = None
-            self._get_wallet_action = None
-            self._transfer_action = None
-            self._backfill_fees_action = None
-
-        self._account_snapshot_action = AccountSnapshotAction(
+        ctx = HLActionContext(
             client=self._hl_client,
             symbols=self._symbols,
+            session_factory=session_factory,
+            exchange_name=self.name,
             address=self._address,
+            clock_fn=self._clock_fn,
+            slippage=self._slippage,
+            partial_fill_tolerance=self._partial_fill_tolerance,
         )
+
+        def _make(cls):
+            if cls.requires_session and ctx.session_factory is None:
+                return None
+            return cls(ctx)
+
+        self._open_action: OpenPositionAction | None = _make(OpenPositionAction)
+        self._close_action: ClosePositionAction | None = _make(ClosePositionAction)
+        self._load_positions_action: LoadOpenPositionsAction | None = _make(LoadOpenPositionsAction)
+        self._load_funding_action: LoadAccruedFundingAction | None = _make(LoadAccruedFundingAction)
+        self._get_wallet_action: GetWalletAction | None = _make(GetWalletAction)
+        self._backfill_fees_action: BackfillFeesAction | None = _make(BackfillFeesAction)
+        self._transfer_action: TransferAction = _make(TransferAction)  # requires_session=False
+        self._account_snapshot_action: AccountSnapshotAction = _make(AccountSnapshotAction)  # requires_session=False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -378,16 +336,6 @@ class HLExchange:
     ) -> None:
         """Transfer funds between wallets. Writes wallet_snapshots after transfer."""
         self._require_exchange()
-        # session_factory may be None: TransferAction handles that internally (skips snapshot)
-        if self._transfer_action is None:
-            # No session_factory at all: still must call SDK; build a transient action without DB
-            action = TransferAction(
-                client=self._hl_client, symbols=self._symbols,
-                session_factory=None, exchange_name=self.name,
-                address=self._address, clock_fn=self._clock_fn,
-            )
-            await action.execute(coin, amount, from_wallet, to_wallet)
-            return
         await self._transfer_action.execute(coin, amount, from_wallet, to_wallet)
 
     # ------------------------------------------------------------------

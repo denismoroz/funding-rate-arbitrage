@@ -3,44 +3,35 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
-from typing import Callable
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.db.models import Exchange as DBExchange, WalletSnapshot as DBWalletSnapshot
 from frab.db.session import session_scope
+from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
 from frab.exchanges.hyperliquid.actions.wallet_accounting import (
     compute_non_usdc_total,
     compute_total_usdc,
 )
-from frab.exchanges.hyperliquid.client import HLClient
-from frab.exchanges.hyperliquid.symbols import HLSymbols
 from frab.exchanges.protocol import WalletKind
 
 logger = logging.getLogger(__name__)
 
 
-class GetWalletAction:
+class GetWalletAction(HLAction):
     """Fetch (coin, kind) balance from HL, persist wallet snapshot, return per-kind balance."""
 
-    def __init__(
-        self,
-        *,
-        client: HLClient,
-        symbols: HLSymbols,
-        session_factory: async_sessionmaker[AsyncSession],
-        exchange_name: str,
-        address: str | None,
-        clock_fn: Callable[[], datetime],
-    ) -> None:
-        self._client = client
-        self._symbols = symbols
-        self._sf = session_factory
-        self._exchange_name = exchange_name
-        self._address = address
-        self._clock_fn = clock_fn
+    requires_session = True
+
+    def __init__(self, ctx: HLActionContext) -> None:
+        super().__init__(ctx)
+        self._client = ctx.client
+        self._symbols = ctx.symbols
+        self._sf = ctx.session_factory
+        self._exchange_name = ctx.exchange_name
+        self._address = ctx.address
+        self._clock_fn = ctx.clock_fn
 
     async def _get_exchange_id(self, session: AsyncSession) -> int:
         result = await session.execute(

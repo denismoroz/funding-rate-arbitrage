@@ -6,32 +6,25 @@ import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import Exchange as DBExchange, Position as DBPosition
 from frab.db.session import session_scope
 from frab.domain import Instrument, Position, PositionStatus, Side
-from frab.exchanges.hyperliquid.client import HLClient
-from frab.exchanges.hyperliquid.symbols import HLSymbols
+from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
 
 logger = logging.getLogger(__name__)
 
 
-class LoadOpenPositionsAction:
-    def __init__(
-        self,
-        *,
-        client: HLClient,
-        symbols: HLSymbols,
-        session_factory: async_sessionmaker[AsyncSession],
-        exchange_name: str,
-        address: str | None,
-    ) -> None:
-        self._client = client
-        self._symbols = symbols
-        self._sf = session_factory
-        self._exchange_name = exchange_name
-        self._address = address
+class LoadOpenPositionsAction(HLAction):
+    requires_session = True
+
+    def __init__(self, ctx: HLActionContext) -> None:
+        super().__init__(ctx)
+        self._client = ctx.client
+        self._symbols = ctx.symbols
+        self._sf = ctx.session_factory
+        self._exchange_name = ctx.exchange_name
+        self._address = ctx.address
 
     async def execute(self) -> list[Position]:
         if self._address is None:

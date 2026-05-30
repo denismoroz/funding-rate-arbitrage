@@ -3,17 +3,13 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Callable
-
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.constants import PERP_TAKER, SPOT_TAKER
 from frab.db.models import Fill as DBFill, Position as DBPosition
 from frab.db.session import session_scope
 from frab.domain import Instrument, Position, PositionStatus, Side
+from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
 from frab.exchanges.hyperliquid.actions._fees import fetch_real_fee_usdc
-from frab.exchanges.hyperliquid.client import HLClient
-from frab.exchanges.hyperliquid.symbols import HLSymbols
 from frab.exchanges.hyperliquid.wire import HLOrderStatus
 
 logger = logging.getLogger(__name__)
@@ -23,25 +19,18 @@ MAX_CLOSE_RETRIES = 3
 CLOSE_RETRY_SLIPPAGE_MULTIPLIER = 2.0
 
 
-class ClosePositionAction:
-    def __init__(
-        self,
-        *,
-        client: HLClient,
-        symbols: HLSymbols,
-        session_factory: async_sessionmaker[AsyncSession],
-        exchange_name: str,
-        address: str | None,
-        slippage: float,
-        clock_fn: Callable[[], datetime],
-    ) -> None:
-        self._client = client
-        self._symbols = symbols
-        self._sf = session_factory
-        self._exchange_name = exchange_name
-        self._address = address
-        self._slippage = slippage
-        self._clock_fn = clock_fn
+class ClosePositionAction(HLAction):
+    requires_session = True
+
+    def __init__(self, ctx: HLActionContext) -> None:
+        super().__init__(ctx)
+        self._client = ctx.client
+        self._symbols = ctx.symbols
+        self._sf = ctx.session_factory
+        self._exchange_name = ctx.exchange_name
+        self._address = ctx.address
+        self._slippage = ctx.slippage
+        self._clock_fn = ctx.clock_fn
 
     async def execute(self, pos: Position) -> Position:
         now_ms = int(self._clock_fn().timestamp() * 1000)
