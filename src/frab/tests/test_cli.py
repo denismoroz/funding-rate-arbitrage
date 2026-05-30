@@ -130,7 +130,7 @@ def test_backfill_fetches_and_writes(tmp_path, monkeypatch, mocker):
         FundingTick(coin=coin, ts_ms=1_747_270_800_000, rate=0.0001, premium=0.0, annualized_pct=0.876),
     ])
     fake_hl.aclose = mocker.AsyncMock()
-    mocker.patch("frab.cli.HLExchangeReader", return_value=fake_hl)
+    mocker.patch("frab.cli.db.HLExchangeReader", return_value=fake_hl)
 
     result = runner.invoke(app, ["backfill", "--hours", "24", "--coins", "BTC,ETH"])
 
@@ -164,7 +164,7 @@ def test_backfill_is_idempotent(tmp_path, monkeypatch, mocker):
         FundingTick(coin=coin, ts_ms=1_747_270_800_000, rate=0.0001, premium=0.0, annualized_pct=0.876),
     ])
     fake_hl.aclose = mocker.AsyncMock()
-    mocker.patch("frab.cli.HLExchangeReader", return_value=fake_hl)
+    mocker.patch("frab.cli.db.HLExchangeReader", return_value=fake_hl)
 
     runner.invoke(app, ["backfill", "--coins", "BTC"])
     result2 = runner.invoke(app, ["backfill", "--coins", "BTC"])
@@ -178,7 +178,7 @@ def test_serve_invokes_uvicorn(tmp_path, monkeypatch, mocker):
 
     fake_app = object()
     build_spy = mocker.patch("frab.server.build_app", return_value=fake_app)
-    run_spy = mocker.patch("frab.cli.uvicorn.run")
+    run_spy = mocker.patch("frab.cli.serve.uvicorn.run")
 
     result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "9999", "--coins", "BTC,ETH"])
 
