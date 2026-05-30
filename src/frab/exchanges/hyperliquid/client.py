@@ -39,6 +39,23 @@ from frab.exchanges.hyperliquid.wire import (
 logger = logging.getLogger(__name__)
 
 
+def _safe_float(d: dict, key: str, default: float = 0.0) -> float:
+    try:
+        return float(d.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(d: dict, key: str, default: int | None = None) -> int | None:
+    v = d.get(key)
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
 class _RetryableHTTPError(Exception):
     pass
 
@@ -249,35 +266,13 @@ class HLClient:
             coin = pos.get("coin", "")
             if not coin:
                 continue
-            try:
-                szi = float(pos.get("szi", 0.0))
-            except (TypeError, ValueError):
-                szi = 0.0
-            try:
-                unrealized_pnl = float(pos.get("unrealizedPnl", 0.0))
-            except (TypeError, ValueError):
-                unrealized_pnl = 0.0
+            szi = _safe_float(pos, "szi")
+            unrealized_pnl = _safe_float(pos, "unrealizedPnl")
             cf = pos.get("cumFunding") or {}
-            try:
-                cum_funding_since_open = float(cf.get("sinceOpen", 0.0))
-            except (TypeError, ValueError):
-                cum_funding_since_open = 0.0
-            try:
-                margin_used = float(pos.get("marginUsed", 0.0))
-            except (TypeError, ValueError):
-                margin_used = 0.0
-            try:
-                position_value = float(pos.get("positionValue", 0.0))
-            except (TypeError, ValueError):
-                position_value = 0.0
-            lev_raw = (pos.get("leverage") or {}).get("value")
-            if lev_raw is None:
-                leverage_value: int | None = None
-            else:
-                try:
-                    leverage_value = int(lev_raw)
-                except (TypeError, ValueError):
-                    leverage_value = None
+            cum_funding_since_open = _safe_float(cf, "sinceOpen")
+            margin_used = _safe_float(pos, "marginUsed")
+            position_value = _safe_float(pos, "positionValue")
+            leverage_value: int | None = _safe_int(pos.get("leverage") or {}, "value")
             positions.append(HLPerpAssetPosition(
                 coin=coin,
                 szi=szi,
@@ -298,14 +293,8 @@ class HLClient:
             coin = bal.get("coin", "")
             if not coin:
                 continue
-            try:
-                total = float(bal.get("total", 0.0))
-            except (TypeError, ValueError):
-                total = 0.0
-            try:
-                hold = float(bal.get("hold", 0.0))
-            except (TypeError, ValueError):
-                hold = 0.0
+            total = _safe_float(bal, "total")
+            hold = _safe_float(bal, "hold")
             balances.append(HLSpotBalance(coin=coin, total=total, hold=hold))
         return HLSpotState(balances=balances)
 
@@ -327,19 +316,21 @@ class HLClient:
         for f in raw:
             if not isinstance(f, dict):
                 continue
-            try:
-                fills.append(HLUserFill(
-                    oid=int(f.get("oid", 0)),
-                    side=str(f.get("side", "")),
-                    sz=float(f.get("sz", 0.0)),
-                    px=float(f.get("px", 0.0)),
-                    ts_ms=int(f.get("time", 0)),
-                    fee_raw=float(f.get("fee", 0.0)),
-                    fee_token=str(f.get("feeToken") or "USDC").upper(),
-                    coin=str(f.get("coin", "")),
-                ))
-            except (TypeError, ValueError):
-                continue
+            oid = _safe_int(f, "oid", default=0) or 0
+            sz = _safe_float(f, "sz")
+            px = _safe_float(f, "px")
+            ts_ms = _safe_int(f, "time", default=0) or 0
+            fee_raw = _safe_float(f, "fee")
+            fills.append(HLUserFill(
+                oid=oid,
+                side=str(f.get("side", "")),
+                sz=sz,
+                px=px,
+                ts_ms=ts_ms,
+                fee_raw=fee_raw,
+                fee_token=str(f.get("feeToken") or "USDC").upper(),
+                coin=str(f.get("coin", "")),
+            ))
         return fills
 
     # ------------------------------------------------------------------

@@ -6,7 +6,7 @@ import httpx
 import respx
 
 import frab.exchanges.hyperliquid.client as hl_client_mod
-from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
+from frab.exchanges.hyperliquid.client import HLClient, HLTransferError, _safe_float
 from frab.exchanges.hyperliquid.wire import (
     HLFundingDelta,
     HLFundingRecord,
@@ -761,3 +761,17 @@ async def test_aclose_closes_owned_client_only(mocker):
     owned_http = client_owned._http
     await client_owned.aclose()
     assert owned_http.is_closed
+
+
+# ---------------------------------------------------------------------------
+# 28. test_safe_float parametrized
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("d,key,default,expected", [
+    ({"k": "1.5"}, "k", 0.0, 1.5),
+    ({"k": None}, "k", 0.0, 0.0),
+    ({}, "k", 9.0, 9.0),
+    ({"k": "garbage"}, "k", 0.0, 0.0),
+])
+def test_safe_float(d, key, default, expected):
+    assert _safe_float(d, key, default) == pytest.approx(expected)
