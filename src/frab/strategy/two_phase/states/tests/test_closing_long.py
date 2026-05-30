@@ -5,7 +5,9 @@ import pytest
 from datetime import datetime, timezone
 
 from frab.domain import FarbPosition, FarbState
+from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.closing_long import ClosingLongState
+from frab.strategy.two_phase.params import TwoPhaseParams
 
 
 def _make_fp(*, spot_position_id: int | None = 22, state_data: dict | None = None) -> FarbPosition:
@@ -20,6 +22,20 @@ def _make_fp(*, spot_position_id: int | None = 22, state_data: dict | None = Non
         margin_position_id=11,
         opened_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         closed_at=None,
+    )
+
+
+def _make_params() -> TwoPhaseParams:
+    return TwoPhaseParams(coins=["ETH"], position_size_usdc=1000.0, perp_leverage=5.0, margin_buffer_factor=3.0)
+
+
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, session_factory=None, event_bus=None) -> StrategyContext:
+    return StrategyContext(
+        exchange=exchange or mocker.AsyncMock(),
+        farb_repo=farb_repo or mocker.AsyncMock(),
+        params=_make_params(),
+        session_factory=session_factory or mocker.MagicMock(),
+        event_bus=event_bus,
     )
 
 
@@ -45,12 +61,8 @@ async def test_closing_long_happy_path(mocker):
 
     session_factory = mocker.MagicMock()
 
-    state = ClosingLongState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        session_factory=session_factory,
-        event_bus=event_bus,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, session_factory=session_factory, event_bus=event_bus)
+    state = ClosingLongState(ctx)
     fp = _make_fp(
         spot_position_id=22,
         state_data={"hours_in_position": 48, "exit_signal_apr": 0.05, "exit_decision": "phase2"},
@@ -80,13 +92,9 @@ async def test_closing_long_raises_if_no_spot_position_id(mocker):
     """fp.spot_position_id is None → RuntimeError raised before exchange call."""
     exchange = mocker.AsyncMock()
     farb_repo = mocker.AsyncMock()
-    session_factory = mocker.MagicMock()
 
-    state = ClosingLongState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        session_factory=session_factory,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo)
+    state = ClosingLongState(ctx)
     fp = _make_fp(spot_position_id=None)
 
     with pytest.raises(RuntimeError, match="no spot_position_id"):
@@ -111,12 +119,8 @@ async def test_closing_long_no_event_bus(mocker):
     farb_repo = mocker.AsyncMock()
     session_factory = mocker.MagicMock()
 
-    state = ClosingLongState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        session_factory=session_factory,
-        event_bus=None,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, session_factory=session_factory, event_bus=None)
+    state = ClosingLongState(ctx)
     fp = _make_fp(spot_position_id=22)
 
     result = await state.execute(fp)

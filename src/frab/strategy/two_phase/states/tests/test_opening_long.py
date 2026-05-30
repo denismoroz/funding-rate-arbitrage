@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from frab.domain import FarbPosition, FarbState, Instrument
 from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.opening_long import OpeningLongState
 
 
@@ -35,6 +36,16 @@ def _make_params(**overrides) -> TwoPhaseParams:
     return TwoPhaseParams(**defaults)
 
 
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None) -> StrategyContext:
+    return StrategyContext(
+        exchange=exchange or mocker.AsyncMock(),
+        farb_repo=farb_repo or mocker.AsyncMock(),
+        params=params or _make_params(),
+        session_factory=mocker.MagicMock(),
+        event_bus=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_opening_long_happy_path_uses_spot_price(mocker):
     """get_quote returns spot price → qty = position_size/spot, set_leg SPOT, transition to OPENING_SHORT."""
@@ -59,7 +70,8 @@ async def test_opening_long_happy_path_uses_spot_price(mocker):
     farb_repo.set_leg = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    state = OpeningLongState(exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = OpeningLongState(ctx)
     fp = _make_fp()
 
     result = await state.execute(fp)
@@ -106,7 +118,8 @@ async def test_opening_long_falls_back_to_mark_when_spot_is_none(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    state = OpeningLongState(exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = OpeningLongState(ctx)
     fp = _make_fp()
 
     result = await state.execute(fp)
@@ -138,7 +151,8 @@ async def test_opening_long_preserves_existing_state_data(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    state = OpeningLongState(exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = OpeningLongState(ctx)
     fp = _make_fp(state_data={"target_signal_apr": 0.30, "required_margin": 600.0})
 
     await state.execute(fp)

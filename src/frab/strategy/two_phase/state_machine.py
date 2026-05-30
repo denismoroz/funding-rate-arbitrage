@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from frab.domain import FarbPosition, FarbState
-from frab.strategy.two_phase.states.base import State
+from frab.strategy.two_phase.states._base import State
 
 
 class StateMachine:

@@ -4,29 +4,22 @@ from __future__ import annotations
 import logging
 
 from frab.domain import FarbPosition, FarbState
-from frab.events.bus import EventBus
-from frab.exchanges.protocol import Exchange, WalletKind
-from frab.repo.farb_repo import FarbRepo
-from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.exchanges.protocol import WalletKind
+from frab.strategy.two_phase.states._base import State, StrategyContext
 from frab.strategy.two_phase.states._helpers import publish_event
-from frab.strategy.two_phase.states.base import State
 
 logger = logging.getLogger(__name__)
 
 
 class CheckMarginState(State):
-    def __init__(
-        self,
-        *,
-        exchange: Exchange,
-        farb_repo: FarbRepo,
-        params: TwoPhaseParams,
-        event_bus: EventBus | None = None,
-    ) -> None:
-        self._exchange = exchange
-        self._farb_repo = farb_repo
-        self._params = params
-        self._bus = event_bus
+    state = FarbState.CHECK_MARGIN
+
+    def __init__(self, ctx: StrategyContext) -> None:
+        super().__init__(ctx)
+        self._exchange = ctx.exchange
+        self._farb_repo = ctx.farb_repo
+        self._params = ctx.params
+        self._bus = ctx.event_bus
 
     async def execute(self, fp: FarbPosition) -> FarbState | None:
         required = self._params.required_margin()

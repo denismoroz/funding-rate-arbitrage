@@ -25,13 +25,7 @@ import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states._helpers import publish_event
 from frab.strategy.two_phase.state_machine import StateMachine
-from frab.strategy.two_phase.states.check_margin import CheckMarginState
-from frab.strategy.two_phase.states.closing_long import ClosingLongState
-from frab.strategy.two_phase.states.closing_short import ClosingShortState
-from frab.strategy.two_phase.states.opening_long import OpeningLongState
-from frab.strategy.two_phase.states.opening_margin import OpeningMarginState
-from frab.strategy.two_phase.states.opening_short import OpeningShortState
-from frab.strategy.two_phase.states.releasing_margin import ReleasingMarginState
+from frab.strategy.two_phase.states import STATE_CLASSES, StrategyContext
 from frab.strategy.two_phase.evaluators.signal import SignalComputer
 from frab.strategy.two_phase.evaluators.entry import EntryEvaluator
 from frab.strategy.two_phase.evaluators.exit import ExitEvaluator
@@ -97,46 +91,14 @@ class TwoPhaseStrategy:
             session_factory=session_factory,
             params=params,
         )
-        self._state_machine = StateMachine({
-            FarbState.CHECK_MARGIN: CheckMarginState(
-                exchange=exchange,
-                farb_repo=farb_repo,
-                params=params,
-                event_bus=event_bus,
-            ),
-            FarbState.OPENING_MARGIN: OpeningMarginState(
-                exchange=exchange,
-                farb_repo=farb_repo,
-                params=params,
-            ),
-            FarbState.OPENING_LONG: OpeningLongState(
-                exchange=exchange,
-                farb_repo=farb_repo,
-                params=params,
-            ),
-            FarbState.OPENING_SHORT: OpeningShortState(
-                exchange=exchange,
-                farb_repo=farb_repo,
-                params=params,
-                event_bus=event_bus,
-            ),
-            FarbState.CLOSING_SHORT: ClosingShortState(
-                exchange=exchange,
-                farb_repo=farb_repo,
-                session_factory=session_factory,
-            ),
-            FarbState.CLOSING_LONG: ClosingLongState(
-                exchange=exchange,
-                farb_repo=farb_repo,
-                session_factory=session_factory,
-                event_bus=event_bus,
-            ),
-            FarbState.RELEASING_MARGIN: ReleasingMarginState(
-                exchange=exchange,
-                farb_repo=farb_repo,
-                session_factory=session_factory,
-            ),
-        })
+        ctx = StrategyContext(
+            exchange=exchange,
+            farb_repo=farb_repo,
+            params=params,
+            session_factory=session_factory,
+            event_bus=event_bus,
+        )
+        self._state_machine = StateMachine({cls.state: cls(ctx) for cls in STATE_CLASSES})
 
     # ── Public entry points ───────────────────────────────────────────────────
 

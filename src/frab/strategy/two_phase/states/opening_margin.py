@@ -4,25 +4,20 @@ from __future__ import annotations
 import logging
 
 from frab.domain import FarbPosition, FarbState, Instrument, Side
-from frab.exchanges.protocol import Exchange, OpenRequest
-from frab.repo.farb_repo import FarbRepo
-from frab.strategy.two_phase.params import TwoPhaseParams
-from frab.strategy.two_phase.states.base import State
+from frab.exchanges.protocol import OpenRequest
+from frab.strategy.two_phase.states._base import State, StrategyContext
 
 logger = logging.getLogger(__name__)
 
 
 class OpeningMarginState(State):
-    def __init__(
-        self,
-        *,
-        exchange: Exchange,
-        farb_repo: FarbRepo,
-        params: TwoPhaseParams,
-    ) -> None:
-        self._exchange = exchange
-        self._farb_repo = farb_repo
-        self._params = params
+    state = FarbState.OPENING_MARGIN
+
+    def __init__(self, ctx: StrategyContext) -> None:
+        super().__init__(ctx)
+        self._exchange = ctx.exchange
+        self._farb_repo = ctx.farb_repo
+        self._params = ctx.params
 
     async def execute(self, fp: FarbPosition) -> FarbState | None:
         # HL is cross-margin on one account — no spot→perp transfer needed.

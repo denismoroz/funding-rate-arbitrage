@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from frab.domain import FarbPosition, FarbState, Instrument
 from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.opening_margin import OpeningMarginState
 
 
@@ -46,6 +47,16 @@ def _make_position(id: int) -> object:
     return p
 
 
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None) -> StrategyContext:
+    return StrategyContext(
+        exchange=exchange or mocker.AsyncMock(),
+        farb_repo=farb_repo or mocker.AsyncMock(),
+        params=params or _make_params(),
+        session_factory=mocker.MagicMock(),
+        event_bus=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_opening_margin_happy_path(mocker):
     """open_position → set_leg COLLATERAL → transition to OPENING_LONG, return OPENING_LONG."""
@@ -61,7 +72,8 @@ async def test_opening_margin_happy_path(mocker):
     farb_repo.set_leg = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    state = OpeningMarginState(exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = OpeningMarginState(ctx)
     fp = _make_fp()
 
     result = await state.execute(fp)
@@ -95,7 +107,8 @@ async def test_opening_margin_uses_required_margin_from_state_data(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    state = OpeningMarginState(exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = OpeningMarginState(ctx)
     fp = _make_fp(state_data={"required_margin": custom_required})
 
     await state.execute(fp)
@@ -118,7 +131,8 @@ async def test_opening_margin_falls_back_to_params_required_margin(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    state = OpeningMarginState(exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = OpeningMarginState(ctx)
     fp = _make_fp(state_data={})
 
     await state.execute(fp)

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from frab.constants import PERP_TAKER, SPOT_TAKER
 from frab.domain import FarbPosition, FarbState, Instrument, Side
 from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.opening_short import OpeningShortState
 
 
@@ -36,6 +37,16 @@ def _make_params(**overrides) -> TwoPhaseParams:
     return TwoPhaseParams(**defaults)
 
 
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, event_bus=None) -> StrategyContext:
+    return StrategyContext(
+        exchange=exchange or mocker.AsyncMock(),
+        farb_repo=farb_repo or mocker.AsyncMock(),
+        params=params or _make_params(),
+        session_factory=mocker.MagicMock(),
+        event_bus=event_bus,
+    )
+
+
 @pytest.mark.asyncio
 async def test_opening_short_happy_path(mocker):
     """spot_qty from state_data → SHORT PERP OpenRequest, set_leg PERP, transition to OPEN."""
@@ -54,7 +65,8 @@ async def test_opening_short_happy_path(mocker):
     farb_repo.set_leg = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    state = OpeningShortState(exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = OpeningShortState(ctx)
     fp = _make_fp(state_data={"spot_qty": spot_qty, "spot_entry_price": 22.0, "target_signal_apr": 0.15})
 
     result = await state.execute(fp)
@@ -106,7 +118,8 @@ async def test_opening_short_publishes_farb_opened_event(mocker):
     event_bus = mocker.AsyncMock()
     event_bus.publish = mocker.AsyncMock()
 
-    state = OpeningShortState(exchange=exchange, farb_repo=farb_repo, params=params, event_bus=event_bus)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, event_bus=event_bus)
+    state = OpeningShortState(ctx)
     fp = _make_fp(state_data={"spot_qty": 5.0, "spot_entry_price": 199.0})
 
     await state.execute(fp)
@@ -134,7 +147,8 @@ async def test_opening_short_no_event_bus(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    state = OpeningShortState(exchange=exchange, farb_repo=farb_repo, params=params, event_bus=None)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, event_bus=None)
+    state = OpeningShortState(ctx)
     fp = _make_fp(state_data={"spot_qty": 3.0})
 
     result = await state.execute(fp)
@@ -162,7 +176,8 @@ async def test_opening_short_fallback_recomputes_qty_from_quote(mocker):
 
     farb_repo = mocker.AsyncMock()
 
-    state = OpeningShortState(exchange=exchange, farb_repo=farb_repo, params=params)
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = OpeningShortState(ctx)
     fp = _make_fp(state_data={})  # no spot_qty
 
     result = await state.execute(fp)

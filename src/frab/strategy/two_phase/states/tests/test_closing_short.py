@@ -5,7 +5,9 @@ import pytest
 from datetime import datetime, timezone
 
 from frab.domain import FarbPosition, FarbState
+from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.closing_short import ClosingShortState
+from frab.strategy.two_phase.params import TwoPhaseParams
 
 
 def _make_fp(state: FarbState = FarbState.CLOSING_SHORT, *, perp_position_id: int | None = 77) -> FarbPosition:
@@ -20,6 +22,20 @@ def _make_fp(state: FarbState = FarbState.CLOSING_SHORT, *, perp_position_id: in
         margin_position_id=11,
         opened_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         closed_at=None,
+    )
+
+
+def _make_params() -> TwoPhaseParams:
+    return TwoPhaseParams(coins=["BTC"], position_size_usdc=1000.0, perp_leverage=5.0, margin_buffer_factor=3.0)
+
+
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, session_factory=None) -> StrategyContext:
+    return StrategyContext(
+        exchange=exchange or mocker.AsyncMock(),
+        farb_repo=farb_repo or mocker.AsyncMock(),
+        params=_make_params(),
+        session_factory=session_factory or mocker.MagicMock(),
+        event_bus=None,
     )
 
 
@@ -42,11 +58,8 @@ async def test_closing_short_happy_path(mocker):
 
     session_factory = mocker.MagicMock()
 
-    state = ClosingShortState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        session_factory=session_factory,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, session_factory=session_factory)
+    state = ClosingShortState(ctx)
     fp = _make_fp(perp_position_id=77)
 
     result = await state.execute(fp)
@@ -66,13 +79,9 @@ async def test_closing_short_raises_if_no_perp_position_id(mocker):
     """fp.perp_position_id is None → RuntimeError raised before any exchange call."""
     exchange = mocker.AsyncMock()
     farb_repo = mocker.AsyncMock()
-    session_factory = mocker.MagicMock()
 
-    state = ClosingShortState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        session_factory=session_factory,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo)
+    state = ClosingShortState(ctx)
     fp = _make_fp(perp_position_id=None)
 
     with pytest.raises(RuntimeError, match="no perp_position_id"):

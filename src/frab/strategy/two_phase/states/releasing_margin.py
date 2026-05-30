@@ -3,28 +3,21 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-
 from frab.domain import FarbPosition, FarbState
-from frab.exchanges.protocol import Exchange
-from frab.repo.farb_repo import FarbRepo
+from frab.strategy.two_phase.states._base import State, StrategyContext
 from frab.strategy.two_phase.states._helpers import load_position
-from frab.strategy.two_phase.states.base import State
 
 logger = logging.getLogger(__name__)
 
 
 class ReleasingMarginState(State):
-    def __init__(
-        self,
-        *,
-        exchange: Exchange,
-        farb_repo: FarbRepo,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        self._exchange = exchange
-        self._farb_repo = farb_repo
-        self._sf = session_factory
+    state = FarbState.RELEASING_MARGIN
+
+    def __init__(self, ctx: StrategyContext) -> None:
+        super().__init__(ctx)
+        self._exchange = ctx.exchange
+        self._farb_repo = ctx.farb_repo
+        self._sf = ctx.session_factory
 
     async def execute(self, fp: FarbPosition) -> FarbState | None:
         # HL cross-margin releases spot.USDC.hold automatically when the perp

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from frab.domain import FarbPosition, FarbState
 from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.check_margin import CheckMarginState
 
 
@@ -35,6 +36,16 @@ def _make_params(**overrides) -> TwoPhaseParams:
     return TwoPhaseParams(**defaults)
 
 
+def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, event_bus=None) -> StrategyContext:
+    return StrategyContext(
+        exchange=exchange or mocker.AsyncMock(),
+        farb_repo=farb_repo or mocker.AsyncMock(),
+        params=params or _make_params(),
+        session_factory=mocker.MagicMock(),
+        event_bus=event_bus,
+    )
+
+
 @pytest.mark.asyncio
 async def test_check_margin_sufficient_balance_transitions(mocker):
     """balance >= required → transition to OPENING_MARGIN, return FarbState.OPENING_MARGIN."""
@@ -47,11 +58,8 @@ async def test_check_margin_sufficient_balance_transitions(mocker):
     farb_repo = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    state = CheckMarginState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        params=params,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = CheckMarginState(ctx)
     fp = _make_fp()
 
     result = await state.execute(fp)
@@ -80,12 +88,8 @@ async def test_check_margin_insufficient_balance_marks_failed(mocker):
     event_bus = mocker.AsyncMock()
     event_bus.publish = mocker.AsyncMock()
 
-    state = CheckMarginState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        params=params,
-        event_bus=event_bus,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, event_bus=event_bus)
+    state = CheckMarginState(ctx)
     fp = _make_fp()
 
     result = await state.execute(fp)
@@ -114,12 +118,8 @@ async def test_check_margin_no_event_bus_on_failure(mocker):
     farb_repo = mocker.AsyncMock()
     farb_repo.mark_failed = mocker.AsyncMock()
 
-    state = CheckMarginState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        params=params,
-        event_bus=None,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, event_bus=None)
+    state = CheckMarginState(ctx)
     fp = _make_fp()
 
     # Should not raise even with no event_bus
@@ -141,11 +141,8 @@ async def test_check_margin_state_data_merging(mocker):
     farb_repo = mocker.AsyncMock()
     farb_repo.transition = mocker.AsyncMock()
 
-    state = CheckMarginState(
-        exchange=exchange,
-        farb_repo=farb_repo,
-        params=params,
-    )
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params)
+    state = CheckMarginState(ctx)
     existing_data = {"target_signal_apr": 0.25, "entry_ts_ms": 1234567890}
     fp = _make_fp(state_data=existing_data)
 
