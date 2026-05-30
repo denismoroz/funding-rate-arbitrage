@@ -137,6 +137,30 @@ export type Alert = {
   payload: Record<string, unknown> | null;
 };
 
+export type MarginStatus = "healthy" | "warning" | "forced_close" | "liquidation_imminent";
+
+export type MarginFpAssessment = {
+  farb_position_id: number;
+  coin: string;
+  virtual_ratio: number;
+  status: MarginStatus;
+  virtual_equity_usdc: number;
+  virtual_maintenance_usdc: number;
+};
+
+export type MarginState = {
+  ts_ms: number;
+  account: {
+    ratio: number;
+    status: MarginStatus;
+    equity_usdc: number;
+    total_maintenance_usdc: number;
+  };
+  thresholds: { healthy: number; forced_close: number; liquidation: number };
+  per_fp: MarginFpAssessment[];
+  weakest_fp_id: number | null;
+};
+
 export type StrategyParamsPatch = {
   params: Record<string, number | string | boolean | string[] | null>;
 };
@@ -179,6 +203,10 @@ export type EquitySummary = {
 
 export function fetchEquitySummary(): Promise<EquitySummary> {
   return apiFetch<EquitySummary>("/equity/summary");
+}
+
+export function fetchMarginState(): Promise<MarginState> {
+  return apiFetch<MarginState>("/equity/margin");
 }
 
 export function fetchFarbPositions(

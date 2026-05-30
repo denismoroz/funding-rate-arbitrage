@@ -13,10 +13,13 @@ import {
 import {
   fetchFarbPositions,
   fetchFundingHistory,
+  fetchMarginState,
   closeFarbPosition,
   closeAllFarbPositions,
   tsMsToDate,
   type FarbPosition,
+  type MarginFpAssessment,
+  type MarginStatus,
 } from "../lib/api";
 import { formatCurrency, formatCurrencyPrecise, formatQty, formatRelative, formatNumber } from "../lib/format";
 import { useNow } from "../lib/useNow";
@@ -152,14 +155,40 @@ function FarbPositionModal({
   );
 }
 
+const MARGIN_STATUS_CLASS: Record<MarginStatus, string> = {
+  healthy: "bg-gray-100 text-gray-700",
+  warning: "bg-amber-100 text-amber-700",
+  forced_close: "bg-rose-100 text-rose-700",
+  liquidation_imminent: "bg-red-200 text-red-800",
+};
+
+function MarginRatioBadge({ fp }: { fp: MarginFpAssessment }) {
+  const cls = MARGIN_STATUS_CLASS[fp.status] ?? "bg-gray-100 text-gray-700";
+  const ratioStr = Number.isFinite(fp.virtual_ratio) ? `${fp.virtual_ratio.toFixed(2)}×` : "∞";
+  return (
+    <span
+      className={`rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold ${cls}`}
+      title={
+        `margin ratio (watchdog)\n` +
+        `equity ${fp.virtual_equity_usdc.toFixed(2)} USDC / maint ${fp.virtual_maintenance_usdc.toFixed(2)} USDC\n` +
+        `status: ${fp.status}`
+      }
+    >
+      mr {ratioStr}
+    </span>
+  );
+}
+
 function FarbPositionCard({
   p,
   now,
   onSelect,
+  margin,
 }: {
   p: FarbPosition;
   now: number;
   onSelect: (fp: FarbPosition) => void;
+  margin: MarginFpAssessment | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const queryClient = useQueryClient();
@@ -229,6 +258,7 @@ function FarbPositionCard({
             {leverage}×
           </span>
         )}
+        {margin && <MarginRatioBadge fp={margin} />}
 
         {/* capital */}
         {p.capital_usdc > 0 && (
@@ -434,6 +464,17 @@ export function OpenFarbPositions() {
     refetchInterval: 30_000,
   });
 
+  const { data: marginState } = useQuery({
+    queryKey: ["margin-state"],
+    queryFn: fetchMarginState,
+    refetchInterval: 15_000,
+    retry: false,
+  });
+
+  const marginByFpId = new Map<number, MarginFpAssessment>(
+    (marginState?.per_fp ?? []).map((fp) => [fp.farb_position_id, fp]),
+  );
+
   const closeAllMutation = useMutation({
     mutationFn: () => closeAllFarbPositions(strategyId!),
     onSuccess: (result) => {
@@ -484,6 +525,7 @@ export function OpenFarbPositions() {
               p={p}
               now={now}
               onSelect={setSelected}
+              margin={marginByFpId.get(p.id)}
             />
           ))}
         </div>
