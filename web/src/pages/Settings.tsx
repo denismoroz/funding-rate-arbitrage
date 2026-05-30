@@ -117,15 +117,6 @@ const FIELD_DEFS: FieldDef[] = [
     group: "capital",
   },
   {
-    key: "perp_leverage",
-    label: "Perp leverage",
-    type: "float",
-    min: 1,
-    step: "0.5",
-    helper: "Leverage used for perp leg margin calculation",
-    group: "capital",
-  },
-  {
     key: "margin_buffer_factor",
     label: "Margin buffer factor",
     type: "float",
@@ -386,17 +377,28 @@ export default function Settings() {
     hasFieldErrors ||
     patchMutation.isPending;
 
-  // Per-position footprint preview (auto-derived — mirrors TwoPhaseParams.compute_size_for)
+  // Per-position footprint preview (auto-derived — mirrors TwoPhaseParams.compute_size_for).
+  // Leverage table mirrors src/frab/constants.py RESEARCH_LEVERAGE.
+  const RESEARCH_LEVERAGE: Record<string, number> = {
+    BTC: 20, ETH: 20,
+    SOL: 10, AVAX: 10, LINK: 10,
+    AAVE: 5, DOGE: 5,
+  };
   const footprintPreview = (() => {
     const budget = parseFloat(formValues["budget_cap_usdc"] ?? "");
     const K = parseFloat(formValues["concurrency_cap"] ?? "");
-    const lev = parseFloat(formValues["perp_leverage"] ?? "");
     const buf = parseFloat(formValues["margin_buffer_factor"] ?? "");
-    if (!isFinite(budget) || !isFinite(K) || !isFinite(lev) || !isFinite(buf) || K === 0 || lev === 0) return null;
+    const coinsStr = formValues["coins"] ?? "";
+    if (!isFinite(budget) || !isFinite(K) || !isFinite(buf) || K === 0) return null;
     const slot = budget / K;
-    const size = slot / (1 + buf / lev);
-    const margin = slot - size;
-    return { slot, size, margin, buf, lev };
+    const coins = coinsStr.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean);
+    const perCoin = coins.map((coin) => {
+      const lev = RESEARCH_LEVERAGE[coin] ?? 3;
+      const size = slot / (1 + buf / lev);
+      const margin = slot - size;
+      return { coin, lev, size, margin };
+    });
+    return { slot, buf, perCoin };
   })();
 
   // Group fields
@@ -444,19 +446,35 @@ export default function Settings() {
             {footprintPreview != null && (
               <div className="rounded border border-indigo-700 bg-indigo-900/30 px-4 py-2 text-xs text-indigo-300 space-y-1">
                 <div>
-                  1 position consumes{" "}
+                  Per-position slot:{" "}
                   <span className="font-semibold text-indigo-200">
                     ${footprintPreview.slot.toFixed(2)} USDC
-                  </span>{" "}
-                  = derived size{" "}
-                  <span className="font-semibold text-indigo-200">
-                    ${footprintPreview.size.toFixed(2)}
-                  </span>{" "}
-                  + margin ${footprintPreview.margin.toFixed(2)}
+                  </span>
+                  {" "}(budget_cap ÷ K). Size auto-derived per coin from{" "}
+                  <code className="text-indigo-200">slot / (1 + {footprintPreview.buf}/leverage)</code>:
                 </div>
-                <div className="text-indigo-400">
-                  auto-derived: ${footprintPreview.size.toFixed(2)} = ${footprintPreview.slot.toFixed(2)} / (1 + {footprintPreview.buf}/{footprintPreview.lev})
-                </div>
+                {footprintPreview.perCoin.length > 0 && (
+                  <table className="text-[11px] font-mono text-indigo-200">
+                    <thead className="text-indigo-400">
+                      <tr>
+                        <th className="px-2 text-left">coin</th>
+                        <th className="px-2 text-right">lev</th>
+                        <th className="px-2 text-right">size</th>
+                        <th className="px-2 text-right">margin</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {footprintPreview.perCoin.map((row) => (
+                        <tr key={row.coin}>
+                          <td className="px-2">{row.coin}</td>
+                          <td className="px-2 text-right">{row.lev}×</td>
+                          <td className="px-2 text-right">${row.size.toFixed(2)}</td>
+                          <td className="px-2 text-right">${row.margin.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             )}
 
