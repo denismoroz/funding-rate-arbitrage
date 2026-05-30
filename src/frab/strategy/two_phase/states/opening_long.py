@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from frab.domain import FarbPosition, FarbState, Instrument, Side
-from frab.exchanges.protocol import OpenRequest
+from frab.exchanges.protocol import OpenRequest, WalletKind
 from frab.strategy.two_phase.states._base import State, StrategyContext
 
 logger = logging.getLogger(__name__)
@@ -34,12 +34,14 @@ class OpeningLongState(State):
         )
         pos = await self._exchange.open_position(req)
         await self._farb_repo.set_leg(fp.id, instrument=Instrument.SPOT, position_id=pos.id)
-        # Use the actual filled qty (pos.qty) for the perp short so spot and
-        # perp legs match in size after HL's szDecimals flooring + partial fills.
+        # Anchor spot_qty to HL wallet balance (not just fill qty) so any pre-existing
+        # dust from previous closes is absorbed into this position and matched by short.
+        hl_balance = await self._exchange.get_wallet(fp.coin, WalletKind.SPOT)
+        spot_qty = max(pos.qty, hl_balance)  # max guards against transient pre-settlement reads
         await self._farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_LONG,
             to_state=FarbState.OPENING_SHORT,
-            state_data={**fp.state_data, "spot_qty": pos.qty, "spot_entry_price": pos.entry_price},
+            state_data={**fp.state_data, "spot_qty": spot_qty, "spot_entry_price": pos.entry_price},
         )
         return FarbState.OPENING_SHORT

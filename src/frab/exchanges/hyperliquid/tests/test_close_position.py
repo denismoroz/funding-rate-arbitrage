@@ -275,11 +275,22 @@ async def test_perp_marks_db_row_closed(session_factory, mock_client, symbols):
 # SPOT branch
 # ---------------------------------------------------------------------------
 
+def _spot_state(coin: str, total: float) -> HLSpotState:
+    """Helper: build an HLSpotState with a single balance entry."""
+    return HLSpotState(balances=[HLSpotBalance(coin=coin, total=total, hold=0.0)])
+
+
 async def test_spot_single_fill_drains_no_retry(session_factory, mock_client, symbols):
+    # 1st balance=0.01 BTC at $60k → $600 ≥ $11 → order placed, fills all 0.01.
+    # 2nd balance=0 → loop breaks → exactly one market_open call.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),  # 1st: $600 → order
+        _spot_state("UBTC", 0.0),   # 2nd: $0 → break
+    ]
     mock_client.market_open.return_value = _filled_response(0.01, 60000.0, fee_usdc=4.2)
     action = make_action(session_factory, mock_client, symbols)
 
@@ -293,13 +304,19 @@ async def test_spot_single_fill_drains_no_retry(session_factory, mock_client, sy
 
 
 async def test_spot_partial_then_full_two_attempts(session_factory, mock_client, symbols):
+    # 1st balance=0.01, fills 0.005; 2nd balance=0.005, fills 0.005; 3rd balance=0 → break.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),   # 1st: $600 ≥ $11
+        _spot_state("UBTC", 0.005),  # 2nd: $300 ≥ $11
+        _spot_state("UBTC", 0.0),    # 3rd: $0 → break
+    ]
     mock_client.market_open.side_effect = [
-        _filled_response(0.005, 60000.0, fee_usdc=1.5),   # residue=0.005*60000=$300 >= $11 → retry
-        _filled_response(0.005, 60050.0, fee_usdc=1.5),   # drained
+        _filled_response(0.005, 60000.0, fee_usdc=1.5),
+        _filled_response(0.005, 60050.0, fee_usdc=1.5),
     ]
     action = make_action(session_factory, mock_client, symbols)
 
@@ -315,12 +332,17 @@ async def test_spot_partial_then_full_two_attempts(session_factory, mock_client,
 
 
 async def test_spot_residue_below_min_stops_retry(session_factory, mock_client, symbols):
-    # Fill 0.0009 of 0.001 BTC at $2000 → residue = 0.0001 * 2000 = $0.2 < $11 → no retry
+    # 1st balance=0.001 BTC at entry_price=$60k → $60 ≥ $11 → order placed, fills 0.001.
+    # 2nd balance=0.00001 at last_price=$60k → $0.6 < $11 → break without 2nd order.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
-        side=Side.LONG, qty=0.001, entry_price=2000.0,
+        side=Side.LONG, qty=0.001, entry_price=60000.0,
     )
-    mock_client.market_open.return_value = _filled_response(0.0009, 2000.0, fee_usdc=0.001)
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.001),    # 1st iteration: $60 ≥ $11
+        _spot_state("UBTC", 0.00001),  # 2nd iteration: $0.6 < $11 → stop
+    ]
+    mock_client.market_open.return_value = _filled_response(0.001, 60000.0, fee_usdc=0.42)
     action = make_action(session_factory, mock_client, symbols)
 
     await action.execute(pos)
@@ -328,15 +350,22 @@ async def test_spot_residue_below_min_stops_retry(session_factory, mock_client, 
     mock_client.market_open.assert_called_once()
     async with session_factory() as s:
         fill = (await s.execute(select(DBFill))).scalar_one()
-    assert fill.qty == pytest.approx(0.0009)
+    assert fill.qty == pytest.approx(0.001)
 
 
 async def test_spot_residue_remains_after_max_retries_logs_warning(session_factory, mock_client, symbols, caplog):
-    # Each fill: 0.001 of 0.01 ETH at $2000 → residue keeps being $18 >= $11
+    # ETH, 3 iterations each with sufficient balance but each only fills 0.001.
+    # After 3 fills the loop exits at MAX_CLOSE_RETRIES; final_balance still $≥11 → warning.
     pos = await _seed_open_position(
         session_factory, coin="ETH", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=2000.0,
     )
+    # Each iteration re-queries balance; simulate balance decreasing by 0.001 each fill.
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UETH", 0.01),   # 1st: $20 ≥ $11
+        _spot_state("UETH", 0.009),  # 2nd: $18 ≥ $11
+        _spot_state("UETH", 0.008),  # 3rd: $16 ≥ $11
+    ]
     mock_client.market_open.side_effect = [
         _filled_response(0.001, 2000.0, fee_usdc=0.014),
         _filled_response(0.001, 2000.0, fee_usdc=0.014),
@@ -366,11 +395,12 @@ async def test_spot_residue_remains_after_max_retries_logs_warning(session_facto
 
 
 async def test_spot_zero_filled_raises_runtime_error(session_factory, mock_client, symbols):
+    # Balance is sufficient each iteration but all fills return qty=0 → total=0 → raises.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
-    # All attempts fill qty=0
+    mock_client.spot_user_state.return_value = _spot_state("UBTC", 0.01)  # $600 ≥ $11 every call
     mock_client.market_open.side_effect = [
         _filled_response(0.0, 60000.0, fee_usdc=0.0),
         _filled_response(0.0, 60000.0, fee_usdc=0.0),
@@ -383,25 +413,31 @@ async def test_spot_zero_filled_raises_runtime_error(session_factory, mock_clien
 
 
 async def test_spot_doubles_slippage_each_retry(session_factory, mock_client, symbols):
+    # 3 iterations; slippage starts at 0.01 and is doubled after each fill.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),   # 1st: $600
+        _spot_state("UBTC", 0.007),  # 2nd: $420
+        _spot_state("UBTC", 0.004),  # 3rd: $240
+    ]
     mock_client.market_open.side_effect = [
-        _filled_response(0.003, 60000.0, fee_usdc=1.0),  # residue=$420 → retry
-        _filled_response(0.003, 60000.0, fee_usdc=1.0),  # residue=$240 → retry
-        _filled_response(0.004, 60000.0, fee_usdc=1.0),  # drained
+        _filled_response(0.003, 60000.0, fee_usdc=1.0),
+        _filled_response(0.003, 60000.0, fee_usdc=1.0),
+        _filled_response(0.004, 60000.0, fee_usdc=1.0),
     ]
     action = make_action(session_factory, mock_client, symbols, slippage=0.01)
 
     await action.execute(pos)
 
     calls = mock_client.market_open.call_args_list
-    # 1st call: slippage=0.01
+    # 1st call: initial slippage=0.01
     assert calls[0].args[3] == pytest.approx(0.01)
-    # 2nd call: slippage=0.02
+    # 2nd call: doubled once → 0.02
     assert calls[1].args[3] == pytest.approx(0.02)
-    # 3rd call: slippage=0.04
+    # 3rd call: doubled twice → 0.04
     assert calls[2].args[3] == pytest.approx(0.04)
 
 
@@ -410,6 +446,10 @@ async def test_spot_long_close_writes_short_fill(session_factory, mock_client, s
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),  # 1st: $600 → order
+        _spot_state("UBTC", 0.0),   # 2nd: $0 → break
+    ]
     mock_client.market_open.return_value = _filled_response(0.01, 60000.0, fee_usdc=4.2)
     action = make_action(session_factory, mock_client, symbols)
 
@@ -425,6 +465,10 @@ async def test_spot_short_close_writes_long_fill(session_factory, mock_client, s
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.SHORT, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),  # 1st: $600 → order
+        _spot_state("UBTC", 0.0),   # 2nd: $0 → break
+    ]
     mock_client.market_open.return_value = _filled_response(0.01, 60000.0, fee_usdc=4.2)
     action = make_action(session_factory, mock_client, symbols)
 
@@ -440,6 +484,10 @@ async def test_spot_uses_make_spot_name_for_pair_symbol(session_factory, mock_cl
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),  # 1st: $600 → order
+        _spot_state("UBTC", 0.0),   # 2nd: $0 → break
+    ]
     mock_client.market_open.return_value = _filled_response(0.01, 60000.0, fee_usdc=4.2)
     action = make_action(session_factory, mock_client, symbols)
 
@@ -449,49 +497,50 @@ async def test_spot_uses_make_spot_name_for_pair_symbol(session_factory, mock_cl
     assert first_arg == "UBTC/USDC"
 
 
-async def test_spot_re_rounds_remaining_qty_for_retry(session_factory, mock_client, symbols):
-    # sz_dec=5 for BTC; fill 0.00543, remaining=0.00457
+async def test_spot_re_queries_balance_each_iteration_uses_actual_hl_remainder(session_factory, mock_client, symbols):
+    # sz_dec=5 for BTC. 1st iter: balance=0.01, fills 0.00543.
+    # 2nd iter: re-query returns 0.00457 (HL settled). round_qty floors to 0.00457 → 2nd order.
+    # 3rd iter: balance=0 → break.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),     # 1st: $600 ≥ $11
+        _spot_state("UBTC", 0.00457),  # 2nd: $274 ≥ $11
+        _spot_state("UBTC", 0.0),      # 3rd: $0 → break
+    ]
     mock_client.market_open.side_effect = [
-        _filled_response(0.00543, 60000.0, fee_usdc=1.0),  # residue=0.00457*60000=$274 → retry
-        _filled_response(0.00457, 60000.0, fee_usdc=1.0),  # drained
+        _filled_response(0.00543, 60000.0, fee_usdc=1.0),
+        _filled_response(0.00457, 60000.0, fee_usdc=1.0),
     ]
     action = make_action(session_factory, mock_client, symbols)
 
     await action.execute(pos)
 
     calls = mock_client.market_open.call_args_list
-    # Second call qty should be round_qty result for remaining=0.00457 with sz_dec=5
-    # floor(0.00457, 5 decimals) = 0.00457
+    # Second call qty should be round_qty of HL balance 0.00457 with sz_dec=5 = 0.00457
     assert calls[1].args[2] == pytest.approx(0.00457)
 
 
-async def test_spot_remaining_qty_rounds_to_zero_breaks_loop(session_factory, mock_client, symbols):
-    # pos.qty=0.0001 BTC, sz_dec=5; fill 0.00009, remaining=0.00001 → floors to 0 → break
+async def test_spot_balance_rounds_to_zero_breaks_loop(session_factory, mock_client, symbols):
+    # sz_dec=4 for BTC. 1st iter: balance=0.001 at $60k → $60 ≥ $11, rounded=0.001 → order.
+    # 2nd iter: balance=0.00001 → floor(0.00001, 4 dec)=0 → break before 2nd order.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
-        side=Side.LONG, qty=0.0001, entry_price=60000.0,
+        side=Side.LONG, qty=0.001, entry_price=60000.0,
     )
-    # residue after fill: 0.00001 * 60000 = $0.6 < $11, so it breaks anyway before rounding
-    # Force residue >= MIN by using a price large enough: remaining=0.00001, need $11
-    # Actually at price=60000: 0.00001*60000=0.6 < 11, so it already breaks on residue check.
-    # To test rounding: use price that makes residue >= 11 but remaining rounds to 0.
-    # remaining=0.00001 at any price still rounds to 0.00001 with sz_dec=5 (= 0.00001)
-    # Need sz_dec=4: remaining=0.00001 floors to 0.0000 = 0 at 4 decimals
-    # Override BTC sz_dec to 4
     symbols._sz_decimals_cache["BTC"] = 4
-    mock_client.market_open.side_effect = [
-        # residue = 0.00001 * 1_200_000 = $12 >= $11 → would retry, but rounds to 0
-        _filled_response(0.0001 - 0.00001, 1_200_000.0, fee_usdc=1.0),
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.001),    # 1st: $60 ≥ $11
+        _spot_state("UBTC", 0.00001),  # 2nd: rounds to 0 → break
     ]
+    mock_client.market_open.return_value = _filled_response(0.001, 60000.0, fee_usdc=0.42)
     action = make_action(session_factory, mock_client, symbols)
 
     await action.execute(pos)
 
-    # Should only have made 1 call (remaining rounded to 0, broke loop)
+    # Only one market_open call (second iteration breaks at rounded==0)
     mock_client.market_open.assert_called_once()
 
 
@@ -500,6 +549,7 @@ async def test_spot_error_status_raises_no_retry(session_factory, mock_client, s
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.return_value = _spot_state("UBTC", 0.01)
     mock_client.market_open.return_value = _error_response("insufficient balance")
     action = make_action(session_factory, mock_client, symbols)
 
@@ -514,6 +564,10 @@ async def test_spot_fill_with_explicit_fee_uses_it(session_factory, mock_client,
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),  # 1st: $600 → order
+        _spot_state("UBTC", 0.0),   # 2nd: $0 → break
+    ]
     mock_client.market_open.return_value = _filled_response(0.01, 60000.0, fee_usdc=0.02)
     action = make_action(session_factory, mock_client, symbols)
 
@@ -530,6 +584,11 @@ async def test_spot_fee_fallback_to_real_lookup_per_attempt(session_factory, moc
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),   # 1st: $600 ≥ $11
+        _spot_state("UBTC", 0.005),  # 2nd: $300 ≥ $11
+        _spot_state("UBTC", 0.0),    # 3rd: $0 → break
+    ]
     mock_client.market_open.side_effect = [
         _filled_response(0.005, 60000.0, oid=10, fee_usdc=None),
         _filled_response(0.005, 60000.0, oid=11, fee_usdc=None),
@@ -554,6 +613,10 @@ async def test_spot_marks_db_row_closed(session_factory, mock_client, symbols):
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),  # 1st: $600 → order
+        _spot_state("UBTC", 0.0),   # 2nd: $0 → break
+    ]
     mock_client.market_open.return_value = _filled_response(0.01, 60000.0, fee_usdc=4.2)
     action = make_action(session_factory, mock_client, symbols)
 
@@ -570,6 +633,11 @@ async def test_spot_single_dbfill_row_with_vwap_and_summed_fee(session_factory, 
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),   # 1st: $600 ≥ $11
+        _spot_state("UBTC", 0.004),  # 2nd: $240 ≥ $11
+        _spot_state("UBTC", 0.0),    # 3rd: $0 → break
+    ]
     mock_client.market_open.side_effect = [
         _filled_response(0.006, 60000.0, fee_usdc=1.5),
         _filled_response(0.004, 60100.0, fee_usdc=1.0),
@@ -589,70 +657,102 @@ async def test_spot_single_dbfill_row_with_vwap_and_summed_fee(session_factory, 
 
 
 async def test_spot_writes_slippage_bps_from_final_slippage(session_factory, mock_client, symbols):
+    # 3 orders: slippage doubles after each fill.
+    # Writes current_slippage = 0.01 * 2^3 = 0.08 (multiplied after every fill incl. last).
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
-    # 2 retries: slippage doubles twice → final = 0.01 * 2 * 2 = 0.04
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),   # 1st: $600
+        _spot_state("UBTC", 0.007),  # 2nd: $420
+        _spot_state("UBTC", 0.004),  # 3rd: $240
+    ]
     mock_client.market_open.side_effect = [
-        _filled_response(0.003, 60000.0, fee_usdc=1.0),   # residue=$420 → retry
-        _filled_response(0.003, 60000.0, fee_usdc=1.0),   # residue=$240 → retry
-        _filled_response(0.004, 60000.0, fee_usdc=1.0),   # drained
+        _filled_response(0.003, 60000.0, fee_usdc=1.0),
+        _filled_response(0.003, 60000.0, fee_usdc=1.0),
+        _filled_response(0.004, 60000.0, fee_usdc=1.0),
     ]
     action = make_action(session_factory, mock_client, symbols, slippage=0.01)
 
     await action.execute(pos)
 
-    final_slippage = 0.01 * CLOSE_RETRY_SLIPPAGE_MULTIPLIER * CLOSE_RETRY_SLIPPAGE_MULTIPLIER
+    # current_slippage is multiplied after every order including the last, so 0.01 * 2^3 = 0.08
+    final_slippage = 0.01 * CLOSE_RETRY_SLIPPAGE_MULTIPLIER ** 3
     async with session_factory() as s:
         fill = (await s.execute(select(DBFill))).scalar_one()
     assert fill.slippage_bps == pytest.approx(final_slippage * 1e4)
 
 
 # ---------------------------------------------------------------------------
-# Dust-sweep tests
+# Dust-sweep / balance-anchoring tests
 # ---------------------------------------------------------------------------
 
-async def test_close_spot_sweeps_dust_when_balance_exceeds_pos_qty(session_factory, mock_client, symbols):
-    # pos.qty=0.00016 BTC, HL balance=0.00017 (dust from prior partial fill)
+async def test_close_spot_sells_actual_wallet_balance_when_larger_than_pos_qty(
+    session_factory, mock_client, symbols
+):
+    # balance=0.00025 BTC at $60k → $15 ≥ $11. pos.qty=0.0002 (dust extra from prior close).
+    # New design: first iteration orders the actual wallet balance (0.00025), not pos.qty.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
-        side=Side.LONG, qty=0.00016, entry_price=60000.0,
+        side=Side.LONG, qty=0.0002, entry_price=60000.0,
     )
-    mock_client.spot_user_state.return_value = HLSpotState(
-        balances=[HLSpotBalance(coin="UBTC", total=0.00017, hold=0.0)]
-    )
-    mock_client.market_open.return_value = _filled_response(0.00017, 60000.0, fee_usdc=0.01)
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.00025),  # 1st: $15 ≥ $11 → order
+        _spot_state("UBTC", 0.0),      # 2nd: $0 → break
+    ]
+    mock_client.market_open.return_value = _filled_response(0.00025, 60000.0, fee_usdc=0.01)
     action = make_action(session_factory, mock_client, symbols)
 
     await action.execute(pos)
 
-    # market_open called with the larger dust-swept qty
-    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.00017)
+    # market_open uses the actual rounded balance, not pos.qty
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.00025)
     async with session_factory() as s:
         fill = (await s.execute(select(DBFill))).scalar_one()
-    assert fill.qty == pytest.approx(0.00017)
+    assert fill.qty == pytest.approx(0.00025)
 
 
-async def test_close_spot_uses_pos_qty_when_balance_lower(session_factory, mock_client, symbols):
-    # HL balance=0.00010 < pos.qty=0.00016 → target = max(0.00016, 0.00010) = 0.00016
+async def test_close_spot_balance_below_min_notional_raises(session_factory, mock_client, symbols):
+    # balance=0.0001 BTC at entry_price=$60k → $6 < $11. Loop breaks immediately → nothing sold → raises.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
-        side=Side.LONG, qty=0.00016, entry_price=60000.0,
+        side=Side.LONG, qty=0.0001, entry_price=60000.0,
     )
-    mock_client.spot_user_state.return_value = HLSpotState(
-        balances=[HLSpotBalance(coin="UBTC", total=0.00010, hold=0.0)]
+    mock_client.spot_user_state.return_value = _spot_state("UBTC", 0.0001)
+    action = make_action(session_factory, mock_client, symbols)
+
+    with pytest.raises(RuntimeError, match="drained 0"):
+        await action.execute(pos)
+
+    mock_client.market_open.assert_not_called()
+
+
+async def test_close_spot_re_queries_balance_each_iteration(session_factory, mock_client, symbols):
+    # Verify spot_user_state is called once per iteration (not just once up-front).
+    # 2 fills → loop tries 3rd iteration → call_count == 3.
+    pos = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.01, entry_price=60000.0,
     )
-    mock_client.market_open.return_value = _filled_response(0.00016, 60000.0, fee_usdc=0.01)
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("UBTC", 0.01),   # 1st: $600 → order
+        _spot_state("UBTC", 0.005),  # 2nd: $300 → order
+        _spot_state("UBTC", 0.0),    # 3rd: $0 → break
+    ]
+    mock_client.market_open.side_effect = [
+        _filled_response(0.005, 60000.0, fee_usdc=1.5),
+        _filled_response(0.005, 60000.0, fee_usdc=1.5),
+    ]
     action = make_action(session_factory, mock_client, symbols)
 
     await action.execute(pos)
 
-    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.00016)
+    assert mock_client.spot_user_state.call_count == 3
 
 
 async def test_close_spot_falls_back_when_address_none(session_factory, mock_client, symbols):
-    # address=None → skip balance lookup, use pos.qty directly
+    # address=None → skip balance lookup entirely, one-shot close at pos.qty.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.00016, entry_price=60000.0,
@@ -664,3 +764,16 @@ async def test_close_spot_falls_back_when_address_none(session_factory, mock_cli
 
     mock_client.spot_user_state.assert_not_called()
     assert mock_client.market_open.call_args.args[2] == pytest.approx(0.00016)
+
+
+async def test_close_spot_address_none_zero_fill_raises(session_factory, mock_client, symbols):
+    # address=None fallback: fill returns qty=0 → raises.
+    pos = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.01, entry_price=60000.0,
+    )
+    mock_client.market_open.return_value = _filled_response(0.0, 60000.0, fee_usdc=0.0)
+    action = make_action(session_factory, mock_client, symbols, address=None)
+
+    with pytest.raises(RuntimeError, match="drained 0"):
+        await action.execute(pos)

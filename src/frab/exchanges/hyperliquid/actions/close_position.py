@@ -53,62 +53,61 @@ class ClosePositionAction(HLAction):
     async def _close_spot(self, pos: Position, now_ms: int) -> Position:
         spot_name = self._symbols.make_spot_name(pos.coin)
 
-        # Determine target qty: use actual HL balance to sweep accumulated dust.
-        raw_balance = 0.0
-        if self._address is not None:
-            hl_coin = self._symbols.spot_token_map.get(pos.coin, pos.coin)
+        if self._address is None:
+            # No live address → cannot query wallet, fall back to one-shot close at pos.qty.
+            order_resp = await self._client.market_open(spot_name, False, pos.qty, self._slippage)
+            status0 = order_resp.first
+            qty_filled, fill_price, fee = await self._parse_close_fill(
+                status0, taker=SPOT_TAKER, now_ms=now_ms,
+            )
+            if qty_filled <= 0:
+                raise RuntimeError(f"close_position drained 0 of {pos.qty} {pos.coin}")
+            closing_side = Side.SHORT if pos.side == Side.LONG else Side.LONG
+            return await self._write_close(
+                pos=pos, now_ms=now_ms,
+                qty=qty_filled, price=fill_price, fee=fee,
+                side=closing_side, slippage=self._slippage,
+            )
+
+        hl_coin = self._symbols.spot_token_map.get(pos.coin, pos.coin)
+        qty_filled_total = 0.0
+        fee_total = 0.0
+        fill_parts: list[tuple[float, float]] = []
+        current_slippage = self._slippage
+        last_price = pos.entry_price  # initial estimate for residue threshold
+        attempts = 0
+        final_balance = 0.0
+
+        for attempt in range(MAX_CLOSE_RETRIES):
+            attempts = attempt + 1
             state = await self._client.spot_user_state(self._address)
             match = next((b for b in state.balances if b.coin == hl_coin), None)
             raw_balance = float(match.total) if match is not None else 0.0
             rounded = await self._symbols.round_qty(pos.coin, raw_balance)
-            target_qty = max(pos.qty, rounded)
-            if target_qty != pos.qty:
-                logger.info(
-                    "close_spot %s sweeping dust: pos.qty=%s hl_balance=%s target=%s",
-                    pos.coin, pos.qty, raw_balance, target_qty,
-                )
-        else:
-            target_qty = pos.qty
+            residue_notional = rounded * last_price
+            final_balance = raw_balance
 
-        qty_filled_total = 0.0
-        fee_total = 0.0
-        fill_parts: list[tuple[float, float]] = []
-        remaining_qty = target_qty
-        current_slippage = self._slippage
-        residue_notional = 0.0
-        remaining = target_qty
-        attempts = 0
+            if rounded <= 0 or residue_notional < MIN_SPOT_RESIDUE_NOTIONAL_USDC:
+                break
 
-        for attempt in range(MAX_CLOSE_RETRIES):
-            attempts = attempt + 1
-            order_resp = await self._client.market_open(spot_name, False, remaining_qty, current_slippage)
+            order_resp = await self._client.market_open(spot_name, False, rounded, current_slippage)
             status0 = order_resp.first
             qty_filled_i, fill_price_i, fee_i = await self._parse_close_fill(
                 status0, taker=SPOT_TAKER, now_ms=now_ms,
             )
-
             qty_filled_total += qty_filled_i
             fee_total += fee_i
             fill_parts.append((qty_filled_i, fill_price_i))
-
-            remaining = target_qty - qty_filled_total
-            residue_notional = remaining * fill_price_i
-
-            if remaining <= 0 or residue_notional < MIN_SPOT_RESIDUE_NOTIONAL_USDC:
-                break
-
+            last_price = fill_price_i
             current_slippage *= CLOSE_RETRY_SLIPPAGE_MULTIPLIER
-            remaining_qty = await self._symbols.round_qty(pos.coin, remaining)
-            if remaining_qty <= 0:
-                break
 
         if qty_filled_total <= 0:
             raise RuntimeError(f"close_position drained 0 of {pos.qty} {pos.coin}")
 
-        if residue_notional >= MIN_SPOT_RESIDUE_NOTIONAL_USDC:
+        if final_balance * last_price >= MIN_SPOT_RESIDUE_NOTIONAL_USDC:
             logger.warning(
                 "close_position left %s residue of %s after %d attempts (notional=$%.2f)",
-                remaining, pos.coin, attempts, residue_notional,
+                final_balance, pos.coin, attempts, final_balance * last_price,
             )
 
         vwap_price = sum(q * p for q, p in fill_parts) / qty_filled_total

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from frab.constants import CoinMarginSpec
 from frab.domain import FarbPosition, FarbState, Instrument
+from frab.exchanges.protocol import WalletKind
 from frab.settings import Settings
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states._base import StrategyContext
@@ -77,6 +78,8 @@ async def test_opening_long_happy_path_uses_spot_price(mocker):
     exchange = mocker.AsyncMock()
     exchange.get_quote.return_value = quote
     exchange.open_position.return_value = filled_pos
+    # Wallet matches fill qty (no prior dust) → spot_qty = max(0.019, 0.019) = 0.019
+    exchange.get_wallet = mocker.AsyncMock(return_value=filled_pos.qty)
 
     farb_repo = mocker.AsyncMock()
     farb_repo.set_leg = mocker.AsyncMock()
@@ -94,18 +97,21 @@ async def test_opening_long_happy_path_uses_spot_price(mocker):
     open_req = exchange.open_position.await_args.args[0]
     assert abs(open_req.qty - expected_qty) < 1e-9
 
+    # get_wallet called with the coin and SPOT kind
+    exchange.get_wallet.assert_awaited_once_with(fp.coin, WalletKind.SPOT)
+
     # set_leg called with SPOT and the filled position id
     farb_repo.set_leg.assert_awaited_once()
     set_leg_kwargs = farb_repo.set_leg.await_args.kwargs
     assert set_leg_kwargs["instrument"] == Instrument.SPOT
     assert set_leg_kwargs["position_id"] == 77
 
-    # transition to OPENING_SHORT with filled qty/price
+    # transition to OPENING_SHORT with wallet-anchored qty/price
     farb_repo.transition.assert_awaited_once()
     trans_kwargs = farb_repo.transition.await_args.kwargs
     assert trans_kwargs["from_state"] == FarbState.OPENING_LONG
     assert trans_kwargs["to_state"] == FarbState.OPENING_SHORT
-    assert trans_kwargs["state_data"]["spot_qty"] == filled_pos.qty
+    assert trans_kwargs["state_data"]["spot_qty"] == filled_pos.qty  # max(pos.qty, hl_balance) = pos.qty
     assert trans_kwargs["state_data"]["spot_entry_price"] == filled_pos.entry_price
 
 
@@ -129,6 +135,7 @@ async def test_opening_long_falls_back_to_mark_when_spot_is_none(mocker):
     exchange = mocker.AsyncMock()
     exchange.get_quote.return_value = quote
     exchange.open_position.return_value = filled_pos
+    exchange.get_wallet = mocker.AsyncMock(return_value=filled_pos.qty)
 
     farb_repo = mocker.AsyncMock()
 
@@ -163,6 +170,7 @@ async def test_opening_long_preserves_existing_state_data(mocker):
     exchange = mocker.AsyncMock()
     exchange.get_quote.return_value = quote
     exchange.open_position.return_value = filled_pos
+    exchange.get_wallet = mocker.AsyncMock(return_value=filled_pos.qty)
 
     farb_repo = mocker.AsyncMock()
 
@@ -176,3 +184,75 @@ async def test_opening_long_preserves_existing_state_data(mocker):
     assert merged["target_signal_apr"] == 0.30
     assert merged["required_margin"] == 600.0
     assert merged["spot_qty"] == filled_pos.qty
+
+
+@pytest.mark.asyncio
+async def test_opening_long_dust_absorption_uses_hl_balance_when_larger(mocker):
+    """When HL wallet has more than pos.qty (dust from prior close), spot_qty = hl_balance."""
+    params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
+
+    quote = mocker.MagicMock()
+    quote.spot = 50000.0
+    quote.mark = 50000.0
+
+    filled_pos = mocker.MagicMock()
+    filled_pos.id = 10
+    filled_pos.qty = 0.019      # fill qty from this open
+    filled_pos.entry_price = 50010.0
+
+    # Wallet has 0.02001 — prior dust accumulated from previous partial close
+    hl_balance = 0.02001
+
+    exchange = mocker.AsyncMock()
+    exchange.get_quote.return_value = quote
+    exchange.open_position.return_value = filled_pos
+    exchange.get_wallet = mocker.AsyncMock(return_value=hl_balance)
+
+    farb_repo = mocker.AsyncMock()
+
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
+    state = OpeningLongState(ctx)
+    fp = _make_fp()
+
+    await state.execute(fp)
+
+    trans_kwargs = farb_repo.transition.await_args.kwargs
+    # Wallet > pos.qty → use wallet balance so the perp short covers the dust too
+    assert trans_kwargs["state_data"]["spot_qty"] == hl_balance
+
+
+@pytest.mark.asyncio
+async def test_opening_long_defensive_max_uses_pos_qty_when_balance_lower(mocker):
+    """Defensive: if HL balance < pos.qty (transient pre-settlement), spot_qty = pos.qty."""
+    params = _make_params()
+    settings = _make_settings(mocker, leverage=5)
+
+    quote = mocker.MagicMock()
+    quote.spot = 50000.0
+    quote.mark = 50000.0
+
+    filled_pos = mocker.MagicMock()
+    filled_pos.id = 11
+    filled_pos.qty = 0.019
+    filled_pos.entry_price = 50010.0
+
+    # Wallet reports less than fill (transient, shouldn't happen normally)
+    hl_balance = 0.018
+
+    exchange = mocker.AsyncMock()
+    exchange.get_quote.return_value = quote
+    exchange.open_position.return_value = filled_pos
+    exchange.get_wallet = mocker.AsyncMock(return_value=hl_balance)
+
+    farb_repo = mocker.AsyncMock()
+
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
+    state = OpeningLongState(ctx)
+    fp = _make_fp()
+
+    await state.execute(fp)
+
+    trans_kwargs = farb_repo.transition.await_args.kwargs
+    # pos.qty > hl_balance → use pos.qty (defensive max)
+    assert trans_kwargs["state_data"]["spot_qty"] == filled_pos.qty
