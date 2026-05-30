@@ -170,24 +170,6 @@ class HLExchange:
     async def __aexit__(self, *_: Any) -> None:
         await self.aclose()
 
-    def _record_to_tick(self, coin: str, record: HLUserFill | Any) -> FundingTick:
-        # Works with both typed HLFundingRecord and raw dict (for get_funding_rate)
-        if hasattr(record, "rate"):
-            rate = record.rate
-            premium = record.premium
-            ts_ms = record.ts_ms
-        else:
-            rate = float(record["fundingRate"])
-            premium = float(record["premium"])
-            ts_ms = int(record["time"])
-        return FundingTick(
-            coin=coin,
-            ts_ms=ts_ms,
-            rate=rate,
-            premium=premium,
-            annualized_pct=rate * _PERIODS_PER_YEAR * 100,
-        )
-
     # ------------------------------------------------------------------
     # Internal: DB helpers
     # ------------------------------------------------------------------
@@ -296,25 +278,7 @@ class HLExchange:
         to_wallet: WalletKind,
     ) -> None:
         """Transfer funds between wallets. Writes wallet_snapshots after transfer."""
-        self._require_exchange()
         await self._transfer_action.execute(coin, amount, from_wallet, to_wallet)
-
-    # ------------------------------------------------------------------
-    # Internal: SDK helpers
-    # ------------------------------------------------------------------
-
-    def _require_exchange(self) -> Exchange:
-        if self._exchange is None:
-            raise RuntimeError(
-                "HLExchange write methods require private_key + account_address "
-                "(or an injected exchange object)"
-            )
-        return self._exchange
-
-    def _require_address(self) -> str:
-        if self._address is None:
-            raise RuntimeError("account_address required")
-        return self._address
 
     async def round_qty(self, coin: str, qty: float) -> float:
         """Floor qty to asset's szDecimals (conservative; used for initial sizing)."""

@@ -51,6 +51,7 @@ class TransferAction(HLAction):
         from_wallet: WalletKind,
         to_wallet: WalletKind,
     ) -> None:
+        self._client._require_exchange()
         if amount <= 0:
             raise ValueError(f"amount must be positive, got {amount!r}")
 

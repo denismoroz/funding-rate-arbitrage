@@ -204,7 +204,7 @@ class TwoPhaseStrategy:
         handler registered → StateMachine.step returns None (no-op)."""
         await self._state_machine.step(fp)
 
-    # ── Thin delegates (required for test compat) ─────────────────────────────
+    # ── Test seams ─────────────────────────────────────────────────────────────
 
     async def _evaluate_entries(self, *, now_ms: int) -> None:
         await self._entry_evaluator.evaluate(

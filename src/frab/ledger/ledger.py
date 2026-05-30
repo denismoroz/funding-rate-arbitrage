@@ -111,7 +111,7 @@ class Ledger:
         ts_ms = _now_ms()
 
         async with self._sf() as session:
-            cash = await self._compute_cash(session, strategy_id)
+            cash = await self._compute_cash(session)
             spot_value, perp_unrealized = await self._compute_position_values(
                 session, strategy_id, quotes,
                 perp_unrealized_by_coin=perp_unrealized_by_coin,
@@ -188,7 +188,6 @@ class Ledger:
     async def _compute_cash(
         self,
         session: AsyncSession,
-        strategy_id: int,
     ) -> float:
         """SUM of latest wallet_snapshot balance per (exchange_id, coin)
         for all exchanges linked to this strategy, restricted to
@@ -311,29 +310,7 @@ class Ledger:
         session: AsyncSession,
         strategy_id: int,
     ) -> float:
-        """SUM realized P&L for CLOSED PERP positions linked to this strategy.
-
-        Computed from closing fills (the fill recorded when a position is
-        closed has the opposite side from the opening fill).
-
-        Implementation: SUM all fills' (signed_qty * price) for PERP positions
-        minus total fees, where sign = +1 for BUY fills, -1 for SELL fills.
-
-        Actually simpler: realized P&L = (exit_price - entry_price) * qty for
-        LONG, (entry_price - exit_price) * qty for SHORT, minus fees.
-
-        We compute this directly from the CLOSED PERP position rows using
-        stored entry_price, then look up the closing fill price per position.
-
-        Alternative (and simpler): use the 'net cash flow' approach from fills:
-            P&L = SUM over all closing fills of:
-                  fill_qty * fill_price * side_sign  - fee
-        where side_sign = +1 for sells (closing a LONG) and -1 for buys
-        (closing a SHORT).
-
-        We use the position-based approach (entry_price + closing fill price)
-        as it directly maps to the spec language.
-        """
+        """SUM realized P&L for CLOSED PERP positions: (exit-entry)*qty for LONG, (entry-exit)*qty for SHORT, minus fees."""
         # Fetch CLOSED PERP positions for this strategy
         stmt = (
             select(PositionRow)

@@ -21,12 +21,13 @@ class StateConflict(Exception):
     def __init__(
         self,
         farb_position_id: int,
-        expected: FarbState,
+        expected: FarbState | str,
         actual: FarbState | None,
     ) -> None:
+        expected_str = expected.value if isinstance(expected, FarbState) else expected
         actual_str = actual.value if actual is not None else "MISSING"
         super().__init__(
-            f"FarbPosition {farb_position_id}: expected state={expected.value}, actual={actual_str}"
+            f"FarbPosition {farb_position_id}: expected state={expected_str}, actual={actual_str}"
         )
         self.farb_position_id = farb_position_id
         self.expected = expected
@@ -300,7 +301,7 @@ class FarbRepo:
             if updated_row is None:
                 current = await session.get(FarbPositionRow, farb_position_id)
                 actual = FarbState(current.state) if current is not None else None
-                raise StateConflict(farb_position_id, FarbState.RELEASING_MARGIN, actual)
+                raise StateConflict(farb_position_id, "non-terminal", actual)
             return _to_domain(updated_row)
 
     async def mark_failed(
@@ -340,5 +341,5 @@ class FarbRepo:
             )
             updated_row = result.scalar_one_or_none()
             if updated_row is None:
-                raise StateConflict(farb_position_id, FarbState.OPEN, FarbState(current.state))
+                raise StateConflict(farb_position_id, "non-terminal", FarbState(current.state))
             return _to_domain(updated_row)
