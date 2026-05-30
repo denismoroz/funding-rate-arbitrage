@@ -16,11 +16,12 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from frab.db.models import Exchange as ExchangeRow, FundingRate as FundingRateRow, Price as PriceRow
+from frab.db.models import Exchange as ExchangeRow, FundingRate as FundingRateRow, Price as PriceRow, Strategy as StrategyRow
 from frab.db.session import init_db, make_session_factory, session_scope
 from frab.engine.loop import EngineLoop, utcnow_ms
 from frab.events.bus import EventBus
 from frab.exchanges.protocol import FundingTick, Quote, WalletKind
+from frab.strategy.two_phase import TwoPhaseParams
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -425,3 +426,84 @@ async def test_save_prices_idempotent_on_duplicate_ts(
     async with session_scope(seeded_db_session_factory) as s:
         rows_after = (await s.execute(select(PriceRow))).scalars().all()
     assert len(rows_after) == 1, "_save_prices must not create duplicate rows on restart"
+
+
+# ─── Fixtures for reload_params tests ────────────────────────────────────────
+
+@pytest.fixture
+async def strategy_db_session_factory(db_session_factory):
+    """Session factory with an exchange + strategy row seeded."""
+    async with session_scope(db_session_factory) as s:
+        s.add(ExchangeRow(
+            name="hyperliquid",
+            funding_interval_h=1,
+            spot_taker_bps=7.0,
+            perp_taker_bps=3.5,
+        ))
+        strat = StrategyRow(
+            name="two_phase_test",
+            version="v2",
+            params_json={
+                "entry_threshold_apr": 0.25,
+                "concurrency_cap": 5,
+            },
+        )
+        s.add(strat)
+        await s.flush()
+    return db_session_factory
+
+
+# ─── 11. _hour_tick calls reload_params with fresh DB params ──────────────────
+
+@pytest.mark.asyncio
+async def test_hour_tick_calls_reload_params_with_db_params(
+    mock_exchange, mock_ledger, strategy_db_session_factory, mocker,
+):
+    """_hour_tick reloads params from DB and calls strategy.reload_params with the
+    fresh TwoPhaseParams before running funding fetch / strategy.on_hour_tick."""
+    mock_strategy = MagicMock()
+    mock_strategy.strategy_id = 1
+    mock_strategy.on_hour_tick = AsyncMock()
+    mock_strategy.reload_params = MagicMock()  # synchronous — reload_params is not async
+
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, strategy_db_session_factory)
+    loop._exchange_id_cache = 1
+    loop._save_funding = AsyncMock()
+
+    now_ms = 1_700_003_600_000
+    await loop._hour_tick(now_ms)
+
+    # reload_params must have been called exactly once
+    mock_strategy.reload_params.assert_called_once()
+    called_params = mock_strategy.reload_params.call_args[0][0]
+    assert isinstance(called_params, TwoPhaseParams)
+    # The DB row has entry_threshold_apr=0.25 and concurrency_cap=5
+    assert called_params.entry_threshold_apr == pytest.approx(0.25)
+    assert called_params.concurrency_cap == 5
+
+    # on_hour_tick still called normally after reload
+    mock_strategy.on_hour_tick.assert_awaited_once_with(now_ms=now_ms)
+
+
+@pytest.mark.asyncio
+async def test_hour_tick_continues_on_reload_params_db_error(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory, mocker,
+):
+    """If _reload_strategy_params_from_db raises, _hour_tick logs and continues
+    (stale params are better than a skipped tick)."""
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, mock_session_factory)
+    loop._exchange_id_cache = 1
+    loop._save_funding = AsyncMock()
+
+    # Patch reload to always raise
+    async def _fail():
+        raise RuntimeError("DB unavailable")
+
+    mocker.patch.object(loop, "_reload_strategy_params_from_db", side_effect=_fail)
+
+    now_ms = 1_700_003_600_000
+    # Must not raise
+    await loop._hour_tick(now_ms)
+
+    # on_hour_tick still called despite reload failure
+    mock_strategy.on_hour_tick.assert_awaited_once_with(now_ms=now_ms)

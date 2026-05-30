@@ -1178,6 +1178,44 @@ async def test_on_hour_tick_calls_watchdog_when_configured(
     mock_entries.assert_awaited_once_with(now_ms=_NOW_MS)
 
 
+# ─── reload_params tests ──────────────────────────────────────────────────────
+
+def test_reload_params_propagates_to_evaluators(session_factory, farb_repo, mocker):
+    """reload_params rebuilds evaluators with new params (object identity changes)."""
+    exchange = _make_exchange()
+    params_v1 = _make_params(entry_threshold_apr=0.10, coins=["BTC", "ETH"])
+    strat = _make_strategy(exchange, farb_repo, session_factory)
+    strat.params = params_v1
+    strat._build_internals(params_v1)
+
+    old_entry_evaluator = strat._entry_evaluator
+    old_exit_evaluator = strat._exit_evaluator
+
+    params_v2 = _make_params(entry_threshold_apr=0.99, coins=["BTC"])
+    strat.reload_params(params_v2)
+
+    assert strat.params == params_v2
+    assert strat._entry_evaluator._params == params_v2
+    assert strat._exit_evaluator._params == params_v2
+    # Evaluators were actually rebuilt — new objects
+    assert strat._entry_evaluator is not old_entry_evaluator
+    assert strat._exit_evaluator is not old_exit_evaluator
+
+
+def test_reload_params_noop_when_same(session_factory, farb_repo):
+    """reload_params with the same params object is a no-op: internals not rebuilt."""
+    exchange = _make_exchange()
+    strat = _make_strategy(exchange, farb_repo, session_factory)
+    params_same = strat.params
+
+    old_entry_evaluator = strat._entry_evaluator
+    strat.reload_params(params_same)
+
+    # No rebuild — object identity preserved
+    assert strat._entry_evaluator is old_entry_evaluator
+    assert strat.params is params_same
+
+
 @pytest.mark.asyncio
 async def test_evaluate_entries_respects_partial_budget(
     session_factory, farb_repo, strategy_id, exchange_id

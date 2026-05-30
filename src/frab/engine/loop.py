@@ -121,6 +121,15 @@ class EngineLoop:
             pass
         logger.info("EngineLoop stopped")
 
+    async def _reload_strategy_params_from_db(self) -> None:
+        """Read fresh params_json from DB and rebuild strategy internals if changed."""
+        async with session_scope(self._sf) as s:
+            row = (await s.execute(
+                select(Strategy).where(Strategy.id == self._strategy.strategy_id)
+            )).scalar_one()
+            new_params = TwoPhaseParams.from_dict(dict(row.params_json))
+        self._strategy.reload_params(new_params)
+
     async def force_hour_tick(self, *, strategy_id: int, now_ms: int) -> None:
         """Force an immediate hour tick: reload params from DB, run on_hour_tick.
 
@@ -129,11 +138,7 @@ class EngineLoop:
         if self._strategy.strategy_id != strategy_id:
             raise StrategyIdMismatch(self._strategy.strategy_id, strategy_id)
 
-        async with session_scope(self._sf) as s:
-            row = (await s.execute(
-                select(Strategy).where(Strategy.id == strategy_id)
-            )).scalar_one()
-            self._strategy.params = TwoPhaseParams.from_dict(dict(row.params_json))
+        await self._reload_strategy_params_from_db()
 
         self._strategy.force_entry_cooldown_bypass = True
         try:
@@ -211,6 +216,11 @@ class EngineLoop:
 
     async def _hour_tick(self, now_ms: int) -> None:
         """Fetch funding → persist → refresh wallet snapshots → strategy.on_hour_tick."""
+        try:
+            await self._reload_strategy_params_from_db()
+        except Exception:
+            logger.exception("reload_params_failed")
+
         funding_ticks = await self._fetch_funding(now_ms)
         if funding_ticks:
             await self._save_funding(funding_ticks, now_ms)

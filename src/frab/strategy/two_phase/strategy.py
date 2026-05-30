@@ -60,7 +60,6 @@ class TwoPhaseStrategy:
         self.exchange = exchange
         self.farb_repo = farb_repo
         self._sf = session_factory
-        self.params = params
         self._settings = settings
         self._bus = event_bus
         self._margin_watchdog = margin_watchdog
@@ -68,45 +67,63 @@ class TwoPhaseStrategy:
         # single hour_tick invocation. The API resets it after _hour_tick returns.
         self.force_entry_cooldown_bypass = False
 
+        self.params = params
+        self._build_internals(params)
+
+    def _build_internals(self, params: TwoPhaseParams) -> None:
+        """Construct all params-dependent components and wire them onto self.
+
+        Called from __init__ and reload_params. Does NOT touch strategy_id,
+        exchange, farb_repo, _sf, _settings, _bus, _margin_watchdog, or
+        force_entry_cooldown_bypass — those are params-independent.
+        """
         signal_computer = SignalComputer(
-            exchange_name=exchange.name,
-            session_factory=session_factory,
+            exchange_name=self.exchange.name,
+            session_factory=self._sf,
             signal_window_hours=params.signal_window_hours,
         )
+        self._signal_computer = signal_computer
         self._entry_evaluator = EntryEvaluator(
-            strategy_id=strategy_id,
-            farb_repo=farb_repo,
+            strategy_id=self.strategy_id,
+            farb_repo=self.farb_repo,
             params=params,
             signal_computer=signal_computer,
         )
         self._exit_evaluator = ExitEvaluator(
-            strategy_id=strategy_id,
-            farb_repo=farb_repo,
+            strategy_id=self.strategy_id,
+            farb_repo=self.farb_repo,
             params=params,
             signal_computer=signal_computer,
-            settings=settings,
+            settings=self._settings,
         )
         self._funding_accrual = FundingAccrual(
-            strategy_id=strategy_id,
-            exchange=exchange,
-            farb_repo=farb_repo,
-            session_factory=session_factory,
+            strategy_id=self.strategy_id,
+            exchange=self.exchange,
+            farb_repo=self.farb_repo,
+            session_factory=self._sf,
             signal_computer=signal_computer,
         )
         self._rollback_action = RollbackAction(
-            exchange=exchange,
-            session_factory=session_factory,
+            exchange=self.exchange,
+            session_factory=self._sf,
             params=params,
         )
         ctx = StrategyContext(
-            exchange=exchange,
-            farb_repo=farb_repo,
+            exchange=self.exchange,
+            farb_repo=self.farb_repo,
             params=params,
-            session_factory=session_factory,
-            settings=settings,
-            event_bus=event_bus,
+            session_factory=self._sf,
+            settings=self._settings,
+            event_bus=self._bus,
         )
         self._state_machine = StateMachine({cls.state: cls(ctx) for cls in STATE_CLASSES})
+
+    def reload_params(self, new_params: TwoPhaseParams) -> None:
+        """Rebuild all params-dependent internals with new_params. Idempotent."""
+        if new_params == self.params:
+            return  # no-op fast path; TwoPhaseParams is frozen dataclass so == is structural
+        self.params = new_params
+        self._build_internals(new_params)
 
     # ── Public entry points ───────────────────────────────────────────────────
 
