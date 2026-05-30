@@ -1125,6 +1125,60 @@ async def test_on_hour_tick_active_runs_all_phases(
 
 
 @pytest.mark.asyncio
+async def test_on_hour_tick_calls_watchdog_when_configured(
+    session_factory, farb_repo, strategy_id, mocker
+):
+    """When margin_watchdog is configured, run_check is called once between accrual and exits."""
+    from frab.engine.margin_watchdog import WatchdogReport
+    from frab.engine.margin_manager import AccountAssessment, MarginStatus
+
+    exchange = _make_exchange()
+    params = _make_params()
+    settings = MagicMock(spec=Settings)
+    from frab.constants import CoinMarginSpec
+    settings.get_coin_spec.return_value = CoinMarginSpec(leverage=5, maint_ratio=0.025)
+
+    mock_watchdog = mocker.AsyncMock()
+    # Build a minimal HEALTHY AccountAssessment for the report
+    healthy_assessment = AccountAssessment(
+        account_ratio=10.0,
+        account_equity_usdc=1000.0,
+        total_maintenance_usdc=100.0,
+        account_status=MarginStatus.HEALTHY,
+        per_fp=[],
+        weakest_fp_id=None,
+    )
+    mock_watchdog.run_check.return_value = WatchdogReport(
+        assessment=healthy_assessment,
+        actions_taken=[],
+    )
+
+    strat = TwoPhaseStrategy(
+        strategy_id=strategy_id,
+        exchange=exchange,
+        farb_repo=farb_repo,
+        session_factory=session_factory,
+        params=params,
+        settings=settings,
+        margin_watchdog=mock_watchdog,
+    )
+    strat.strategy_id = strategy_id
+
+    mock_accrue = mocker.patch.object(strat, "_accrue_funding")
+    mock_exits = mocker.patch.object(strat, "_evaluate_exits")
+    mock_entries = mocker.patch.object(strat, "_evaluate_entries")
+
+    await strat.on_hour_tick(now_ms=_NOW_MS)
+
+    # run_check called exactly once with now_ms=_NOW_MS
+    mock_watchdog.run_check.assert_awaited_once_with(now_ms=_NOW_MS)
+    # Normal phases still called
+    mock_accrue.assert_awaited_once_with(now_ms=_NOW_MS)
+    mock_exits.assert_awaited_once_with(now_ms=_NOW_MS)
+    mock_entries.assert_awaited_once_with(now_ms=_NOW_MS)
+
+
+@pytest.mark.asyncio
 async def test_evaluate_entries_respects_partial_budget(
     session_factory, farb_repo, strategy_id, exchange_id
 ):

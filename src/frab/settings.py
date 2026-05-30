@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     margin_buffer_x: float = Field(default=3.0, ge=1.0, le=10.0)
     # margin_ratio threshold below which a top-up triggers.
     top_up_trigger: float = Field(default=2.0)
+    # Account-wide ratio at or below which weakest FP is force-closed.
+    forced_close_trigger: float = Field(default=1.5)
     # Target margin_ratio after top-up.
     healthy_ratio: float = Field(default=3.0)
 
@@ -90,6 +92,11 @@ class Settings(BaseSettings):
         if self.top_up_trigger >= self.healthy_ratio:
             raise ValueError(
                 f"top_up_trigger ({self.top_up_trigger}) must be < healthy_ratio ({self.healthy_ratio})"
+            )
+        if not (1.0 < self.forced_close_trigger < self.top_up_trigger <= self.healthy_ratio):
+            raise ValueError(
+                f"thresholds must satisfy 1.0 < forced_close_trigger ({self.forced_close_trigger}) "
+                f"< top_up_trigger ({self.top_up_trigger}) <= healthy_ratio ({self.healthy_ratio})"
             )
         return self
 

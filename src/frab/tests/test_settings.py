@@ -211,3 +211,31 @@ def test_b1_budget_cap_zero_or_negative_raises():
         Settings(budget_cap_usd=0.0, **_CREDS)
     with pytest.raises(ValidationError):
         Settings(budget_cap_usd=-100.0, **_CREDS)
+
+
+# ---------------------------------------------------------------------------
+# PR4 forced_close_trigger tests
+# ---------------------------------------------------------------------------
+
+def test_forced_close_trigger_default_is_1_5():
+    """forced_close_trigger default must be 1.5."""
+    s = Settings(**_CREDS)
+    assert s.forced_close_trigger == 1.5
+
+
+def test_forced_close_trigger_at_1_0_or_below_raises():
+    """forced_close_trigger <= 1.0 must fail validation."""
+    with pytest.raises(ValidationError):
+        Settings(forced_close_trigger=1.0, **_CREDS)
+    with pytest.raises(ValidationError):
+        Settings(forced_close_trigger=0.5, **_CREDS)
+
+
+def test_forced_close_trigger_above_top_up_raises():
+    """forced_close_trigger >= top_up_trigger must fail validation."""
+    with pytest.raises(ValidationError):
+        # forced_close_trigger=2.5, top_up_trigger=2.0, healthy_ratio=3.0 → violates invariant
+        Settings(forced_close_trigger=2.5, top_up_trigger=2.0, healthy_ratio=3.0, **_CREDS)
+    with pytest.raises(ValidationError):
+        # forced_close_trigger == top_up_trigger
+        Settings(forced_close_trigger=2.0, top_up_trigger=2.0, healthy_ratio=3.0, **_CREDS)

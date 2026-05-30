@@ -145,6 +145,24 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         # ── Build service layer ───────────────────────────────────────────
         farb_repo = FarbRepo(session_factory)
         ledger = Ledger(session_factory)
+
+        from frab.engine.margin_manager import MarginManager
+        from frab.engine.margin_watchdog import MarginWatchdog
+
+        margin_mgr = MarginManager(
+            top_up_trigger=settings.top_up_trigger,
+            forced_close_trigger=settings.forced_close_trigger,
+            healthy_ratio=settings.healthy_ratio,
+        )
+        margin_watchdog = MarginWatchdog(
+            strategy_id=strategy_id,
+            exchange=exchange,
+            farb_repo=farb_repo,
+            margin_manager=margin_mgr,
+            settings=settings,
+            event_bus=bus,
+        )
+
         strategy = TwoPhaseStrategy(
             strategy_id=strategy_id,
             exchange=exchange,
@@ -153,6 +171,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             params=params,
             settings=settings,
             event_bus=bus,
+            margin_watchdog=margin_watchdog,
         )
 
         # ── Build and start engine loop ───────────────────────────────────
@@ -180,6 +199,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         app.state.ledger = ledger
         app.state.strategy = strategy
         app.state.engine_loop = engine_loop
+        app.state.margin_watchdog = margin_watchdog
 
         try:
             yield

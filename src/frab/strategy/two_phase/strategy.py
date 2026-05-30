@@ -32,6 +32,7 @@ from frab.strategy.two_phase.evaluators.entry import EntryEvaluator
 from frab.strategy.two_phase.evaluators.exit import ExitEvaluator
 from frab.strategy.two_phase.actions.funding_accrual import FundingAccrual
 from frab.strategy.two_phase.actions.rollback import RollbackAction
+from frab.engine.margin_watchdog import MarginWatchdog
 
 
 # ─── Strategy ────────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ class TwoPhaseStrategy:
         params: TwoPhaseParams,
         settings: Settings,
         event_bus: EventBus | None = None,
+        margin_watchdog: MarginWatchdog | None = None,
     ) -> None:
         self.strategy_id = strategy_id
         self.exchange = exchange
@@ -61,6 +63,7 @@ class TwoPhaseStrategy:
         self.params = params
         self._settings = settings
         self._bus = event_bus
+        self._margin_watchdog = margin_watchdog
         # Set by the force-tick API to bypass the same-hour entry cooldown on a
         # single hour_tick invocation. The API resets it after _hour_tick returns.
         self.force_entry_cooldown_bypass = False
@@ -125,6 +128,13 @@ class TwoPhaseStrategy:
             return
 
         await self._accrue_funding(now_ms=now_ms)
+        if self._margin_watchdog is not None:
+            try:
+                report = await self._margin_watchdog.run_check(now_ms=now_ms)
+                if report.actions_taken:
+                    _pkg.logger.info("margin_watchdog actions: %s", report.actions_taken)
+            except Exception:
+                _pkg.logger.exception("margin_watchdog crashed; skipping this tick")
         await self._evaluate_exits(now_ms=now_ms)
         await self._evaluate_entries(now_ms=now_ms)
 
