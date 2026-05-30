@@ -38,7 +38,7 @@ from frab.db.models import (
     WalletSnapshot as WalletSnapshotRow,
 )
 from frab.db.session import session_scope
-from frab.domain.enums import Instrument, PositionStatus, Side
+from frab.domain.enums import FarbState, Instrument, PositionStatus, Side
 from frab.exchanges.protocol import Quote
 
 logger = logging.getLogger(__name__)
@@ -374,13 +374,17 @@ class Ledger:
         session: AsyncSession,
         strategy_id: int,
     ) -> float:
-        """SUM of funding_accruals.amount for all positions linked to
-        this strategy (via positions.farb_position_id → farb_positions.strategy_id)."""
+        """SUM of funding_accruals.amount for CURRENTLY OPEN positions.
+        Closed positions' funding stays out of the live counter (it has already
+        settled into wallet cash)."""
         stmt = (
             select(func.coalesce(func.sum(FundingAccrualRow.amount), 0.0))
             .join(PositionRow, FundingAccrualRow.position_id == PositionRow.id)
             .join(FarbPositionRow, PositionRow.farb_position_id == FarbPositionRow.id)
-            .where(FarbPositionRow.strategy_id == strategy_id)
+            .where(
+                FarbPositionRow.strategy_id == strategy_id,
+                FarbPositionRow.state == FarbState.OPEN.name,
+            )
         )
         result = await session.execute(stmt)
         return float(result.scalar())
@@ -390,12 +394,17 @@ class Ledger:
         session: AsyncSession,
         strategy_id: int,
     ) -> float:
-        """SUM of fills.fee for all positions linked to this strategy."""
+        """SUM of fills.fee for CURRENTLY OPEN positions only.
+        Closed positions' fees stay out of the live counter (they've already
+        settled into wallet cash via realized PnL)."""
         stmt = (
             select(func.coalesce(func.sum(FillRow.fee), 0.0))
             .join(PositionRow, FillRow.position_id == PositionRow.id)
             .join(FarbPositionRow, PositionRow.farb_position_id == FarbPositionRow.id)
-            .where(FarbPositionRow.strategy_id == strategy_id)
+            .where(
+                FarbPositionRow.strategy_id == strategy_id,
+                FarbPositionRow.state == FarbState.OPEN.name,
+            )
         )
         result = await session.execute(stmt)
         return float(result.scalar())
