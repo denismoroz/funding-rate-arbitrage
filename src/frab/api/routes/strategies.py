@@ -7,9 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from frab.api.deps import get_session
+from frab.api.deps import get_session, get_strategy_or_404
 from frab.db.models import Strategy
-from frab.db.session import session_scope
+from frab.engine.loop import StrategyIdMismatch
 from frab.events.bus import Event
 from frab.strategy.two_phase import TwoPhaseParams
 
@@ -42,13 +42,8 @@ async def list_strategies(session: AsyncSession = Depends(get_session)) -> list[
 
 @router.get("/{strategy_id}")
 async def get_strategy(
-    strategy_id: int,
-    session: AsyncSession = Depends(get_session),
+    strategy: Strategy = Depends(get_strategy_or_404),
 ) -> dict:
-    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
-    strategy = result.scalar_one_or_none()
-    if strategy is None:
-        raise HTTPException(status_code=404, detail="Strategy not found")
     return {
         "id": strategy.id,
         "name": strategy.name,
@@ -62,13 +57,8 @@ async def get_strategy(
 
 @router.get("/{strategy_id}/params")
 async def get_strategy_params(
-    strategy_id: int,
-    session: AsyncSession = Depends(get_session),
+    strategy: Strategy = Depends(get_strategy_or_404),
 ) -> dict:
-    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
-    strategy = result.scalar_one_or_none()
-    if strategy is None:
-        raise HTTPException(status_code=404, detail="Strategy not found")
     return {
         "strategy_name": strategy.name,
         "version": strategy.version,
@@ -79,8 +69,8 @@ async def get_strategy_params(
 
 @router.patch("/{strategy_id}/params")
 async def patch_strategy_params(
-    strategy_id: int,
     body: PatchParamsBody,
+    strategy: Strategy = Depends(get_strategy_or_404),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Merge partial params dict onto the strategy's params_json.
@@ -88,11 +78,6 @@ async def patch_strategy_params(
     Keys must be valid TwoPhaseParams field names. Unknown keys → 422.
     Returns the updated params_json plus restart_required=true.
     """
-    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
-    strategy = result.scalar_one_or_none()
-    if strategy is None:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-
     unknown_keys = sorted(set(body.params.keys()) - _VALID_PARAM_KEYS)
     if unknown_keys:
         raise HTTPException(
@@ -114,13 +99,12 @@ async def patch_strategy_params(
 
 
 @router.post("/{strategy_id}/pause")
-async def pause_strategy(strategy_id: int, request: Request, session: AsyncSession = Depends(get_session)) -> dict:
+async def pause_strategy(
+    request: Request,
+    strategy: Strategy = Depends(get_strategy_or_404),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
     """Set strategy status to 'paused'. Idempotent."""
-    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
-    strategy = result.scalar_one_or_none()
-    if strategy is None:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-
     strategy.status = "paused"
     session.add(strategy)
     ts_ms = int(time.time() * 1000)
@@ -132,20 +116,19 @@ async def pause_strategy(strategy_id: int, request: Request, session: AsyncSessi
             level="INFO",
             source="api",
             kind="strategy.paused",
-            message=f"strategy {strategy_id} paused",
+            message=f"strategy {strategy.id} paused",
         ))
 
-    return {"id": strategy_id, "status": "paused", "ts_ms": ts_ms}
+    return {"id": strategy.id, "status": "paused", "ts_ms": ts_ms}
 
 
 @router.post("/{strategy_id}/resume")
-async def resume_strategy(strategy_id: int, request: Request, session: AsyncSession = Depends(get_session)) -> dict:
+async def resume_strategy(
+    request: Request,
+    strategy: Strategy = Depends(get_strategy_or_404),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
     """Set strategy status to 'active'. Idempotent."""
-    result = await session.execute(select(Strategy).where(Strategy.id == strategy_id))
-    strategy = result.scalar_one_or_none()
-    if strategy is None:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-
     strategy.status = "active"
     session.add(strategy)
     ts_ms = int(time.time() * 1000)
@@ -157,43 +140,20 @@ async def resume_strategy(strategy_id: int, request: Request, session: AsyncSess
             level="INFO",
             source="api",
             kind="strategy.resumed",
-            message=f"strategy {strategy_id} resumed",
+            message=f"strategy {strategy.id} resumed",
         ))
 
-    return {"id": strategy_id, "status": "active", "ts_ms": ts_ms}
+    return {"id": strategy.id, "status": "active", "ts_ms": ts_ms}
 
 
 @router.post("/{strategy_id}/force-tick")
 async def force_hour_tick(strategy_id: int, request: Request) -> dict:
-    """Force an immediate hour-tick on the running engine: fetch funding,
-    refresh wallet snapshots, run strategy.on_hour_tick. Useful for manual
-    testing without waiting for the next hour boundary."""
-    import time
-
     engine_loop = getattr(request.app.state, "engine_loop", None)
     if engine_loop is None:
         raise HTTPException(status_code=503, detail="Engine not configured")
-
-    running_strategy_id = engine_loop._strategy.strategy_id
-    if running_strategy_id != strategy_id:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"strategy_id mismatch: engine is running id={running_strategy_id}, "
-                f"got id={strategy_id}"
-            ),
-        )
-
-    # Reload params from DB so PATCH /params takes effect without restart.
-    session_factory = request.app.state.session_factory
-    async with session_scope(session_factory) as s:
-        row = (await s.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
-        engine_loop._strategy.params = TwoPhaseParams.from_dict(dict(row.params_json))
-
     now_ms = int(time.time() * 1000)
-    engine_loop._strategy.force_entry_cooldown_bypass = True
     try:
-        await engine_loop._hour_tick(now_ms)
-    finally:
-        engine_loop._strategy.force_entry_cooldown_bypass = False
+        await engine_loop.force_hour_tick(strategy_id=strategy_id, now_ms=now_ms)
+    except StrategyIdMismatch as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", "ts_ms": now_ms, "message": "hour tick forced (params reloaded)"}

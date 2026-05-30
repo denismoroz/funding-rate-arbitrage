@@ -259,23 +259,23 @@ async def test_direct_list_strategies_returns_data(session_factory):
 
 
 async def test_direct_get_strategy_found(session_factory):
-    from frab.api.routes.strategies import get_strategy
+    from frab.api.deps import get_strategy_or_404
     async with session_scope(session_factory) as s:
         strat = Strategy(name="direct_b", version="v1", params_json={}, status="idle")
         s.add(strat)
         await s.flush()
         sid = strat.id
     async with session_scope(session_factory) as session:
-        result = await get_strategy(strategy_id=sid, session=session)
-    assert result["name"] == "direct_b"
+        result = await get_strategy_or_404(strategy_id=sid, session=session)
+    assert result.name == "direct_b"
 
 
 async def test_direct_get_strategy_not_found(session_factory):
     from fastapi import HTTPException
-    from frab.api.routes.strategies import get_strategy
+    from frab.api.deps import get_strategy_or_404
     async with session_scope(session_factory) as session:
         try:
-            await get_strategy(strategy_id=99999, session=session)
+            await get_strategy_or_404(strategy_id=99999, session=session)
             assert False, "should have raised"
         except HTTPException as e:
             assert e.status_code == 404

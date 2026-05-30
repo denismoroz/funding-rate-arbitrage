@@ -23,17 +23,24 @@ from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from frab.db.models import Exchange as ExchangeRow, FundingRate as FundingRateRow, Price as PriceRow
+from frab.db.models import Exchange as ExchangeRow, FundingRate as FundingRateRow, Price as PriceRow, Strategy
 from frab.db.session import session_scope
 from frab.events.bus import Event, EventBus
 from frab.exchanges.protocol import Exchange, WalletKind
 from frab.ledger.ledger import Ledger
 from frab.repo.farb_repo import FarbRepo
-from frab.strategy.two_phase import TwoPhaseStrategy
+from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 
 logger = logging.getLogger(__name__)
 
 _STOP_TIMEOUT_S = 30.0
+
+
+class StrategyIdMismatch(Exception):
+    def __init__(self, expected: int, got: int) -> None:
+        super().__init__(f"strategy_id mismatch: engine is running id={expected}, got id={got}")
+        self.expected = expected
+        self.got = got
 
 
 def utcnow_ms() -> int:
@@ -113,6 +120,26 @@ class EngineLoop:
         except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
         logger.info("EngineLoop stopped")
+
+    async def force_hour_tick(self, *, strategy_id: int, now_ms: int) -> None:
+        """Force an immediate hour tick: reload params from DB, run on_hour_tick.
+
+        Raises StrategyIdMismatch if strategy_id doesn't match the running strategy.
+        """
+        if self._strategy.strategy_id != strategy_id:
+            raise StrategyIdMismatch(self._strategy.strategy_id, strategy_id)
+
+        async with session_scope(self._sf) as s:
+            row = (await s.execute(
+                select(Strategy).where(Strategy.id == strategy_id)
+            )).scalar_one()
+            self._strategy.params = TwoPhaseParams.from_dict(dict(row.params_json))
+
+        self._strategy.force_entry_cooldown_bypass = True
+        try:
+            await self._hour_tick(now_ms)
+        finally:
+            self._strategy.force_entry_cooldown_bypass = False
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
