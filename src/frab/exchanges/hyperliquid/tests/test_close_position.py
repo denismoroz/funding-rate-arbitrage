@@ -18,7 +18,7 @@ from frab.exchanges.hyperliquid.actions.close_position import (
 )
 from frab.exchanges.hyperliquid.client import HLClient
 from frab.exchanges.hyperliquid.symbols import HLSymbols
-from frab.exchanges.hyperliquid.wire import HLFillRecord, HLOrderResponse, HLOrderStatus, HLUserFill
+from frab.exchanges.hyperliquid.wire import HLFillRecord, HLOrderResponse, HLOrderStatus, HLSpotBalance, HLSpotState, HLUserFill
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,9 @@ async def session_factory():
 
 @pytest.fixture
 def mock_client(mocker):
-    return mocker.AsyncMock(spec=HLClient)
+    client = mocker.AsyncMock(spec=HLClient)
+    client.spot_user_state.return_value = HLSpotState(balances=[])
+    return client
 
 
 @pytest.fixture
@@ -605,3 +607,60 @@ async def test_spot_writes_slippage_bps_from_final_slippage(session_factory, moc
     async with session_factory() as s:
         fill = (await s.execute(select(DBFill))).scalar_one()
     assert fill.slippage_bps == pytest.approx(final_slippage * 1e4)
+
+
+# ---------------------------------------------------------------------------
+# Dust-sweep tests
+# ---------------------------------------------------------------------------
+
+async def test_close_spot_sweeps_dust_when_balance_exceeds_pos_qty(session_factory, mock_client, symbols):
+    # pos.qty=0.00016 BTC, HL balance=0.00017 (dust from prior partial fill)
+    pos = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.00016, entry_price=60000.0,
+    )
+    mock_client.spot_user_state.return_value = HLSpotState(
+        balances=[HLSpotBalance(coin="UBTC", total=0.00017, hold=0.0)]
+    )
+    mock_client.market_open.return_value = _filled_response(0.00017, 60000.0, fee_usdc=0.01)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    # market_open called with the larger dust-swept qty
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.00017)
+    async with session_factory() as s:
+        fill = (await s.execute(select(DBFill))).scalar_one()
+    assert fill.qty == pytest.approx(0.00017)
+
+
+async def test_close_spot_uses_pos_qty_when_balance_lower(session_factory, mock_client, symbols):
+    # HL balance=0.00010 < pos.qty=0.00016 → target = max(0.00016, 0.00010) = 0.00016
+    pos = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.00016, entry_price=60000.0,
+    )
+    mock_client.spot_user_state.return_value = HLSpotState(
+        balances=[HLSpotBalance(coin="UBTC", total=0.00010, hold=0.0)]
+    )
+    mock_client.market_open.return_value = _filled_response(0.00016, 60000.0, fee_usdc=0.01)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.00016)
+
+
+async def test_close_spot_falls_back_when_address_none(session_factory, mock_client, symbols):
+    # address=None → skip balance lookup, use pos.qty directly
+    pos = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.00016, entry_price=60000.0,
+    )
+    mock_client.market_open.return_value = _filled_response(0.00016, 60000.0, fee_usdc=0.01)
+    action = make_action(session_factory, mock_client, symbols, address=None)
+
+    await action.execute(pos)
+
+    mock_client.spot_user_state.assert_not_called()
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.00016)

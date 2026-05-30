@@ -52,13 +52,31 @@ class ClosePositionAction(HLAction):
 
     async def _close_spot(self, pos: Position, now_ms: int) -> Position:
         spot_name = self._symbols.make_spot_name(pos.coin)
+
+        # Determine target qty: use actual HL balance to sweep accumulated dust.
+        raw_balance = 0.0
+        if self._address is not None:
+            hl_coin = self._symbols.spot_token_map.get(pos.coin, pos.coin)
+            state = await self._client.spot_user_state(self._address)
+            match = next((b for b in state.balances if b.coin == hl_coin), None)
+            raw_balance = float(match.total) if match is not None else 0.0
+            rounded = await self._symbols.round_qty(pos.coin, raw_balance)
+            target_qty = max(pos.qty, rounded)
+            if target_qty != pos.qty:
+                logger.info(
+                    "close_spot %s sweeping dust: pos.qty=%s hl_balance=%s target=%s",
+                    pos.coin, pos.qty, raw_balance, target_qty,
+                )
+        else:
+            target_qty = pos.qty
+
         qty_filled_total = 0.0
         fee_total = 0.0
         fill_parts: list[tuple[float, float]] = []
-        remaining_qty = pos.qty
+        remaining_qty = target_qty
         current_slippage = self._slippage
         residue_notional = 0.0
-        remaining = pos.qty
+        remaining = target_qty
         attempts = 0
 
         for attempt in range(MAX_CLOSE_RETRIES):
@@ -73,7 +91,7 @@ class ClosePositionAction(HLAction):
             fee_total += fee_i
             fill_parts.append((qty_filled_i, fill_price_i))
 
-            remaining = pos.qty - qty_filled_total
+            remaining = target_qty - qty_filled_total
             residue_notional = remaining * fill_price_i
 
             if remaining <= 0 or residue_notional < MIN_SPOT_RESIDUE_NOTIONAL_USDC:
