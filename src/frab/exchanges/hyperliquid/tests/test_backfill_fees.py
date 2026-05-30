@@ -401,11 +401,19 @@ async def test_min_ts_window_calculation(session_factory, mock_client):
         session_factory, coin="BTC", instrument=Instrument.PERP, side=Side.LONG,
         qty=1.0, fee=0.0, ts_ms=ts1,
     )
-    # Second fill for same strategy: need a new position
+    # Second fill for same strategy: need a new farb_position + position
     async with session_factory() as s:
         exc_id = await s.scalar(select(DBExchange.id).where(DBExchange.name == "hyperliquid"))
         strat_id = await s.scalar(select(DBStrategy.id).limit(1))
-        farb_id = await s.scalar(select(DBFarbPosition.id).limit(1))
+        farb2 = DBFarbPosition(
+            strategy_id=strat_id,
+            coin="ETH",
+            state="open",
+            state_data={},
+            opened_at=ts2 - 3_600_000,
+        )
+        s.add(farb2)
+        await s.flush()
         pos2 = DBPosition(
             exchange_id=exc_id,
             coin="ETH",
@@ -416,7 +424,7 @@ async def test_min_ts_window_calculation(session_factory, mock_client):
             opened_at=ts2 - 3_600_000,
             closed_at=None,
             status=PositionStatus.OPEN.value,
-            farb_position_id=farb_id,
+            farb_position_id=farb2.id,
         )
         s.add(pos2)
         await s.flush()
