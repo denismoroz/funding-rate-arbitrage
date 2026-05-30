@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any, Callable, Literal
+from typing import Any, Callable, cast, Literal, TypeVar
 
 import httpx
 from eth_account import Account
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import Exchange as DBExchange
 from frab.domain import Position
-from frab.exchanges.hyperliquid.actions._base import HLActionContext
+from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext, UnavailableAction
 from frab.exchanges.hyperliquid.actions.account_snapshot import AccountSnapshotAction
 from frab.exchanges.hyperliquid.actions.backfill_fees import BackfillFeesAction
 from frab.exchanges.hyperliquid.actions.close_position import ClosePositionAction
@@ -51,6 +51,7 @@ __all__ = ["HLExchange", "HLTransferError", "PartialFillError", "BRIDGE_TOKEN_BL
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 
+T = TypeVar("T", bound=HLAction)
 
 
 def _base_url(network: Literal["testnet", "mainnet"]) -> str:
@@ -142,19 +143,19 @@ class HLExchange:
             partial_fill_tolerance=self._partial_fill_tolerance,
         )
 
-        def _make(cls):
+        def _make(cls: type[T]) -> T | UnavailableAction:
             if cls.requires_session and ctx.session_factory is None:
-                return None
+                return UnavailableAction(cls.__name__)
             return cls(ctx)
 
-        self._open_action: OpenPositionAction | None = _make(OpenPositionAction)
-        self._close_action: ClosePositionAction | None = _make(ClosePositionAction)
-        self._load_positions_action: LoadOpenPositionsAction | None = _make(LoadOpenPositionsAction)
-        self._load_funding_action: LoadAccruedFundingAction | None = _make(LoadAccruedFundingAction)
-        self._get_wallet_action: GetWalletAction | None = _make(GetWalletAction)
-        self._backfill_fees_action: BackfillFeesAction | None = _make(BackfillFeesAction)
-        self._transfer_action: TransferAction = _make(TransferAction)  # requires_session=False
-        self._account_snapshot_action: AccountSnapshotAction = _make(AccountSnapshotAction)  # requires_session=False
+        self._open_action: OpenPositionAction | UnavailableAction = _make(OpenPositionAction)
+        self._close_action: ClosePositionAction | UnavailableAction = _make(ClosePositionAction)
+        self._load_positions_action: LoadOpenPositionsAction | UnavailableAction = _make(LoadOpenPositionsAction)
+        self._load_funding_action: LoadAccruedFundingAction | UnavailableAction = _make(LoadAccruedFundingAction)
+        self._get_wallet_action: GetWalletAction | UnavailableAction = _make(GetWalletAction)
+        self._backfill_fees_action: BackfillFeesAction | UnavailableAction = _make(BackfillFeesAction)
+        self._transfer_action: TransferAction = cast(TransferAction, _make(TransferAction))
+        self._account_snapshot_action: AccountSnapshotAction = cast(AccountSnapshotAction, _make(AccountSnapshotAction))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -249,50 +250,26 @@ class HLExchange:
             ))
         return specs
 
-    # ------------------------------------------------------------------
-    # Protocol: open_position
-    # ------------------------------------------------------------------
-
     async def open_position(self, req: OpenRequest) -> Position:
         """Open a position on HL and write it to DB. Returns domain Position."""
-        if self._open_action is None:
-            raise RuntimeError("session_factory required for open_position")
         return await self._open_action.execute(req)
-
-    # ------------------------------------------------------------------
-    # Protocol: close_position
-    # ------------------------------------------------------------------
 
     async def close_position(self, pos: Position) -> Position:
         """Close a position on HL and update DB. Returns closed Position."""
-        if self._close_action is None:
-            raise RuntimeError("session_factory required for close_position")
         return await self._close_action.execute(pos)
-
-    # ------------------------------------------------------------------
-    # Protocol: get_open_positions
-    # ------------------------------------------------------------------
 
     async def get_open_positions(self) -> list[Position]:
         """Fetch open positions from HL, reconcile with DB, return canonical set.
 
         Out-of-band positions are logged at WARN but not auto-corrected.
         """
-        if self._load_positions_action is None:
-            raise RuntimeError("session_factory required for get_open_positions")
         return await self._load_positions_action.execute()
-
-    # ------------------------------------------------------------------
-    # Protocol: get_accrued_funding
-    # ------------------------------------------------------------------
 
     async def get_accrued_funding(self, pos: Position) -> float:
         """Fetch HL funding history since pos.opened_at, write accruals to DB.
 
         Idempotent: skips rows that already exist by (position_id, ts_ms).
         """
-        if self._load_funding_action is None:
-            raise RuntimeError("session_factory required for get_accrued_funding")
         return await self._load_funding_action.execute(pos)
 
     async def get_spot_mids_by_coin(self) -> dict[str, float]:
@@ -303,29 +280,13 @@ class HLExchange:
         """Return {coin: unrealizedPnl_USDC} from HL assetPositions."""
         return await self._account_snapshot_action.get_perp_unrealized_by_coin()
 
-    # ------------------------------------------------------------------
-    # Fees from HL userFills (authoritative)
-    # ------------------------------------------------------------------
-
     async def backfill_fill_fees(self, strategy_id: int) -> int:
         """Update DB fills whose fee == 0 with the real fee from HL userFills."""
-        if self._backfill_fees_action is None:
-            raise RuntimeError("session_factory required for backfill_fill_fees")
         return await self._backfill_fees_action.execute(strategy_id)
-
-    # ------------------------------------------------------------------
-    # Protocol: get_wallet
-    # ------------------------------------------------------------------
 
     async def get_wallet(self, coin: str, kind: WalletKind) -> float:
         """Get free balance for (coin, kind), write wallet_snapshot, return balance."""
-        if self._get_wallet_action is None:
-            raise RuntimeError("session_factory required for get_wallet")
         return await self._get_wallet_action.execute(coin, kind)
-
-    # ------------------------------------------------------------------
-    # Protocol: transfer
-    # ------------------------------------------------------------------
 
     async def transfer(
         self,
