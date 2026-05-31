@@ -123,12 +123,39 @@ async def test_get_equity_returns_snapshots_for_strategy(api_client, session_fac
             ))
         s1_id = s1.id
 
-    resp = await api_client.get(f"/api/equity?strategy_id={s1_id}")
+    resp = await api_client.get(f"/api/equity?strategy_id={s1_id}&limit=3")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 3
-    # ordered by ts_ms asc
+     # ordered by ts_ms asc
     assert data[0]["ts_ms"] < data[1]["ts_ms"] < data[2]["ts_ms"]
+
+
+async def test_get_equity_limit_returns_most_recent(api_client, session_factory):
+     # Insert 10 records total; limit=3 should return the 3 most recent
+     # still in ascending ts_ms order.
+     async with session_scope(session_factory) as s:
+         stg = Strategy(name="s2", version="v1", params_json={}, status="idle")
+         s.add(stg)
+         await s.flush()
+         sid = stg.id
+         for i in range(10):
+             s.add(EquitySnapshot(
+                 strategy_id=sid, ts_ms=_ms(i),
+                 total_equity=1000.0 + i, cash=500.0, spot_value=0.0,
+                 perp_unrealized=0.0, perp_realized_cum=0.0,
+                 funding_cum=0.0, fees_cum=0.0,
+              ))
+
+     resp = await api_client.get(f"/api/equity?strategy_id={sid}&limit=3")
+     assert resp.status_code == 200
+     data = resp.json()
+     assert len(data) == 3
+      # ascending order within the slice
+     assert data[0]["ts_ms"] < data[1]["ts_ms"] < data[2]["ts_ms"]
+     # should be the 3 most recent (indices 7, 8, 9), not the oldest (0, 1, 2)
+     assert data[0]["ts_ms"] == _ms(7)
+     assert data[2]["ts_ms"] == _ms(9)
 
 
 # ---------------------------------------------------------------------------

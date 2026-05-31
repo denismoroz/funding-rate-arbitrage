@@ -24,11 +24,12 @@ async def list_equity(
     stmt = (
         select(EquitySnapshot)
         .where(EquitySnapshot.strategy_id == strategy_id)
-        .order_by(EquitySnapshot.ts_ms.asc())
+        .order_by(EquitySnapshot.ts_ms.desc())
         .limit(limit)
     )
     result = await session.execute(stmt)
     snapshots = result.scalars().all()
+    snapshots.reverse()  # ascending order for chart
     return [
         {
             "id": s.id,
