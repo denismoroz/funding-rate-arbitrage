@@ -34,11 +34,14 @@ class OpeningShortState(State):
             price = quote.spot if quote.spot is not None else quote.mark
             spot_qty = size_usdc / price
 
+        # Round to nearest (not floor) so the perp short matches spot fill precisely:
+        # for a 0.000149895 BTC spot delta, HALF_UP → 0.00015 (~$0.01 dust) vs FLOOR → 0.00014 (~$0.76 dust).
+        hedge_qty = await self._exchange.round_qty_to_nearest(fp.coin, spot_qty)
         req = OpenRequest(
             coin=fp.coin,
             instrument=Instrument.PERP,
             side=Side.SHORT,
-            qty=spot_qty,
+            qty=hedge_qty,
             farb_position_id=fp.id,
             leverage=spec.leverage,
         )

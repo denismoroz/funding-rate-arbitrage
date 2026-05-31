@@ -166,6 +166,7 @@ def _make_mock_exchange(session_factory, exchange_id: int):
     mock.open_position.side_effect = _open_pos
     mock.close_position.side_effect = _close_pos
     mock.transfer.return_value = None
+    mock.round_qty_to_nearest = AsyncMock(side_effect=lambda coin, qty: qty)
 
     return mock
 

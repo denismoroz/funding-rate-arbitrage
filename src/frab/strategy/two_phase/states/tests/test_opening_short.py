@@ -45,9 +45,15 @@ def _make_settings(mocker, coin="SOL", leverage=5, maint_ratio=0.025):
     return settings
 
 
+def _make_exchange(mocker) -> object:
+    exchange = mocker.AsyncMock()
+    exchange.round_qty_to_nearest = mocker.AsyncMock(side_effect=lambda coin, qty: qty)
+    return exchange
+
+
 def _make_ctx(mocker, *, exchange=None, farb_repo=None, params=None, settings=None, event_bus=None) -> StrategyContext:
     return StrategyContext(
-        exchange=exchange or mocker.AsyncMock(),
+        exchange=exchange or _make_exchange(mocker),
         farb_repo=farb_repo or mocker.AsyncMock(),
         params=params or _make_params(),
         session_factory=mocker.MagicMock(),
@@ -70,7 +76,7 @@ async def test_opening_short_happy_path(mocker):
     perp_pos.qty = 10.0
     perp_pos.entry_price = 22.5
 
-    exchange = mocker.AsyncMock()
+    exchange = _make_exchange(mocker)
     exchange.open_position.return_value = perp_pos
 
     farb_repo = mocker.AsyncMock()
@@ -123,7 +129,7 @@ async def test_opening_short_publishes_farb_opened_event(mocker):
     perp_pos.qty = 5.0
     perp_pos.entry_price = 200.0
 
-    exchange = mocker.AsyncMock()
+    exchange = _make_exchange(mocker)
     exchange.open_position.return_value = perp_pos
 
     farb_repo = mocker.AsyncMock()
@@ -156,7 +162,7 @@ async def test_opening_short_no_event_bus(mocker):
     perp_pos.qty = 3.0
     perp_pos.entry_price = 300.0
 
-    exchange = mocker.AsyncMock()
+    exchange = _make_exchange(mocker)
     exchange.open_position.return_value = perp_pos
 
     farb_repo = mocker.AsyncMock()
@@ -186,7 +192,7 @@ async def test_opening_short_fallback_recomputes_qty_from_quote(mocker):
     perp_pos.qty = size_usdc / mark_price
     perp_pos.entry_price = mark_price
 
-    exchange = mocker.AsyncMock()
+    exchange = _make_exchange(mocker)
     exchange.get_quote.return_value = quote
     exchange.open_position.return_value = perp_pos
 
@@ -203,3 +209,52 @@ async def test_opening_short_fallback_recomputes_qty_from_quote(mocker):
     open_req = exchange.open_position.await_args.args[0]
     expected = size_usdc / mark_price
     assert abs(open_req.qty - expected) < 1e-9
+
+
+@pytest.mark.asyncio
+async def test_perp_hedge_uses_round_qty_to_nearest(mocker):
+    """Perp hedge leg must size with HALF_UP (not FLOOR) so the short matches
+    the spot wallet balance precisely. Regression guard for the dust-residual
+    fix originally introduced in commit daa0141 and lost during the two_phase
+    state-machine refactor (May 2026).
+
+    For a spot delta of 0.000149895 BTC (post-fee balance), the perp short
+    must round to 0.00015, not 0.00014.
+    """
+    params = _make_params(coins=["BTC"])
+    settings = _make_settings(mocker, coin="BTC", leverage=3)
+
+    spot_delta = 0.000149895  # post-fee wallet balance after spot BUY
+
+    perp_pos = mocker.MagicMock()
+    perp_pos.id = 99
+    perp_pos.qty = 0.00015
+    perp_pos.entry_price = 77000.0
+
+    exchange = _make_exchange(mocker)
+    exchange.round_qty_to_nearest = mocker.AsyncMock(return_value=0.00015)
+    exchange.open_position.return_value = perp_pos
+
+    farb_repo = mocker.AsyncMock()
+
+    fp = FarbPosition(
+        id=31,
+        strategy_id=1,
+        coin="BTC",
+        state=FarbState.OPENING_SHORT,
+        state_data={"spot_qty": spot_delta, "spot_entry_price": 77000.0},
+        spot_position_id=50,
+        perp_position_id=None,
+        margin_position_id=12,
+        opened_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        closed_at=None,
+    )
+
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo, params=params, settings=settings)
+    state = OpeningShortState(ctx)
+
+    await state.execute(fp)
+
+    exchange.round_qty_to_nearest.assert_awaited_once_with("BTC", pytest.approx(spot_delta))
+    open_req = exchange.open_position.await_args.args[0]
+    assert open_req.qty == pytest.approx(0.00015)

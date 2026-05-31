@@ -59,6 +59,7 @@ def _make_exchange(session_factory=None, exchange_id: int = 1) -> AsyncMock:
     mock.get_quote.return_value = Quote(
         coin="BTC", mark=50000.0, spot=50000.0, bid=49990.0, ask=50010.0, ts_ms=_NOW_MS
     )
+    mock.round_qty_to_nearest = AsyncMock(side_effect=lambda coin, qty: qty)
 
     def _domain_from_req(req, pos_id: int) -> Position:
         return Position(
