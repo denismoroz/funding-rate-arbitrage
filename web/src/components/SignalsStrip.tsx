@@ -130,9 +130,16 @@ export function SignalsStrip() {
     enabled: !!strategyId,
     refetchInterval: 60_000,
   });
-  const coinsWithPosition = new Set<string>(
-    (activeQ.data ?? []).map((fp) => fp.coin),
-  );
+  const openQ = useQuery({
+    queryKey: ["farb-positions-open", strategyId],
+    queryFn: () => fetchFarbPositions(strategyId!, "open"),
+    enabled: !!strategyId,
+    refetchInterval: 60_000,
+  });
+  const coinsWithPosition = new Set<string>([
+    ...(activeQ.data ?? []).map((fp) => fp.coin),
+    ...(openQ.data ?? []).map((fp) => fp.coin),
+  ]);
 
   const tickMutation = useMutation({
     mutationFn: () => forceHourTick(strategyId!),
