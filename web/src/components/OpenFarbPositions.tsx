@@ -214,6 +214,19 @@ function FarbPositionCard({
 
   const leverage = p.leverage;
 
+  // Actual APR from accrued funding vs capital, annualized.
+  // Need ≥1h held so first funding tick has happened; otherwise factor explodes.
+  const actualApr: { gross: number | null; net: number | null } =
+    p.capital_usdc > 0 && p.hours_held != null && p.hours_held >= 1
+      ? {
+          gross: (p.funding_usdc / p.capital_usdc) * (8760 / p.hours_held),
+          net: ((p.funding_usdc - p.fees_usdc) / p.capital_usdc) * (8760 / p.hours_held),
+        }
+      : { gross: null, net: null };
+
+  const aprColor = (v: number | null) =>
+    v == null ? "text-gray-400" : v >= 0 ? "text-green-600" : "text-rose-500";
+
   const pnlColor =
     p.unrealized_pnl_usdc == null
       ? "text-gray-400"
@@ -290,6 +303,14 @@ function FarbPositionCard({
             )}
           </span>
         )}
+        {actualApr.gross != null && (
+          <span className="text-xs">
+            <span className="text-gray-400">apr </span>
+            <span className={`font-mono font-semibold ${aprColor(actualApr.gross)}`}>
+              {formatNumber(actualApr.gross * 100, 2)}%
+            </span>
+          </span>
+        )}
         {p.consec_negative_hours != null && p.consec_negative_hours > 0 && (
           <span className={`text-xs ${p.consec_negative_hours > 24 ? "text-amber-600 font-semibold" : "text-gray-500"}`}>
             neg {p.consec_negative_hours}h
@@ -337,6 +358,20 @@ function FarbPositionCard({
                 ) : (
                   <span className="text-gray-700">{formatHoursAsDH(p.breakeven_hours_remaining)}</span>
                 )}
+              </>
+            )}
+            {(actualApr.gross != null || actualApr.net != null) && (
+              <>
+                <span className="text-gray-400 mx-1">·</span>
+                <span className="text-gray-400">actual gross </span>
+                <span className={aprColor(actualApr.gross)}>
+                  {actualApr.gross != null ? `${formatNumber(actualApr.gross * 100, 2)}%` : "—"}
+                </span>
+                <span className="text-gray-400 mx-1">/</span>
+                <span className="text-gray-400">net </span>
+                <span className={aprColor(actualApr.net)}>
+                  {actualApr.net != null ? `${formatNumber(actualApr.net * 100, 2)}%` : "—"}
+                </span>
               </>
             )}
             <span className="text-gray-400 mx-1">·</span>
