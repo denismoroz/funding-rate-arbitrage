@@ -289,3 +289,23 @@ export type CloseAllResponse = {
 export function closeAllFarbPositions(strategyId: number): Promise<CloseAllResponse> {
   return apiPost<CloseAllResponse>(`/farb-positions/close-all?strategy_id=${strategyId}`);
 }
+
+export type ManualOpenResponse = {
+  id: number;
+  coin: string;
+  state: string;
+  ts_ms: number;
+};
+
+export async function manualOpenFarbPosition(coin: string): Promise<ManualOpenResponse> {
+  const r = await fetch(`${BASE}/farb-positions/manual-open`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ coin }),
+  });
+  if (!r.ok) {
+    const detail = await r.text();
+    throw new Error(`manual-open failed (${r.status}): ${detail}`);
+  }
+  return r.json();
+}

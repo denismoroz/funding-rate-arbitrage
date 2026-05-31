@@ -2,7 +2,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchStrategy,
   fetchFundingHistory,
+  fetchFarbPositions,
   forceHourTick,
+  manualOpenFarbPosition,
 } from "../lib/api";
 
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
@@ -10,16 +12,30 @@ import { Skeleton } from "./ui/Skeleton";
 
 const HOURS_PER_YEAR = 8760;
 
-function SignalCard({ coin, entryThreshold, exitThreshold, window }: {
+function SignalCard({ coin, entryThreshold, exitThreshold, window, hasPosition }: {
   coin: string;
   entryThreshold: number;
   exitThreshold: number;
   window: number;
+  hasPosition: boolean;
 }) {
+  const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ["funding-recent", coin, window],
     queryFn: () => fetchFundingHistory(coin, { limit: window }),
     refetchInterval: 60_000,
+  });
+
+  const openMutation = useMutation({
+    mutationFn: () => manualOpenFarbPosition(coin),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["farb-positions-open"] });
+      queryClient.invalidateQueries({ queryKey: ["farb-positions-active"] });
+      queryClient.invalidateQueries({ queryKey: ["events"] });
+    },
+    onError: (err: Error) => {
+      alert(err.message);
+    },
   });
 
   if (isLoading) {
@@ -73,6 +89,22 @@ function SignalCard({ coin, entryThreshold, exitThreshold, window }: {
       <div className="text-[11px] text-gray-500">
         smoothed {window}h · last hr {latestApr != null ? `${latestApr.toFixed(2)}%` : "—"}
       </div>
+      {!hasPosition && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (globalThis.confirm(`Открыть ${coin}?`)) {
+                openMutation.mutate();
+              }
+            }}
+            disabled={openMutation.isPending}
+            className="rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+          >
+            {openMutation.isPending ? "Opening…" : "Open"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -90,7 +122,17 @@ export function SignalsStrip() {
   const coins = (params?.coins as string[] | undefined) ?? ["BTC", "ETH", "SOL"];
   const entryThreshold = (params?.entry_threshold_apr as number | undefined) ?? 0.10;
   const exitThreshold = (params?.phase2_exit_threshold as number | undefined) ?? -0.10;
-  const window = (params?.signal_window_hours as number | undefined) ?? 12;
+  const sigWindow = (params?.signal_window_hours as number | undefined) ?? 12;
+
+  const activeQ = useQuery({
+    queryKey: ["farb-positions-active", strategyId],
+    queryFn: () => fetchFarbPositions(strategyId!, "active"),
+    enabled: !!strategyId,
+    refetchInterval: 60_000,
+  });
+  const coinsWithPosition = new Set<string>(
+    (activeQ.data ?? []).map((fp) => fp.coin),
+  );
 
   const tickMutation = useMutation({
     mutationFn: () => forceHourTick(strategyId!),
@@ -108,7 +150,7 @@ export function SignalsStrip() {
         <h2 className="text-sm font-semibold text-gray-700">Signals</h2>
         <div className="flex items-baseline gap-3">
           <span className="text-xs text-gray-500">
-            entry {(entryThreshold * 100).toFixed(0)}% · exit {(exitThreshold * 100).toFixed(0)}% · window {window}h
+            entry {(entryThreshold * 100).toFixed(0)}% · exit {(exitThreshold * 100).toFixed(0)}% · window {sigWindow}h
           </span>
           <button
             type="button"
@@ -134,7 +176,8 @@ export function SignalsStrip() {
             coin={coin}
             entryThreshold={entryThreshold}
             exitThreshold={exitThreshold}
-            window={window}
+            window={sigWindow}
+            hasPosition={coinsWithPosition.has(coin)}
           />
         ))}
       </div>

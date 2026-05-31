@@ -35,6 +35,19 @@ from frab.strategy.two_phase.actions.rollback import RollbackAction
 from frab.engine.margin_watchdog import MarginWatchdog
 
 
+# ─── Manual-open exceptions ───────────────────────────────────────────────────
+
+class ManualOpenError(Exception):
+    """Base class for manual-open rejections."""
+
+
+class ManualOpenCoinNotInUniverse(ManualOpenError): pass
+class ManualOpenAlreadyExists(ManualOpenError): pass
+class ManualOpenConcurrencyCapReached(ManualOpenError): pass
+class ManualOpenBudgetCapReached(ManualOpenError): pass
+class ManualOpenSignalUnavailable(ManualOpenError): pass
+
+
 # ─── Strategy ────────────────────────────────────────────────────────────────
 
 class TwoPhaseStrategy:
@@ -252,3 +265,63 @@ class TwoPhaseStrategy:
 
     async def _rollback(self, fp: FarbPosition, *, partial_state: FarbState, error: Exception) -> None:
         await self._rollback_action.execute(fp, partial_state=partial_state, error=error)
+
+    # ── Manual open ───────────────────────────────────────────────────────────
+
+    async def manual_open(self, *, coin: str, now_ms: int) -> FarbPosition:
+        """Create a FarbPosition for `coin` bypassing entry_threshold.
+
+        Validates: coin in universe, no existing non-terminal FP for coin,
+        concurrency cap, budget cap, signal computable. Returns the created
+        FarbPosition; the engine's minute-tick will drive it to OPEN.
+        """
+        p = self.params
+        if coin not in p.coins:
+            raise ManualOpenCoinNotInUniverse(coin)
+
+        existing = await self.farb_repo.list_by_coin(
+            self.strategy_id, coin, include_terminal=False
+        )
+        open_fps = await self.farb_repo.list_open(self.strategy_id)
+        if existing or any(fp.coin == coin for fp in open_fps):
+            raise ManualOpenAlreadyExists(coin)
+
+        all_active = await self.farb_repo.list_active(self.strategy_id)
+        non_terminal_count = len(all_active) + len(open_fps)
+        if non_terminal_count >= p.concurrency_cap:
+            raise ManualOpenConcurrencyCapReached(
+                f"{non_terminal_count}/{p.concurrency_cap}"
+            )
+
+        footprint = p.compute_footprint()
+        committed_usdc = non_terminal_count * footprint
+        if committed_usdc + footprint > p.budget_cap_usdc:
+            raise ManualOpenBudgetCapReached(
+                f"committed={committed_usdc:.2f} + footprint={footprint:.2f} > cap={p.budget_cap_usdc:.2f}"
+            )
+
+        signal = await self._signal_computer.compute(coin)
+        if signal is None:
+            raise ManualOpenSignalUnavailable(coin)
+
+        fp = await self.farb_repo.create(
+            strategy_id=self.strategy_id,
+            coin=coin,
+            initial_state=FarbState.CHECK_MARGIN,
+            state_data={
+                "target_signal_apr": signal,
+                "entry_ts_ms": now_ms,
+                "manual_open": True,
+            },
+        )
+        await publish_event(
+            self._bus,
+            level="INFO",
+            kind="farb.manual_open",
+            message=f"{coin} manual open requested (signal={signal:.4f} APR)",
+            payload={"farb_position_id": fp.id, "coin": coin, "signal_apr": signal},
+        )
+        _pkg.logger.info(
+            "manual_open: coin=%s signal_apr=%.4f fp_id=%s", coin, signal, fp.id
+        )
+        return fp

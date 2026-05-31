@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,14 @@ from frab.db.models import FarbPosition as FarbPositionRow, Position, Price
 from frab.domain.enums import FarbState
 from frab.events.bus import Event
 from frab.repo.farb_repo import StateConflict
+from frab.strategy.two_phase.strategy import (
+    ManualOpenAlreadyExists,
+    ManualOpenBudgetCapReached,
+    ManualOpenCoinNotInUniverse,
+    ManualOpenConcurrencyCapReached,
+    ManualOpenError,
+    ManualOpenSignalUnavailable,
+)
 
 router = APIRouter()
 
@@ -423,6 +432,49 @@ async def close_farb_position(
         ))
 
     return {"id": fp.id, "coin": fp.coin, "new_state": "CLOSING_SHORT", "ts_ms": now_ms}
+
+
+class ManualOpenRequest(BaseModel):
+    coin: str
+
+
+@router.post("/manual-open")
+async def manual_open_farb_position(
+    body: ManualOpenRequest,
+    request: Request,
+) -> dict:
+    """Create a FarbPosition for `coin`, bypassing entry_threshold.
+
+    Validates via TwoPhaseStrategy.manual_open: coin in universe, no
+    existing non-terminal FP, concurrency cap, budget cap, signal
+    computable. Created FP starts in CHECK_MARGIN; the engine's
+    minute-tick drives it to OPEN.
+    """
+    strategy = getattr(request.app.state, "strategy", None)
+    if strategy is None:
+        raise HTTPException(status_code=503, detail="Strategy not configured")
+
+    try:
+        fp = await strategy.manual_open(coin=body.coin, now_ms=_now_ms())
+    except ManualOpenCoinNotInUniverse as exc:
+        raise HTTPException(status_code=400, detail=f"coin {exc} not in strategy universe") from exc
+    except ManualOpenAlreadyExists as exc:
+        raise HTTPException(status_code=409, detail=f"non-terminal FarbPosition already exists for {exc}") from exc
+    except ManualOpenConcurrencyCapReached as exc:
+        raise HTTPException(status_code=409, detail=f"concurrency cap reached: {exc}") from exc
+    except ManualOpenBudgetCapReached as exc:
+        raise HTTPException(status_code=409, detail=f"budget cap reached: {exc}") from exc
+    except ManualOpenSignalUnavailable as exc:
+        raise HTTPException(status_code=422, detail=f"signal unavailable for {exc} (need ≥window hours of funding history)") from exc
+    except ManualOpenError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "id": fp.id,
+        "coin": fp.coin,
+        "state": fp.state.value,
+        "ts_ms": _now_ms(),
+    }
 
 
 @router.get("/{farb_position_id}")
