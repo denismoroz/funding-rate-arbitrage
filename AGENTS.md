@@ -155,6 +155,14 @@ launchctl bootout gui/$(id -u)/com.frab.engine
 
 # Поднять обратно
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.frab.engine.plist
+
+# Полный цикл — убить зомби и перезапустить с нуля
+launchctl bootout gui/$(id -u)/com.frab.engine
+launchctl bootout gui/$(id -u)/com.frab.web
+sleep 1
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.frab.engine.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.frab.web.plist
+# Или одной строкой: install.sh
 ```
 
 ---
