@@ -380,9 +380,7 @@ export default function Settings() {
   // Per-position footprint preview (auto-derived — mirrors TwoPhaseParams.compute_size_for).
   // Leverage table mirrors src/frab/constants.py RESEARCH_LEVERAGE.
   const RESEARCH_LEVERAGE: Record<string, number> = {
-    BTC: 20, ETH: 20,
-    SOL: 10, AVAX: 10, LINK: 10,
-    AAVE: 5, DOGE: 5,
+    BTC: 40, ETH: 25, SOL: 20, HYPE: 10, ZEC: 10, PURR: 3, XPL: 10,
   };
   const footprintPreview = (() => {
     const budget = parseFloat(formValues["budget_cap_usdc"] ?? "");
