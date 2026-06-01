@@ -13,7 +13,7 @@ class TwoPhaseParams:
 
     Defaults are Candidate C from research/two_phase_dynamic_stability.py.
     """
-    coins: list[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
+    coins: list[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL", "HYPE", "ZEC", "PURR", "XPL"])
     entry_threshold_apr: float = 0.10        # entry when smoothed signal > this
     phase2_exit_threshold: float = -0.10     # exit (phase2) when signal < this
     base_min_hold_hours: int = 24            # floor on dynamic min_hold

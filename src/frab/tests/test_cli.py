@@ -69,11 +69,14 @@ def test_seed_inserts_exchange_and_markets(tmp_path, monkeypatch):
             assert exchanges[0].name == "hyperliquid"
 
             markets = session.execute(select(Market)).scalars().all()
-            assert len(markets) == 7
+            assert len(markets) == 11
             coins = {m.coin for m in markets}
-            assert coins == {"BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE"}
+            assert coins == {"BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE", "HYPE", "PURR", "ZEC", "XPL"}
+
     finally:
         engine.dispose()
+
+
 
 
 def test_seed_is_idempotent(tmp_path, monkeypatch):
@@ -95,8 +98,9 @@ def test_seed_is_idempotent(tmp_path, monkeypatch):
             exchanges = session.execute(select(Exchange)).scalars().all()
             assert len(exchanges) == 1
 
-            markets = session.execute(select(Market)).scalars().all()
-            assert len(markets) == 7
+             markets = session.execute(select(Market)).scalars().all()
+             assert len(markets) == 11
+
     finally:
         engine.dispose()
 

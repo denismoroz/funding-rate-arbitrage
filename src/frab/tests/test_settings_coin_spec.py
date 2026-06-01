@@ -28,7 +28,7 @@ def _clean_env(monkeypatch):
 def test_returns_research_default_when_no_override():
     s = Settings(**_CREDS)
     spec = s.get_coin_spec("BTC")
-    assert spec.leverage == 20
+    assert spec.leverage == 40
     assert spec.maint_ratio == 0.01
 
 
@@ -50,7 +50,7 @@ def test_falls_back_for_unknown_coin():
 
 
 def test_research_table_has_seven_coins():
-    assert set(RESEARCH_LEVERAGE.keys()) == {"BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE"}
+    assert set(RESEARCH_LEVERAGE.keys()) == {"BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE", "HYPE", "PURR", "ZEC", "XPL"}
 
 
 def test_research_and_maint_keys_match():

@@ -36,6 +36,10 @@ HYPERLIQUID_MARKETS = [
     ("LINK", 0.1,     0.001),
     ("AAVE", 0.01,    0.01),
     ("DOGE", 1.0,     0.00001),
+    ("HYPE", 0.0001,  1.0),
+    ("PURR", 0.0001,  1.0),
+    ("ZEC",  0.0001,  1.0),
+    ("XPL",  0.0001,  1.0),
 ]
 
 
@@ -177,7 +181,7 @@ async def _backfill_funding_async(
 
 def backfill(
     hours: int = 24,
-    coins: str = "BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE",
+    coins: str = "BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE,HYPE,PURR,ZEC,XPL",
 ) -> None:
     """Fetch funding history from Hyperliquid and write to DB (idempotent)."""
     settings = get_settings()
