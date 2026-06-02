@@ -31,6 +31,12 @@ MAINNET_SPOT_TOKEN_MAP: dict[str, str] = {
     "BTC": "UBTC",
     "ETH": "UETH",
     "SOL": "USOL",
+    # Native HL spot tokens — wrapped name == canonical perp coin
+    # (HL-first-class, not bridged), so identity mapping is safe.
+    "HYPE": "HYPE",
+    "PURR": "PURR",
+    "ZEC": "ZEC",
+    "XPL": "XPL",
 }
 
 

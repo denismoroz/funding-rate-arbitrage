@@ -21,6 +21,10 @@ SPOT_TOKEN_INVERSE: dict[str, str] = {
     "UBTC": "BTC",
     "UETH": "ETH",
     "USOL": "SOL",
+    "HYPE": "HYPE",
+    "PURR": "PURR",
+    "ZEC": "ZEC",
+    "XPL": "XPL",
 }
 
 

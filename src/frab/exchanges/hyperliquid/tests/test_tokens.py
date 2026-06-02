@@ -12,7 +12,15 @@ from frab.exchanges.hyperliquid.tokens import (
 
 
 def test_mainnet_token_map_contains_wrappeds():
-    assert MAINNET_SPOT_TOKEN_MAP == {"BTC": "UBTC", "ETH": "UETH", "SOL": "USOL"}
+    assert MAINNET_SPOT_TOKEN_MAP == {
+        "BTC": "UBTC",
+        "ETH": "UETH",
+        "SOL": "USOL",
+        "HYPE": "HYPE",
+        "PURR": "PURR",
+        "ZEC": "ZEC",
+        "XPL": "XPL",
+    }
 
 
 def test_select_spot_token_map_mainnet():

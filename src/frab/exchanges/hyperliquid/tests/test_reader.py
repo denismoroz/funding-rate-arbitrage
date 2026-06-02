@@ -278,9 +278,14 @@ async def test_injected_client_not_closed():
 # ---------------------------------------------------------------------------
 
 def test_spot_token_inverse_does_not_alias_bridge_tokens():
-    """The reverse map must contain only wrapped tokens 1:1 with their perp."""
+    """The reverse map must NOT contain any EVM bridge token (independent price discovery)."""
     from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
 
-    assert SPOT_TOKEN_INVERSE == {"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL"}
+    # Wrapped tokens 1:1 with the canonical perp coin must be present.
+    assert SPOT_TOKEN_INVERSE["UBTC"] == "BTC"
+    assert SPOT_TOKEN_INVERSE["UETH"] == "ETH"
+    assert SPOT_TOKEN_INVERSE["USOL"] == "SOL"
+    # Bridge tokens (LINK0/AAVE0/AVAX0) have independent price discovery and must
+    # NEVER be aliased to the canonical perp.
     for forbidden in ("LINK0", "AAVE0", "AVAX0"):
         assert forbidden not in SPOT_TOKEN_INVERSE

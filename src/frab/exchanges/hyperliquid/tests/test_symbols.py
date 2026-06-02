@@ -366,8 +366,8 @@ async def test_spot_mids_by_coin_unknown_wrapped_token_skipped(mocker):
     client = mocker.MagicMock(spec=HLClient)
     client.all_mids = AsyncMock(return_value={"@5": 1.0})
     client.spot_meta = AsyncMock(return_value=HLSpotMeta(
-        tokens={5: "PURR"},
-        pairs=[HLSpotPair(index=5, name="PURR/USDC")],
+        tokens={5: "FAKETOKEN"},
+        pairs=[HLSpotPair(index=5, name="FAKETOKEN/USDC")],
     ))
     sym = HLSymbols(client=client)
     result = await sym.spot_mids_by_coin()
