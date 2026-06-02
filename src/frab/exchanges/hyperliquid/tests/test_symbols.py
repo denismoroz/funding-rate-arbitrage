@@ -375,6 +375,28 @@ async def test_spot_mids_by_coin_unknown_wrapped_token_skipped(mocker):
 
 
 # ---------------------------------------------------------------------------
+# 27b. spot_mids_by_coin — symbolic-name key (PURR/USDC) resolves directly
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_spot_mids_by_coin_symbolic_key_resolved(mocker):
+    """HL exposes some early pairs (notably PURR/USDC at @0) under their
+    symbolic name in all_mids. Verify these are picked up without an @-prefix."""
+    client = mocker.MagicMock(spec=HLClient)
+    client.all_mids = AsyncMock(return_value={
+        "PURR/USDC": 0.137,
+        "PURR": 0.138,        # bare perp ticker — must be ignored
+    })
+    client.spot_meta = AsyncMock(return_value=HLSpotMeta(
+        tokens={0: "PURR"},
+        pairs=[HLSpotPair(index=0, name="PURR/USDC")],
+    ))
+    sym = HLSymbols(client=client)
+    result = await sym.spot_mids_by_coin()
+    assert result == {"PURR": 0.137}
+
+
+# ---------------------------------------------------------------------------
 # 28. spot_mids_by_coin — resolve_spot_pair returning None or empty string skips entry
 # ---------------------------------------------------------------------------
 

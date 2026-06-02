@@ -107,13 +107,17 @@ class HLSymbols:
             return {}
         out: dict[str, float] = {}
         for key, val in mids.items():
-            if not key.startswith("@"):
-                continue
-            try:
-                idx = int(key[1:])
-            except ValueError:
-                continue
-            name = await self.resolve_spot_pair(idx)
+            # HL exposes most spot pairs under @<index>, but some early pairs
+            # (notably PURR/USDC at @0) are keyed by their symbolic name instead.
+            name: str | None = None
+            if key.startswith("@"):
+                try:
+                    idx = int(key[1:])
+                except ValueError:
+                    continue
+                name = await self.resolve_spot_pair(idx)
+            elif "/" in key:
+                name = key
             if not name or "/" not in name:
                 continue
             wrapped, quote = name.split("/", 1)
