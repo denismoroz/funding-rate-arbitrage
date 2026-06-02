@@ -16,7 +16,7 @@
         <string>--port</string>
         <string>8765</string>
         <string>--coins</string>
-        <string>BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE</string>
+        <string>BTC,ETH,SOL,HYPE,PURR</string>
         <string>--log-level</string>
         <string>INFO</string>
         <string>--dry-run</string>

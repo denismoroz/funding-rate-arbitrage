@@ -98,8 +98,8 @@ def test_seed_is_idempotent(tmp_path, monkeypatch):
             exchanges = session.execute(select(Exchange)).scalars().all()
             assert len(exchanges) == 1
 
-             markets = session.execute(select(Market)).scalars().all()
-             assert len(markets) == 11
+            markets = session.execute(select(Market)).scalars().all()
+            assert len(markets) == 11
 
     finally:
         engine.dispose()
@@ -107,7 +107,7 @@ def test_seed_is_idempotent(tmp_path, monkeypatch):
     # Second run output should report 0 added
     assert "0 added" in result2.output
     assert "1 skipped" in result2.output  # exchange skipped
-    assert "7 skipped" in result2.output  # markets skipped
+    assert "11 skipped" in result2.output  # markets skipped
 
 
 def test_help_shows_commands():

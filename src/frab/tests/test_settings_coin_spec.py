@@ -50,7 +50,7 @@ def test_falls_back_for_unknown_coin():
 
 
 def test_research_table_has_seven_coins():
-    assert set(RESEARCH_LEVERAGE.keys()) == {"BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE", "HYPE", "PURR", "ZEC", "XPL"}
+    assert set(RESEARCH_LEVERAGE.keys()) == {"BTC", "ETH", "SOL", "HYPE", "PURR", "ZEC", "XPL"}
 
 
 def test_research_and_maint_keys_match():

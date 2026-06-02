@@ -8,7 +8,7 @@ from frab.settings import get_settings
 def serve(
     host: str = "127.0.0.1",
     port: int = 8000,
-    coins: str = "BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE",
+    coins: str = "BTC,ETH,SOL,HYPE,PURR",
     log_level: str = "INFO",
     dry_run: bool | None = typer.Option(
         None,

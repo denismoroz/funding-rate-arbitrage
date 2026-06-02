@@ -240,12 +240,17 @@ class EngineLoop:
                 results.append(quote)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:   # noqa: BLE001
                 await self._log_error(
                     "quote_fetch_failed",
                     exc,
                     extra={"coin": coin},
                 )
+        coin_names = [c for c in self._coins]
+        result_map = {r.coin for r in results}
+        missed = set(coin_names) - result_map
+        logger.info("_fetch_quotes: coins=%s results_count=%d result_coins=%s missed=%s",
+                     coin_names, len(results), list(result_map), list(missed))
         return results
 
     async def _fetch_funding(self, now_ms: int) -> list:

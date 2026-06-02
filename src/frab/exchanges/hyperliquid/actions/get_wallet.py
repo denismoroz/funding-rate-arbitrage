@@ -45,6 +45,7 @@ class GetWalletAction(HLAction):
         return exc.id
 
     async def execute(self, coin: str, kind: WalletKind) -> float:
+        logger.info("execute: coin=%s kind=%s", coin, kind.value)
         if self._address is None:
             raise RuntimeError("account_address required")
 
@@ -77,7 +78,9 @@ class GetWalletAction(HLAction):
         else:
             total_balance = compute_non_usdc_total(
                 spot_state, spot_coin=spot_coin, raw_coin=coin
-            )
+             )
+
+        logger.info("wallet snapshot: coin=%s spot_coin=%s balance=%s total_balance=%s", coin, spot_coin, balance, total_balance)
 
         async with session_scope(self._sf) as s:
             exchange_id = await self._get_exchange_id(s)
