@@ -1,0 +1,5 @@
+universe,margin_buffer_x,position_size,K,period_start,period_end,n_hours,annual_pct,sharpe,sortino,max_dd_pct,total_funding,total_fees,final_equity,n_liquidations,n_top_ups,n_forced_closes,n_phase1_neg_exits,n_phase1_cap_exits,n_phase2_exits,n_minhold_guard
+U-prod,3.0,100.0,3,2025-11-06,2026-05-12,4493,3.4204,21.4982,7.4684,0.102,19.702,2.4792,1017.2229,0,0,0,0,1,8,3
+U-prod,5.0,100.0,3,2025-11-06,2026-05-12,4493,3.4147,21.5466,7.6237,0.102,19.6724,2.4787,1017.1936,0,0,0,0,1,8,3
+U3,3.0,100.0,3,2025-11-06,2026-05-12,4493,0.3493,4.1915,2.2906,0.1781,4.4151,2.8337,1001.5814,0,0,0,1,4,6,3
+U3,5.0,100.0,3,2025-11-06,2026-05-12,4493,0.3493,4.1915,2.2906,0.1781,4.4151,2.8337,1001.5814,0,0,0,1,4,6,3
