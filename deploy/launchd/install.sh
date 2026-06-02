@@ -39,8 +39,8 @@ render_and_load() {
 
     # bootout if already loaded (ignore "service not loaded" error)
     launchctl bootout "$GUI/$label" 2>/dev/null || true
-    launchctl bootstrap "$GUI" "$out"
     launchctl enable "$GUI/$label"
+    launchctl bootstrap "$GUI" "$out"
 
     echo "  loaded: $label ($out)"
 }
