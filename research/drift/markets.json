@@ -1,0 +1,776 @@
+[
+  {
+    "marketIndex": 0,
+    "symbol": "SOL-PERP",
+    "baseAsset": "SOL",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 1,
+    "symbol": "BTC-PERP",
+    "baseAsset": "BTC",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 2,
+    "symbol": "ETH-PERP",
+    "baseAsset": "ETH",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 3,
+    "symbol": "APT-PERP",
+    "baseAsset": "APT",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 4,
+    "symbol": "1MBONK-PERP",
+    "baseAsset": "1MBONK",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 5,
+    "symbol": "POL-PERP",
+    "baseAsset": "POL",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 6,
+    "symbol": "ARB-PERP",
+    "baseAsset": "ARB",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 7,
+    "symbol": "DOGE-PERP",
+    "baseAsset": "DOGE",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 8,
+    "symbol": "BNB-PERP",
+    "baseAsset": "BNB",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 9,
+    "symbol": "SUI-PERP",
+    "baseAsset": "SUI",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 10,
+    "symbol": "1MPEPE-PERP",
+    "baseAsset": "1MPEPE",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 11,
+    "symbol": "OP-PERP",
+    "baseAsset": "OP",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 12,
+    "symbol": "RENDER-PERP",
+    "baseAsset": "RENDER",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 13,
+    "symbol": "XRP-PERP",
+    "baseAsset": "XRP",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 14,
+    "symbol": "HNT-PERP",
+    "baseAsset": "HNT",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 15,
+    "symbol": "INJ-PERP",
+    "baseAsset": "INJ",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 16,
+    "symbol": "LINK-PERP",
+    "baseAsset": "LINK",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 17,
+    "symbol": "RLB-PERP",
+    "baseAsset": "RLB",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 18,
+    "symbol": "PYTH-PERP",
+    "baseAsset": "PYTH",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 19,
+    "symbol": "TIA-PERP",
+    "baseAsset": "TIA",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 20,
+    "symbol": "JTO-PERP",
+    "baseAsset": "JTO",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 21,
+    "symbol": "SEI-PERP",
+    "baseAsset": "SEI",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 22,
+    "symbol": "AVAX-PERP",
+    "baseAsset": "AVAX",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 23,
+    "symbol": "WIF-PERP",
+    "baseAsset": "WIF",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 24,
+    "symbol": "JUP-PERP",
+    "baseAsset": "JUP",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 25,
+    "symbol": "DYM-PERP",
+    "baseAsset": "DYM",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 26,
+    "symbol": "TAO-PERP",
+    "baseAsset": "TAO",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 27,
+    "symbol": "W-PERP",
+    "baseAsset": "W",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 28,
+    "symbol": "KMNO-PERP",
+    "baseAsset": "KMNO",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 29,
+    "symbol": "TNSR-PERP",
+    "baseAsset": "TNSR",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 30,
+    "symbol": "DRIFT-PERP",
+    "baseAsset": "DRIFT",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 31,
+    "symbol": "CLOUD-PERP",
+    "baseAsset": "CLOUD",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 32,
+    "symbol": "IO-PERP",
+    "baseAsset": "IO",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 33,
+    "symbol": "ZEX-PERP",
+    "baseAsset": "ZEX",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 34,
+    "symbol": "POPCAT-PERP",
+    "baseAsset": "POPCAT",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 35,
+    "symbol": "1KWEN-PERP",
+    "baseAsset": "1KWEN",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 36,
+    "symbol": "TRUMP-WIN-2024-BET",
+    "baseAsset": "TRUMP-WIN-2024",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 37,
+    "symbol": "KAMALA-POPULAR-VOTE-2024-BET",
+    "baseAsset": "KAMALA-POPULAR-VOTE-2024",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 38,
+    "symbol": "FED-CUT-50-SEPT-2024-BET",
+    "baseAsset": "FED-CUT-50-SEPT-2024",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 39,
+    "symbol": "REPUBLICAN-POPULAR-AND-WIN-BET",
+    "baseAsset": "REPUBLICAN-POPULAR-AND-WIN",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 40,
+    "symbol": "BREAKPOINT-IGGYERIC-BET",
+    "baseAsset": "BREAKPOINT-IGGYERIC",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 41,
+    "symbol": "DEMOCRATS-WIN-MICHIGAN-BET",
+    "baseAsset": "DEMOCRATS-WIN-MICHIGAN",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 42,
+    "symbol": "TON-PERP",
+    "baseAsset": "TON",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 43,
+    "symbol": "LANDO-F1-SGP-WIN-BET",
+    "baseAsset": "LANDO-F1-SGP-WIN",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 44,
+    "symbol": "MOTHER-PERP",
+    "baseAsset": "MOTHER",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 45,
+    "symbol": "MOODENG-PERP",
+    "baseAsset": "MOODENG",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 46,
+    "symbol": "WARWICK-FIGHT-WIN-BET",
+    "baseAsset": "WARWICK-FIGHT-WIN",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 47,
+    "symbol": "DBR-PERP",
+    "baseAsset": "DBR",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 48,
+    "symbol": "WLF-5B-1W-BET",
+    "baseAsset": "WLF-5B-1W",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 49,
+    "symbol": "VRSTPN-WIN-F1-24-DRVRS-CHMP-BET",
+    "baseAsset": "VRSTPN-WIN-F1-24-DRVRS-CHMP",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 50,
+    "symbol": "LNDO-WIN-F1-24-US-GP-BET",
+    "baseAsset": "LNDO-WIN-F1-24-US-GP",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 51,
+    "symbol": "1KMEW-PERP",
+    "baseAsset": "1KMEW",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 52,
+    "symbol": "MICHI-PERP",
+    "baseAsset": "MICHI",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 53,
+    "symbol": "GOAT-PERP",
+    "baseAsset": "GOAT",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 54,
+    "symbol": "FWOG-PERP",
+    "baseAsset": "FWOG",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 55,
+    "symbol": "PNUT-PERP",
+    "baseAsset": "PNUT",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 56,
+    "symbol": "RAY-PERP",
+    "baseAsset": "RAY",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 57,
+    "symbol": "SUPERBOWL-LIX-LIONS-BET",
+    "baseAsset": "SUPERBOWL-LIX-LIONS",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 58,
+    "symbol": "SUPERBOWL-LIX-CHIEFS-BET",
+    "baseAsset": "SUPERBOWL-LIX-CHIEFS",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 59,
+    "symbol": "HYPE-PERP",
+    "baseAsset": "HYPE",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 60,
+    "symbol": "LTC-PERP",
+    "baseAsset": "LTC",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 61,
+    "symbol": "ME-PERP",
+    "baseAsset": "ME",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 62,
+    "symbol": "PENGU-PERP",
+    "baseAsset": "PENGU",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 63,
+    "symbol": "AI16Z-PERP",
+    "baseAsset": "AI16Z",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 64,
+    "symbol": "TRUMP-PERP",
+    "baseAsset": "TRUMP",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 65,
+    "symbol": "MELANIA-PERP",
+    "baseAsset": "MELANIA",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 66,
+    "symbol": "BERA-PERP",
+    "baseAsset": "BERA",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 67,
+    "symbol": "NBAFINALS25-OKC-BET",
+    "baseAsset": "NBAFINALS25-OKC",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 68,
+    "symbol": "NBAFINALS25-BOS-BET",
+    "baseAsset": "NBAFINALS25-BOS",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 69,
+    "symbol": "KAITO-PERP",
+    "baseAsset": "KAITO",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 70,
+    "symbol": "IP-PERP",
+    "baseAsset": "IP",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 71,
+    "symbol": "FARTCOIN-PERP",
+    "baseAsset": "FARTCOIN",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 72,
+    "symbol": "ADA-PERP",
+    "baseAsset": "ADA",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 73,
+    "symbol": "PAXG-PERP",
+    "baseAsset": "PAXG",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 74,
+    "symbol": "LAUNCHCOIN-PERP",
+    "baseAsset": "LAUNCHCOIN",
+    "status": "delisted",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 75,
+    "symbol": "PUMP-PERP",
+    "baseAsset": "PUMP",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 76,
+    "symbol": "ASTER-PERP",
+    "baseAsset": "ASTER",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 77,
+    "symbol": "XPL-PERP",
+    "baseAsset": "XPL",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 78,
+    "symbol": "2Z-PERP",
+    "baseAsset": "2Z",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 79,
+    "symbol": "ZEC-PERP",
+    "baseAsset": "ZEC",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 80,
+    "symbol": "MNT-PERP",
+    "baseAsset": "MNT",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 81,
+    "symbol": "1KPUMP-PERP",
+    "baseAsset": "1KPUMP",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 82,
+    "symbol": "MET-PERP",
+    "baseAsset": "MET",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 83,
+    "symbol": "1KMON-PERP",
+    "baseAsset": "1KMON",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 84,
+    "symbol": "LIT-PERP",
+    "baseAsset": "LIT",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  },
+  {
+    "marketIndex": 85,
+    "symbol": "BP-PERP",
+    "baseAsset": "BP",
+    "status": "active",
+    "volume24hUsd": null,
+    "openInterestUsd": null,
+    "fundingIntervalHours": 1
+  }
+]
