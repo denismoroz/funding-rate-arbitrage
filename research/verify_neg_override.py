@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from two_phase_margin import (  # noqa: E402
     TwoPhaseParams, load_prod_params, load_coin_df, common_timeline, simulate,
+    RESEARCH_LEVERAGE, FALLBACK_LEVERAGE,
 )
 
 POSITION_SIZE = 100.0
@@ -66,26 +67,39 @@ def fmt(label: str, r: dict) -> str:
     )
 
 
-def denom_breakdown(r: dict, k_cap: int) -> str:
-    """Make the headline % interpretable: it's return on the full $1000 budget,
-    most of which sits idle. Re-express on actually-occupied (spot-deployed) capital.
+def denom_breakdown(r: dict, k_cap: int, mbuf: float) -> str:
+    """Make the headline % interpretable on the capital actually committed to the
+    3-leg positions: occupied = spot long + locked USDC margin (per-coin leverage).
 
-    Note the budget ($1000) is oversized vs max deployable (K × position_size),
-    which dilutes the headline APR on top of partial time-in-market."""
+    locked_per_pos = position_size × mbuf / leverage   (e.g. $12 @ 10x, buf 3 → $3.6)
+    occupied_per_pos = position_size + locked_per_pos   (e.g. $12 + $3.6 = $15.6)
+
+    The headline annual % is on the full $1000 budget (oversized vs occupied), which
+    is why it looks tiny; APR on occupied capital is the honest figure."""
     years = r["n_hours"] / 8760.0
     net = r["final_equity"] - BUDGET
-    pos_hours = sum(pc["hours_in_position"] for pc in r["per_coin"].values())
-    avg_n_open = pos_hours / r["n_hours"] if r["n_hours"] else 0.0
-    avg_spot_deployed = avg_n_open * POSITION_SIZE          # avg $ in spot legs
-    max_deployable = k_cap * POSITION_SIZE
+    n_hours = r["n_hours"] or 1
+
+    spot_pos_hours = 0.0
+    occupied_pos_hours = 0.0   # spot + locked margin, weighted by hours each coin was open
+    for c, pc in r["per_coin"].items():
+        lev = RESEARCH_LEVERAGE.get(c, FALLBACK_LEVERAGE)
+        locked = POSITION_SIZE * mbuf / lev
+        occupied_per_pos = POSITION_SIZE + locked
+        spot_pos_hours += pc["hours_in_position"] * POSITION_SIZE
+        occupied_pos_hours += pc["hours_in_position"] * occupied_per_pos
+
+    avg_n_open = sum(pc["hours_in_position"] for pc in r["per_coin"].values()) / n_hours
+    avg_spot = spot_pos_hours / n_hours
+    avg_occupied = occupied_pos_hours / n_hours
     apr_budget = (net / BUDGET / years * 100) if years else 0.0
-    apr_deployed = (net / avg_spot_deployed / years * 100) if (avg_spot_deployed and years) else 0.0
+    apr_occupied = (net / avg_occupied / years * 100) if (avg_occupied and years) else 0.0
     return (
         f"    net P&L=${net:+.2f} over {years:.2f}y  |  "
         f"funding=${r['total_funding']:+.2f}  fees=-${r['total_fees']:.2f}  |  "
-        f"avg {avg_n_open:.2f}/{k_cap} slots → ${avg_spot_deployed:.0f} deployed "
-        f"(max ${max_deployable:.0f}, budget ${BUDGET:.0f})  |  "
-        f"APR on budget={apr_budget:+.2f}%  →  APR on deployed={apr_deployed:+.2f}%"
+        f"avg {avg_n_open:.2f}/{k_cap} open → spot ${avg_spot:.0f} + locked margin "
+        f"${avg_occupied - avg_spot:.0f} = occupied ${avg_occupied:.0f}  |  "
+        f"APR on $1000 budget={apr_budget:+.2f}%  →  APR on occupied capital={apr_occupied:+.2f}%"
     )
 
 
@@ -113,7 +127,7 @@ def main() -> None:
     res = run_pair(prod_coins, make_params(base, prod_coins))
     print(fmt("  baseline (override=OFF)", res[False]))
     print(fmt("  fix      (override=ON )", res[True]))
-    print(denom_breakdown(res[False], base.concurrency_cap))
+    print(denom_breakdown(res[False], base.concurrency_cap, MBUF))
 
     # ── U3-long: BTC/ETH/SOL full history ──────────────────────────────────
     u3 = ["BTC", "ETH", "SOL"]
@@ -124,7 +138,7 @@ def main() -> None:
     res3 = run_pair(u3, make_params(base, u3))
     print(fmt("  baseline (override=OFF)", res3[False]))
     print(fmt("  fix      (override=ON )", res3[True]))
-    print(denom_breakdown(res3[False], base.concurrency_cap))
+    print(denom_breakdown(res3[False], base.concurrency_cap, MBUF))
 
 
 if __name__ == "__main__":
