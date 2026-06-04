@@ -39,7 +39,7 @@ function EquityTooltip({
     <div className="rounded border border-gray-200 bg-white p-2 text-xs shadow">
       <p className="font-semibold">{formatCurrency(d.value)}</p>
       {d.funding_cum != null && (
-        <p className="text-green-600">funding: ${d.funding_cum.toFixed(6)}</p>
+        <p className={d.funding_cum < 0 ? "text-red-500" : "text-green-600"}>funding: ${d.funding_cum.toFixed(6)}</p>
       )}
       {d.fees_cum != null && (
         <p className="text-red-500">fees: ${d.fees_cum.toFixed(6)}</p>
@@ -155,7 +155,7 @@ export function EquityCard() {
             )}
             {latestStrat && (
               <>
-                <span className="text-green-600 font-mono">
+                <span className={`font-mono ${latestStrat.funding_cum < 0 ? "text-red-500" : "text-green-600"}`}>
                   funding ${latestStrat.funding_cum.toFixed(6)}
                 </span>
                 <span className="text-red-500 font-mono">

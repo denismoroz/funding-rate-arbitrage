@@ -287,7 +287,7 @@ function FarbPositionCard({
         <span className={`font-mono text-xs ${pnlColor}`}>
           pnl {p.unrealized_pnl_usdc != null ? formatCurrencyPrecise(p.unrealized_pnl_usdc) : "—"}
         </span>
-        <span className="font-mono text-xs text-green-600">
+        <span className={`font-mono text-xs ${p.funding_usdc < 0 ? "text-red-500" : "text-green-600"}`}>
           funding ${p.funding_usdc.toFixed(6)}
         </span>
         <span className="font-mono text-xs text-gray-500">
