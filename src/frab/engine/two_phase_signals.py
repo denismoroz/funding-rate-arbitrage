@@ -57,6 +57,7 @@ def decide_two_phase(
     phase1_negative_patience: int,
     phase1_breakeven_cap_hours: int,
     phase2_exit_threshold: float,
+    neg_overrides_min_hold: bool = False,
 ) -> TwoPhaseDecision:
     """Return decision based on position state + signal.
 
@@ -68,8 +69,11 @@ def decide_two_phase(
         else → NONE
 
     Exit (in_position):
+        in_profit = gross_funding_so_far >= total_fees_paid
+        neg_overrides_min_hold and not in_profit and
+            consec_negative_hours > phase1_negative_patience → CLOSE_PHASE1_NEG
+            (emergency exit — bypasses the dynamic min_hold lock)
         hours_in_position < position_min_hold_hours → NONE (locked by dynamic min_hold)
-        Phase determination: in_profit = gross_funding_so_far >= total_fees_paid
         Phase 1 (not in_profit):
             consec_negative_hours > phase1_negative_patience → CLOSE_PHASE1_NEG
             current_hourly_income > 0 and hours_to_breakeven > phase1_breakeven_cap_hours → CLOSE_PHASE1_CAP
@@ -85,11 +89,22 @@ def decide_two_phase(
             return TwoPhaseDecision.OPEN
         return TwoPhaseDecision.NONE
 
+    in_profit = gross_funding_so_far >= total_fees_paid
+
+    # Emergency phase-1 exit: sustained-negative funding overrides the dynamic
+    # min_hold lock. min_hold exists to give funding time to recoup entry fees;
+    # once funding is sustainedly negative the thesis is broken — holding only
+    # accrues more loss, so cut early instead of waiting out min_hold.
+    if (
+        neg_overrides_min_hold
+        and not in_profit
+        and consec_negative_hours > phase1_negative_patience
+    ):
+        return TwoPhaseDecision.CLOSE_PHASE1_NEG
+
     # in_position — check dynamic min_hold lock
     if hours_in_position < position_min_hold_hours:
         return TwoPhaseDecision.NONE
-
-    in_profit = gross_funding_so_far >= total_fees_paid
 
     if not in_profit:
         # Phase 1 — trying to recoup fees

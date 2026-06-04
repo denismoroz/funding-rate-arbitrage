@@ -196,6 +196,7 @@ def decide_two_phase(
     phase1_negative_patience: int,
     phase1_breakeven_cap_hours: int,
     phase2_exit_threshold: float,
+    neg_overrides_min_hold: bool = False,
 ) -> str:
     """
     Pure port from src/frab/engine/two_phase_signals.py:decide_two_phase.
@@ -208,11 +209,19 @@ def decide_two_phase(
             return "OPEN"
         return "NONE"
 
+    in_profit = gross_funding_so_far >= total_fees_paid
+
+    # Emergency phase-1 exit: sustained-negative funding overrides the min_hold lock.
+    if (
+        neg_overrides_min_hold
+        and not in_profit
+        and consec_negative_hours > phase1_negative_patience
+    ):
+        return "CLOSE_PHASE1_NEG"
+
     # Min-hold lock
     if hours_in_position < position_min_hold_hours:
         return "NONE"
-
-    in_profit = gross_funding_so_far >= total_fees_paid
 
     if not in_profit:
         # Phase 1
@@ -309,6 +318,7 @@ def simulate(
     position_size: float | None = None,
     restrict_start: pd.Timestamp | None = None,
     restrict_end: pd.Timestamp | None = None,
+    neg_overrides_min_hold: bool = False,
 ) -> dict:
     """
     Full two-phase + cross-margin portfolio simulation.
@@ -428,6 +438,7 @@ def simulate(
                 phase1_negative_patience=params.phase1_negative_patience,
                 phase1_breakeven_cap_hours=params.phase1_breakeven_cap_hours,
                 phase2_exit_threshold=params.phase2_exit_threshold,
+                neg_overrides_min_hold=neg_overrides_min_hold,
             )
 
             if decision == "NONE":
@@ -558,10 +569,24 @@ def simulate(
                 margin_ratio = perp_equity / total_maintenance
 
                 if margin_ratio <= 1.0:
-                    # Liquidation
-                    perp_cash = 0.0
+                    # Liquidation: the PERP leg is force-liquidated at the current
+                    # mark (realize the perp loss + taker fee). The SPOT leg is
+                    # still owned — sell it and credit the proceeds. (Old code
+                    # discarded the entire spot leg, which for a delta-neutral
+                    # book overstated the liquidation loss by ~the full spot value.)
                     for c in opens:
+                        if t not in dfs[c].index:
+                            continue
                         pos = positions[c]
+                        close = dfs[c].loc[t, "close"]
+                        spot_proceeds = pos.units_spot * close * (1.0 - SPOT_TAKER)
+                        spot_cash += spot_proceeds
+                        realized = pos.short_size * (pos.entry_price - close)
+                        perp_fee = pos.short_size * close * PERP_TAKER
+                        perp_cash += realized - perp_fee
+                        pos.realized_pnl_attr += realized
+                        pos.fees_paid_attr += perp_fee + pos.units_spot * close * SPOT_TAKER
+                        pos.n_closes += 1
                         pos.open = False
                         pos.units_spot = 0.0
                         pos.short_size = 0.0
