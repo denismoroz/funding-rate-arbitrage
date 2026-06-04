@@ -171,9 +171,7 @@ async def test_writes_wallet_snapshot_row(session_factory, mock_client, symbols)
 
 
 async def test_snapshot_balance_uses_compute_total_usdc_for_usdc(session_factory, mock_client, symbols):
-    # account_value=1000, unrealized=50, cum_funding_since_open=-5 (received=+5)
-    # spot total=200, hold=50
-    # perp_standalone = 1000 - 50 - 50 - 5 = 895; total = 200 + 895 = 1095
+    # Unified margin: perp account_value (1000) is excluded; USDC snapshot == spot USDC.
     mock_client.user_state.return_value = _perp_state(1000.0, ("BTC", 50.0, -5.0))
     mock_client.spot_user_state.return_value = _spot_state(("USDC", 200.0, 50.0))
 
@@ -183,7 +181,7 @@ async def test_snapshot_balance_uses_compute_total_usdc_for_usdc(session_factory
     async with session_factory() as s:
         rows = (await s.execute(select(DBWalletSnapshot))).scalars().all()
 
-    assert rows[0].balance == pytest.approx(1095.0)
+    assert rows[0].balance == pytest.approx(200.0)
 
 
 async def test_snapshot_balance_uses_non_usdc_total_for_btc(session_factory, mock_client, symbols):

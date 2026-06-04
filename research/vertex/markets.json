@@ -1,0 +1,158 @@
+{
+  "_meta": {
+    "source": "Vertex Protocol SDK analysis + on-chain contract data (FQuerier @ 0x1693273B443699bee277eCbc60e2C8027E91995d)",
+    "chain": "Arbitrum One",
+    "status": "protocol_dead",
+    "tvl_peak": "~$102M (May 2024)",
+    "tvl_shutdown": "$0 (July 19, 2025)",
+    "tvl_current": "$49 (June 2026)",
+    "shutdown_date": "2025-07-17 to 2025-07-19",
+    "note": "Vertex Protocol ceased operations around July 17-19, 2025. TVL dropped from $58M to $0 in 2 days.",
+    "api_accessible": false,
+    "api_block_reason": "Geo-blocked via Vercel SNI-based infrastructure from DigitalOcean Frankfurt (IP 134.209.83.56)"
+  },
+  "_contracts": {
+    "clearinghouse": "0xAE1ec28d6225dCE2ff787dcb8CE11cF6D3AE064f",
+    "endpoint": "0xbbEE07B3e8121227AfCFe1E2B82772246226128e",
+    "spotEngine": "0x32d91Af2B17054D575A7bF1ACfa7615f41CCEfaB",
+    "perpEngine": "0xb74C78cca0FADAFBeE52B2f48A67eE8c834b5fd1",
+    "fQuerier": "0x1693273B443699bee277eCbc60e2C8027E91995d"
+  },
+  "_product_id_convention": {
+    "note": "Even product_ids = perp, odd = spot (after USDC=0). Perp IDs: BTC=2, ETH=4, ARB=6, BNB=8, XRP=10, SOL=?, AVAX=?, LINK=?, DOGE=?"
+  },
+  "products": [
+    {
+      "product_id": 0,
+      "symbol": "USDC",
+      "type": "spot",
+      "description": "Quote currency",
+      "in_universe": false
+    },
+    {
+      "product_id": 1,
+      "symbol": "BTC-SPOT",
+      "type": "spot",
+      "description": "Bitcoin spot",
+      "in_universe": false
+    },
+    {
+      "product_id": 2,
+      "symbol": "BTC-PERP",
+      "type": "perp",
+      "description": "Bitcoin perpetual",
+      "in_universe": true,
+      "universe_coin": "BTC",
+      "confirmed": true,
+      "leverage_max_approx": "20x",
+      "has_spot_pair": true,
+      "spot_product_id": 1
+    },
+    {
+      "product_id": 3,
+      "symbol": "ETH-SPOT",
+      "type": "spot",
+      "description": "Ethereum spot",
+      "in_universe": false
+    },
+    {
+      "product_id": 4,
+      "symbol": "ETH-PERP",
+      "type": "perp",
+      "description": "Ethereum perpetual",
+      "in_universe": true,
+      "universe_coin": "ETH",
+      "confirmed": true,
+      "leverage_max_approx": "20x",
+      "has_spot_pair": true,
+      "spot_product_id": 3
+    },
+    {
+      "product_id": 6,
+      "symbol": "ARB-PERP",
+      "type": "perp",
+      "description": "Arbitrum token perpetual",
+      "in_universe": false,
+      "confirmed": true
+    },
+    {
+      "product_id": 8,
+      "symbol": "BNB-PERP",
+      "type": "perp",
+      "description": "BNB perpetual",
+      "in_universe": false,
+      "confirmed_approx": true
+    },
+    {
+      "product_id": 10,
+      "symbol": "XRP-PERP",
+      "type": "perp",
+      "description": "XRP perpetual",
+      "in_universe": false,
+      "confirmed_approx": true
+    },
+    {
+      "product_id": null,
+      "symbol": "SOL-PERP",
+      "type": "perp",
+      "description": "Solana perpetual — added later, exact product_id unknown",
+      "in_universe": true,
+      "universe_coin": "SOL",
+      "confirmed": false,
+      "note": "Was available on Vertex but product_id unconfirmed without live API access"
+    },
+    {
+      "product_id": null,
+      "symbol": "AVAX-PERP",
+      "type": "perp",
+      "description": "Avalanche perpetual — possibly available",
+      "in_universe": true,
+      "universe_coin": "AVAX",
+      "confirmed": false,
+      "note": "Unknown product_id; was reportedly available but unconfirmed"
+    },
+    {
+      "product_id": null,
+      "symbol": "LINK-PERP",
+      "type": "perp",
+      "description": "Chainlink perpetual — possibly available",
+      "in_universe": true,
+      "universe_coin": "LINK",
+      "confirmed": false,
+      "note": "Unknown product_id; reportedly available but unconfirmed"
+    },
+    {
+      "product_id": null,
+      "symbol": "DOGE-PERP",
+      "type": "perp",
+      "description": "Dogecoin perpetual — possibly available",
+      "in_universe": true,
+      "universe_coin": "DOGE",
+      "confirmed": false,
+      "note": "Unknown product_id; reportedly available but unconfirmed"
+    },
+    {
+      "product_id": null,
+      "symbol": "HYPE-PERP",
+      "type": "perp",
+      "description": "Hyperliquid HYPE perpetual",
+      "in_universe": true,
+      "universe_coin": "HYPE",
+      "confirmed": false,
+      "note": "NOT LISTED on Vertex (HYPE is HL-native token, likely not on Vertex Arbitrum)"
+    }
+  ],
+  "_tvl_history": {
+    "2023-06-01": 3462738,
+    "2024-01-01": 43732263,
+    "2024-06-01": 94286930,
+    "2024-12-31": 81446178,
+    "2025-01-01": 81357041,
+    "2025-05-01": 54773709,
+    "2025-07-09": 50916113,
+    "2025-07-17": 400015,
+    "2025-07-18": 266264,
+    "2025-07-19": 0,
+    "2026-06-04": 49
+  }
+}

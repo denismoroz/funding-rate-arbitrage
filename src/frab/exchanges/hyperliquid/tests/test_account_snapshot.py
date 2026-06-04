@@ -252,7 +252,8 @@ async def test_get_wallet_state_happy_path(mock_client, symbols):
     assert spot_balances["ETH"]["mark"] == pytest.approx(3000.0)
     assert spot_balances["ETH"]["usd_value"] == pytest.approx(30000.0)
 
-    assert result["total_usd"] == pytest.approx(1000.0 + 30000.0 + 30000.0 + 200.0)
+    # Unified margin: total_usd = spot tokens + spot USDC (perp account_value excluded)
+    assert result["total_usd"] == pytest.approx(30000.0 + 30000.0 + 200.0)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,8 @@ async def test_get_wallet_state_no_mark_prices(mock_client, symbols):
 
     assert result["spot_balances"][0]["mark"] == pytest.approx(0.0)
     assert result["spot_balances"][0]["usd_value"] == pytest.approx(0.0)
-    assert result["total_usd"] == pytest.approx(500.0)
+    # No spot USDC and tokens mark at 0 → total_usd is 0 (perp 500 excluded)
+    assert result["total_usd"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +358,8 @@ async def test_get_wallet_state_usdc_only_wallet(mock_client, symbols):
 
     assert result["spot_balances"] == []
     assert result["usdc_spot"] == pytest.approx(500.0)
-    assert result["total_usd"] == pytest.approx(1500.0)
+    # Unified margin: perp account_value (1000) excluded → total_usd == spot USDC
+    assert result["total_usd"] == pytest.approx(500.0)
 
 
 # ---------------------------------------------------------------------------

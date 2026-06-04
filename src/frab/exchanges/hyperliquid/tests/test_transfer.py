@@ -164,7 +164,9 @@ async def test_no_address_skips_snapshot(session_factory, mock_client, symbols):
     assert rows == []
 
 
-async def test_happy_path_usdc_writes_snapshot_with_perp_plus_spot(session_factory, mock_client, symbols):
+async def test_happy_path_usdc_writes_snapshot_with_spot_only(session_factory, mock_client, symbols):
+    # Unified margin: perp account_value is NOT added (it would double-count the
+    # collateral drawn from spot USDC). Snapshot balance = spot USDC only.
     mock_client.user_state.return_value = _perp_state(800.0)
     mock_client.spot_user_state.return_value = _spot_state(("USDC", 200.0, 0.0))
 
@@ -177,7 +179,7 @@ async def test_happy_path_usdc_writes_snapshot_with_perp_plus_spot(session_facto
     assert len(rows) == 1
     row = rows[0]
     assert row.source == "hl_account_total"
-    assert row.balance == pytest.approx(1000.0)  # 800 + 200
+    assert row.balance == pytest.approx(200.0)  # spot USDC only (perp 800 excluded)
     assert row.ts_ms == _FIXED_MS
 
 

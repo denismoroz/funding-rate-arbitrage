@@ -1,0 +1,121 @@
+{
+  "_note": "Список рынков составлен на основе публично доступной информации (WebSearch) на 2026-06-04. Прямой вызов API не выполнялся (WebFetch недоступен в этом агенте). Для актуального списка выполнить: GET https://gateway.prod.nado.xyz/v1/contracts",
+  "_available_window": "2025-11-20 → now (private alpha start)",
+  "_warm_window_2025_09_to_2026_04": "partial — данные с ~2025-11-20, не с 2025-09-01",
+  "_hot_window_pre_2025": "unavailable — Nado физически не существовал до Nov 2025",
+  "perp_markets": [
+    {
+      "symbol": "BTC-PERP",
+      "base_asset": "BTC",
+      "quote_asset": "USDT0",
+      "confirmed": true,
+      "leverage_max": 40,
+      "in_our_universe": true,
+      "notes": "подтверждён множеством источников; основная ликвидность"
+    },
+    {
+      "symbol": "ETH-PERP",
+      "base_asset": "ETH",
+      "quote_asset": "USDT0",
+      "confirmed": true,
+      "leverage_max": 20,
+      "in_our_universe": true,
+      "notes": "подтверждён множеством источников"
+    },
+    {
+      "symbol": "SOL-PERP",
+      "base_asset": "SOL",
+      "quote_asset": "USDT0",
+      "confirmed": true,
+      "leverage_max": 20,
+      "in_our_universe": true,
+      "notes": "подтверждён"
+    },
+    {
+      "symbol": "BNB-PERP",
+      "base_asset": "BNB",
+      "quote_asset": "USDT0",
+      "confirmed": true,
+      "leverage_max": 20,
+      "in_our_universe": false,
+      "notes": "не в нашей 7-корзине"
+    },
+    {
+      "symbol": "XRP-PERP",
+      "base_asset": "XRP",
+      "quote_asset": "USDT0",
+      "confirmed": true,
+      "leverage_max": 20,
+      "in_our_universe": false,
+      "notes": "не в нашей 7-корзине"
+    },
+    {
+      "symbol": "DOGE-PERP",
+      "base_asset": "DOGE",
+      "quote_asset": "USDT0",
+      "confirmed": false,
+      "leverage_max": null,
+      "in_our_universe": true,
+      "notes": "вероятно листован (26-30 markets заявлено), явного подтверждения нет"
+    },
+    {
+      "symbol": "AVAX-PERP",
+      "base_asset": "AVAX",
+      "quote_asset": "USDT0",
+      "confirmed": false,
+      "leverage_max": null,
+      "in_our_universe": true,
+      "notes": "вероятно листован; явного подтверждения нет"
+    },
+    {
+      "symbol": "LINK-PERP",
+      "base_asset": "LINK",
+      "quote_asset": "USDT0",
+      "confirmed": false,
+      "leverage_max": null,
+      "in_our_universe": true,
+      "notes": "вероятно листован; явного подтверждения нет"
+    },
+    {
+      "symbol": "HYPE-PERP",
+      "base_asset": "HYPE",
+      "quote_asset": "USDT0",
+      "confirmed": false,
+      "leverage_max": null,
+      "in_our_universe": true,
+      "notes": "маловероятно — HYPE является нативным токеном конкурента (Hyperliquid); листинг на Nado/Ink крайне сомнителен"
+    }
+  ],
+  "spot_markets": [
+    {
+      "symbol": "kBTC/USDT0",
+      "base_asset": "kBTC",
+      "canonical_asset": "BTC",
+      "confirmed": true,
+      "notes": "wrapped BTC на Ink chain; bridging через inkonchain.com"
+    },
+    {
+      "symbol": "wETH/USDT0",
+      "base_asset": "wETH",
+      "canonical_asset": "ETH",
+      "confirmed": true,
+      "notes": "wrapped ETH; используется и как collateral"
+    },
+    {
+      "symbol": "USDC/USDT0",
+      "base_asset": "USDC",
+      "canonical_asset": "USDC",
+      "confirmed": true,
+      "notes": "stablecoin пара"
+    }
+  ],
+  "spot_perp_same_venue": {
+    "available": true,
+    "caveats": [
+      "Spot assets — wrapped tokens (kBTC, wETH), не native",
+      "Bridging required (ETH или USDC → Ink via inkonchain.com)",
+      "Unified margin engine: spot long + perp short признаётся hedge, снижает margin requirement",
+      "SOL spot — статус неизвестен; подтверждены только kBTC и wETH"
+    ]
+  }
+}

@@ -14,7 +14,9 @@ BINANCE_URL = "https://api.binance.com/api/v3/klines"
 COINS = [
     "BTC", "ETH", "SOL", "ARB", "OP", "AVAX", "MATIC",
     "DOGE", "LINK", "UNI", "AAVE", "WIF", "PEPE", "TIA", "INJ",
+    "HYPE", "ZEC", "PURR", "XPL"
 ]
+
 
 START_TIME_MS = int(datetime(2023, 6, 1, tzinfo=timezone.utc).timestamp() * 1000)
 

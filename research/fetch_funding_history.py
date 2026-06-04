@@ -1,20 +1,19 @@
-"""
-Скачивает историю funding rates с Hyperliquid для списка монет.
-Сохраняет в research/data/<coin>.csv
-"""
-
 import requests
 import pandas as pd
 import time
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
 API_URL = "https://api.hyperliquid.xyz/info"
 
-COINS = [
-    "BTC", "ETH", "SOL", "ARB", "OP", "AVAX", "MATIC",
-    "DOGE", "LINK", "UNI", "AAVE", "WIF", "PEPE", "TIA", "INJ",
-]
+if len(sys.argv) > 1:
+    COINS = sys.argv[1:]
+else:
+    COINS = [
+        "BTC", "ETH", "SOL", "ARB", "OP", "AVAX", "MATIC",
+        "DOGE", "LINK", "UNI", "AAVE", "WIF", "PEPE", "TIA", "INJ", "HYPE", "ZEC", "PURR", "XPL"
+    ]
 
 # Начало истории HL (примерно)
 START_TIME_MS = int(datetime(2023, 6, 1, tzinfo=timezone.utc).timestamp() * 1000)
@@ -29,36 +28,41 @@ def fetch_funding_history(coin: str, start_time_ms: int) -> list[dict]:
     current_start = start_time_ms
 
     while True:
-        resp = requests.post(API_URL, json={
-            "type": "fundingHistory",
-            "coin": coin,
-            "startTime": current_start,
-        })
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = requests.post(API_URL, json={
+                "type": "fundingHistory",
+                "coin": coin,
+                "startTime": current_start,
+            })
+            resp.raise_for_status()
+            data = resp.json()
 
-        if not data:
+            if not data:
+                break
+
+            all_records.extend(data)
+            last_time = data[-1]["time"]
+
+            print(f"  {coin}: получено {len(all_records)} записей, последняя: {datetime.fromtimestamp(last_time/1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')}")
+
+            # API возвращает не более 500 записей за раз
+            if len(data) < 500:
+                break
+
+            # Следующая страница с +1ms чтобы не дублировать
+            current_start = last_time + 1
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"    Error fetching data for {coin}: {e}")
             break
-
-        all_records.extend(data)
-        last_time = data[-1]["time"]
-
-        print(f"  {coin}: получено {len(all_records)} записей, последняя: {datetime.fromtimestamp(last_time/1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')}")
-
-        # API возвращает не более 500 записей за раз
-        if len(data) < 500:
-            break
-
-        # Следующая страница с +1ms чтобы не дублировать
-        current_start = last_time + 1
-        time.sleep(0.2)
 
     return all_records
 
 
 def save_coin(coin: str, records: list[dict]):
     df = pd.DataFrame(records)
-    df["time"] = pd.to_datetime(df["time"], unit="ms", utc=True)
+    df["time"] = pd.to_datetime(df["time"], unit="ms", utc=
+True)
     df["fundingRate"] = df["fundingRate"].astype(float)
     df["premium"] = df["premium"].astype(float)
     # Годовые % для удобства (funding раз в час, 8760 часов в году)

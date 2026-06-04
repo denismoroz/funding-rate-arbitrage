@@ -1,0 +1,3 @@
+universe,margin_buffer_x,position_size,K,entry_threshold,exit_threshold,min_hold_hours,period_start,period_end,n_hours,annual_pct,sharpe,sortino,max_dd_pct,total_funding,total_fees,final_equity,n_opens,n_closes,n_liquidations,n_top_ups,n_forced_closes,n_skipped_opens_capital
+STRAT_A_EXT7,3.0,100.0,3,0.3,-0.15,120,2023-07-18,2026-05-12,24700,22.5974,43.2622,24.5941,0.0609,799.6442,673.6699,1225.9743,33,32,0,3,0,0
+STRAT_A_EXT7,5.0,100.0,3,0.3,-0.15,120,2023-07-18,2026-05-12,24700,17.3044,37.1569,22.3105,0.0609,1014.8587,841.815,1173.0437,26,26,0,0,0,6776

@@ -1,0 +1,3 @@
+universe,margin_buffer_x,position_size,K,period_start,period_end,n_hours,annual_pct,sharpe,sortino,max_dd_pct,total_funding,total_fees,final_equity,n_liquidations,n_top_ups,n_forced_closes,n_phase1_neg_exits,n_phase1_cap_exits,n_phase2_exits,n_minhold_guard
+EXT7,3.0,100.0,3,2023-07-18,2026-05-12,24700,8.2588,43.3866,27.5518,0.2047,242.7053,10.2247,1232.4805,0,7,0,1,6,37,2
+EXT7,5.0,100.0,3,2023-07-18,2026-05-12,24700,7.0466,40.4108,26.8639,0.2047,205.8741,7.5642,1198.3099,0,0,0,2,4,28,0

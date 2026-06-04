@@ -15,7 +15,7 @@ PER_COIN_LEVERAGE = {
     "SOL": 10, "AVAX": 10, "LINK": 10,
     "AAVE": 5, "DOGE": 5,
 }
-PER_COIN_MAINT_RATIO = DEFAULT_MAINT_RATIO
+PER_COIN_MAINT_RATIO = {c: DEFAULT_MAINT_RATIO.get(c, 0.025) for c in PER_COIN_LEVERAGE}
 COINS = list(PER_COIN_LEVERAGE.keys())
 
 # Sizing + margin policy
@@ -23,12 +23,12 @@ POSITION_SIZE = 100.0
 MARGIN_BUFFER_X = 3.0
 TOP_UP_TRIGGER = 2.0
 HEALTHY_RATIO = 3.0
-CONCURRENCY_CAP = 3
+CONCURRENCY_CAP = 6
 BUDGET_CAP_USD = 1000.0
 
 # Signal params (Strategy A, finalized)
-ENTRY_THRESHOLD = 0.30
-EXIT_THRESHOLD = -0.15
+ENTRY_THRESHOLD = 0.10
+EXIT_THRESHOLD = -0.10
 MIN_HOLD_HOURS = 120
 SIGNAL_WINDOW_HOURS = 12
 
@@ -168,9 +168,8 @@ def apply_margin_policy(state: dict, dfs: dict, t) -> None:
                 # Recover spot leg proceeds
                 spot_proceeds = pos['units_spot'] * close * (1.0 - SPOT_TAKER)
                 state['spot_cash'] += spot_proceeds
-                # Release required margin back to perp_cash
-                state['perp_cash'] += pos['required_margin']
-                # Close perp short with realized PnL (pay taker fee)
+                # Close perp short with realized PnL (pay taker fee).
+                # req_margin already lives in perp_cash (moved there at open) — do NOT add it again.
                 realized = pos['short_size'] * (pos['entry_price'] - close)
                 perp_fee = pos['short_size'] * close * PERP_TAKER
                 state['perp_cash'] += realized - perp_fee
@@ -310,7 +309,8 @@ def compute_equity(state: dict, dfs: dict, t) -> float:
 
 
 def simulate_portfolio(
-    coins: list[str] = COINS,
+    coins: list[str] = None,
+    leverage_map: dict[str, float] = None,
     budget_cap_usd: float = BUDGET_CAP_USD,
     position_size: float = POSITION_SIZE,
     margin_buffer_x: float = MARGIN_BUFFER_X,
@@ -324,147 +324,241 @@ def simulate_portfolio(
     perp_taker: float = PERP_TAKER,
     spot_taker: float = SPOT_TAKER,
 ) -> dict:
-    """Run portfolio-level funding-rate arbitrage backtest.
-
-    Returns a dict of performance metrics and simulation statistics.
     """
-    # Override module-level constants if caller passes custom values
-    # (use local vars for clarity; helpers reference module globals but
-    # simulate_portfolio passes defaults through, so callers get expected behaviour)
-    global POSITION_SIZE, MARGIN_BUFFER_X, TOP_UP_TRIGGER, HEALTHY_RATIO
-    global CONCURRENCY_CAP, ENTRY_THRESHOLD, EXIT_THRESHOLD, MIN_HOLD_HOURS
-    global SIGNAL_WINDOW_HOURS, PERP_TAKER, SPOT_TAKER
-    _orig = (POSITION_SIZE, MARGIN_BUFFER_X, TOP_UP_TRIGGER, HEALTHY_RATIO,
-             CONCURRENCY_CAP, ENTRY_THRESHOLD, EXIT_THRESHOLD, MIN_HOLD_HOURS,
-             SIGNAL_WINDOW_HOURS, PERP_TAKER, SPOT_TAKER)
-    POSITION_SIZE = position_size
-    MARGIN_BUFFER_X = margin_buffer_x
-    TOP_UP_TRIGGER = top_up_trigger
-    HEALTHY_RATIO = healthy_ratio
-    CONCURRENCY_CAP = concurrency_cap
-    ENTRY_THRESHOLD = entry_threshold
-    EXIT_THRESHOLD = exit_threshold
-    MIN_HOLD_HOURS = min_hold_hours
-    SIGNAL_WINDOW_HOURS = signal_window_hours
-    PERP_TAKER = perp_taker
-    SPOT_TAKER = spot_taker
+    High-fidelity backtest of the portfolio margin strategy.
+    Uses module-level globals for the simulation loop, but restores them after.
+    """
+    global POSITION_SIZE, MARGIN_BUFFER_X, TOP_UP_TRIGGER, HEALTHY_RATIO, \
+           CONCURRENCY_CAP, ENTRY_THRESHOLD, EXIT_THRESHOLD, MIN_HOLD_HOURS, \
+           SIGNAL_WINDOW_HOURS, PERP_TAKER, SPOT_TAKER, PER_COIN_LEVERAGE, PER_COIN_MAINT_RATIO
+
+    # 1. Save original state
+    _orig_state = {
+        'POSITION_SIZE': POSITION_SIZE,
+        'MARGIN_BUFFER_X': MARGIN_BUFFER_X,
+        'TOP_UP_TRIGGER': TOP_UP_TRIGGER,
+        'HEALTHY_RATIO': HEALTHY_RATIO,
+        'CONCURRENCY_CAP': CONCURRENCY_CAP,
+        'ENTRY_THRESHOLD': ENTRY_THRESHOLD,
+        'EXIT_THRESHOLD': EXIT_THRESHOLD,
+        'MIN_HOLD_HOURS': MIN_HOLD_HOURS,
+        'SIGNAL_WINDOW_HOURS': SIGNAL_WINDOW_HOURS,
+        'PERP_TAKER': PERP_TAKER,
+        'SPOT_TAKER': SPOT_TAKER,
+        'PER_COIN_LEVERAGE': PER_COIN_LEVERAGE.copy(),
+        'PER_COIN_MAINT_RATIO': PER_COIN_MAINT_RATIO.copy(),
+    }
 
     try:
-        # Load data and build timeline
+        # 2. Apply overrides
+        if coins is not None:
+            coins = coins
+        else:
+            coins = COINS
+
+        if leverage_map is not None:            # Merge new leverage into the existing map
+            new_leverage = PER_COIN_LEVERAGE.copy()
+            new_leverage.update(leverage_map)
+            PER_COIN_LEVERAGE = new_leverage
+            
+            # Also update MAINT_RATIO for the new coins in the map
+            new_maint = PER_COIN_MAINT_RATIO.copy()
+            for c, lev in leverage_map.items():
+                if c not in new_maint:
+                    new_maint[c] = 0.025
+            PER_COIN_MAINT_RATIO = new_maint
+
+        POSITION_SIZE = position_size
+        MARGIN_BUFFER_X = margin_buffer_x
+        TOP_UP_TRIGGER = top_up_trigger
+        HEALTHY_RATIO = healthy_ratio
+        CONCURRENCY_CAP = concurrency_cap
+        ENTRY_THRESHOLD = entry_threshold
+        EXIT_THRESHOLD = exit_threshold
+        MIN_HOLD_HOURS = min_hold_hours
+        SIGNAL_WINDOW_HOURS = signal_window_hours
+        PERP_TAKER = perp_taker
+        SPOT_TAKER = spot_taker
+
+        # 3. Load Data
         dfs = load_coin_dfs(coins)
         timeline = common_timeline(dfs)
         add_signals(dfs, window=signal_window_hours)
 
+        # 4. Run Simulation
         state = init_state(coins, budget_cap_usd)
-        state['peak_committed_capital'] = 0.0
-        initial_equity = budget_cap_usd
 
-        total_funding = 0.0  # track funding received separately
-        total_fees = 0.0
-
-        equity_curve = []
-        timestamps = []
-
-        for t in timeline:
-            # Increment hours_in is handled inside process_exits; accrue first
-            funding_before = state['perp_cash']
-            accrue_funding(state, dfs, t)
-            funding_gained = state['perp_cash'] - funding_before
-            if funding_gained > 0:
-                total_funding += funding_gained
-
-            apply_margin_policy(state, dfs, t)
-            process_exits(state, dfs, t)
-            process_entries(state, dfs, t)
-
-            eq = compute_equity(state, dfs, t)
-            equity_curve.append(eq)
-            timestamps.append(t)
-
-        # Final close: close all remaining positions at last bar
-        last_t = timeline[-1]
-        for c, pos in state['positions'].items():
-            if not pos['open']:
-                continue
-            close = dfs[c].loc[last_t, 'close']
-            realized = pos['short_size'] * (pos['entry_price'] - close)
-            perp_fee = pos['short_size'] * close * PERP_TAKER
-            spot_proceeds = pos['units_spot'] * close * (1.0 - SPOT_TAKER)
-            state['perp_cash'] += realized - perp_fee + pos['required_margin']
-            state['spot_cash'] += spot_proceeds
-            total_fees += perp_fee + pos['units_spot'] * close * SPOT_TAKER
-            state['positions'][c] = {
-                'open': False,
-                'units_spot': 0.0,
-                'short_size': 0.0,
-                'entry_price': 0.0,
-                'hours_in': 0,
-                'required_margin': 0.0,
+        # Per-coin attribution tracking
+        per_coin: dict[str, dict] = {
+            c: {
+                "n_opens": 0,
+                "n_closes": 0,
+                "funding_gross": 0.0,
+                "fees_paid": 0.0,
+                "realized_pnl": 0.0,
+                "hours_in_position": 0,
             }
-
-        final_equity = state['spot_cash'] + state['perp_cash']
-
-        # --- Compute performance metrics ---
-        eq_arr = np.array(equity_curve, dtype=float)
-        n_hours = len(eq_arr)
-
-        if n_hours < 2:
-            raise ValueError("Too few data points to compute metrics")
-
-        hourly_returns = np.diff(eq_arr) / eq_arr[:-1]
-        mean_hr = hourly_returns.mean()
-        std_hr = hourly_returns.std()
-
-        annual_pct = mean_hr * HOURS_PER_YEAR * 100.0
-        vol_pct = std_hr * np.sqrt(HOURS_PER_YEAR) * 100.0
-        sharpe = (mean_hr / std_hr * np.sqrt(HOURS_PER_YEAR)) if std_hr > 0 else 0.0
-
-        downside = hourly_returns[hourly_returns < 0]
-        if len(downside) > 1 and downside.std() > 0:
-            sortino = mean_hr / downside.std() * np.sqrt(HOURS_PER_YEAR)
-        else:
-            sortino = 0.0
-
-        # Max drawdown
-        peak = eq_arr[0]
-        max_dd = 0.0
-        for eq in eq_arr:
-            if eq > peak:
-                peak = eq
-            dd = (peak - eq) / peak
-            if dd > max_dd:
-                max_dd = dd
-        max_dd_pct = max_dd * 100.0
-
-        calmar = annual_pct / max_dd_pct if max_dd_pct > 0 else 0.0
-
-        min_mr = state['min_margin_ratio']
-        if min_mr == float('inf'):
-            min_mr = float('nan')
-
-        return {
-            'annual_pct': annual_pct,
-            'vol_pct': vol_pct,
-            'sharpe': sharpe,
-            'sortino': sortino,
-            'max_dd_pct': max_dd_pct,
-            'calmar': calmar,
-            'n_liquidations': state['n_liquidations'],
-            'n_top_ups': state['n_top_ups'],
-            'n_forced_closes': state['n_forced_closes'],
-            'n_skipped_opens_capital': state['n_skipped_opens_capital'],
-            'min_margin_ratio': min_mr,
-            'peak_committed_capital': state.get('peak_committed_capital', 0.0),
-            'final_equity': final_equity,
-            'total_funding': total_funding,
-            'total_fees': total_fees,
+            for c in coins
         }
 
+        total_funding_accrued = 0.0
+        total_fees_paid = 0.0
+
+        for t in timeline:
+            prev_perp = state['perp_cash']
+            prev_spot = state['spot_cash']
+
+            # --- Accrue funding (per-coin) ---
+            for c, pos in state['positions'].items():
+                if not pos['open']:
+                    continue
+                close = dfs[c].loc[t, 'close']
+                rate = dfs[c].loc[t, 'fundingRate']
+                funding_delta = pos['short_size'] * close * rate
+                state['perp_cash'] += funding_delta
+                per_coin[c]['funding_gross'] += funding_delta
+                per_coin[c]['hours_in_position'] += 1
+
+            # --- Process exits (per-coin) ---
+            for c, pos in state['positions'].items():
+                if not pos['open']:
+                    continue
+                pos['hours_in'] += 1
+                if pos['hours_in'] < MIN_HOLD_HOURS:
+                    continue
+                sig = dfs[c].loc[t, 'signal'] if 'signal' in dfs[c].columns else 0.0
+                if sig >= EXIT_THRESHOLD:
+                    continue
+
+                close = dfs[c].loc[t, 'close']
+                realized = pos['short_size'] * (pos['entry_price'] - close)
+                perp_fee = pos['short_size'] * close * PERP_TAKER
+                # req_margin already lives in perp_cash (moved there at open) — do NOT add it again.
+                state['perp_cash'] += realized - perp_fee
+                spot_proceeds = pos['units_spot'] * close * (1.0 - SPOT_TAKER)
+                spot_fee = pos['units_spot'] * close * SPOT_TAKER
+                state['spot_cash'] += spot_proceeds
+
+                per_coin[c]['n_closes'] += 1
+                per_coin[c]['realized_pnl'] += realized
+                per_coin[c]['fees_paid'] += perp_fee + spot_fee
+
+                state['positions'][c] = {
+                    'open': False,
+                    'units_spot': 0.0,
+                    'short_size': 0.0,
+                    'entry_price': 0.0,
+                    'hours_in': 0,
+                    'required_margin': 0.0,
+                }
+
+            # --- Process entries (per-coin) ---
+            opens = _open_positions(state)
+            n_open = len(opens)
+            if n_open < CONCURRENCY_CAP:
+                candidates = []
+                for c, pos in state['positions'].items():
+                    if pos['open']:
+                        continue
+                    if 'signal' not in dfs[c].columns:
+                        continue
+                    sig = dfs[c].loc[t, 'signal']
+                    if sig > ENTRY_THRESHOLD:
+                        candidates.append((sig, c))
+                candidates.sort(reverse=True)
+
+                for sig, c in candidates:
+                    if n_open >= CONCURRENCY_CAP:
+                        break
+                    close = dfs[c].loc[t, 'close']
+                    req_margin = POSITION_SIZE / PER_COIN_LEVERAGE[c] * MARGIN_BUFFER_X
+                    spot_fee = POSITION_SIZE * SPOT_TAKER
+                    perp_fee = POSITION_SIZE * PERP_TAKER
+                    total_needed = POSITION_SIZE + req_margin + spot_fee + perp_fee
+                    committed = sum(
+                        p['units_spot'] * dfs[cc].loc[t, 'close'] + p['required_margin']
+                        for cc, p in state['positions'].items()
+                        if p['open']
+                    )
+                    committed_after_open = committed + POSITION_SIZE + req_margin
+                    if state['spot_cash'] < total_needed:
+                        state['n_skipped_opens_capital'] += 1
+                        continue
+                    if committed_after_open > BUDGET_CAP_USD * 1.05:
+                        state['n_skipped_opens_capital'] += 1
+                        continue
+                    units_spot = POSITION_SIZE / close
+                    state['spot_cash'] -= POSITION_SIZE + spot_fee
+                    state['spot_cash'] -= req_margin
+                    state['perp_cash'] += req_margin
+                    state['perp_cash'] -= perp_fee
+                    state['positions'][c] = {
+                        'open': True,
+                        'units_spot': units_spot,
+                        'short_size': units_spot,
+                        'entry_price': close,
+                        'hours_in': 0,
+                        'required_margin': req_margin,
+                    }
+                    n_open += 1
+                    per_coin[c]['n_opens'] += 1
+                    per_coin[c]['fees_paid'] += spot_fee + perp_fee
+                    if committed_after_open > state.get('peak_committed_capital', 0.0):
+                        state['peak_committed_capital'] = committed_after_open
+
+            # --- Apply margin policy ---
+            apply_margin_policy(state, dfs, t)
+
+            total_funding_acc_delta = state['perp_cash'] - prev_perp
+            total_funding_accrued += total_funding_acc_delta
+            total_fees_paid += (prev_spot - state['spot_cash'])
+
+            current_equity = compute_equity(state, dfs, t)
+            state['equity_history'].append(current_equity)
+            state['timestamp_history'].append(t)
+
+        state['per_coin'] = per_coin
+
+        # 5. Finalize Metrics
+        state['final_equity'] = state['equity_history'][-1] if state['equity_history'] else 0.0
+        state['total_funding'] = total_funding_accrued
+        state['total_fees'] = total_fees_paid
+        
+        equity_series = pd.Series(state['equity_history'], index=pd.DatetimeIndex(state['timestamp_history']))
+        returns = equity_series.pct_change().dropna()
+        
+        state['annual_pct'] = (equity_series.iloc[-1] / equity_series.iloc[0] - 1) * 100
+        state['vol_pct'] = returns.std() * np.sqrt(HOURS_PER_YEAR) * 100
+        state['sharpe'] = (returns.mean() * HOURS_PER_YEAR) / (returns.std() * np.sqrt(HOURS_PER_YEAR)) if not returns.empty else 0.0
+        
+        downside_returns = returns[returns < 0]
+        state['sortino'] = (returns.mean() * HOURS_PER_YEAR) / (downside_returns.std() * np.sqrt(HOURS_PER_YEAR)) if not downside_returns.empty else 0.0
+        
+        peak = 0.0
+        max_dd = 0.0
+        for val in state['equity_history']:
+            if val > peak:
+                peak = val
+            dd = (peak - val) / peak if peak > 0 else 0.0
+            if dd > max_dd:
+                max_dd = dd
+        state['max_dd_pct'] = max_dd * 100
+        
+        state['calmar'] = (state['annual_pct']/100) / (state['max_dd_pct']/100) if max_dd > 0 else 0.0
+        state['min_margin_api'] = state.get('min_margin_ratio', float('nan'))
+
+
+
+
+        return state
+
+
     finally:
-        # Restore module globals
-        (POSITION_SIZE, MARGIN_BUFFER_X, TOP_UP_TRIGGER, HEALTHY_RATIO,
-         CONCURRENCY_CAP, ENTRY_THRESHOLD, EXIT_THRESHOLD, MIN_HOLD_HOURS,
-         SIGNAL_WINDOW_HOURS, PERP_TAKER, SPOT_TAKER) = _orig
+        # 6. Restore original state
+        for key, value in _orig_state.items():
+            globals()[key] = value
+
+
 
 
 if __name__ == "__main__":

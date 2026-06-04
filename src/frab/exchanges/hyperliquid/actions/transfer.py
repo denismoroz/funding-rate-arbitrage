@@ -1,7 +1,6 @@
 """TransferAction: transfer funds between HL sub-wallets, optionally persist snapshot."""
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from sqlalchemy import select
@@ -73,17 +72,14 @@ class TransferAction(HLAction):
         if self._sf is None or self._address is None:
             return
 
-        perp_state, spot_state = await asyncio.gather(
-            self._client.user_state(self._address),
-            self._client.spot_user_state(self._address),
-        )
+        spot_state = await self._client.spot_user_state(self._address)
 
         spot_coin = self._symbols.spot_token_map.get(coin, coin)
 
         if coin in ("USDC", "USD"):
-            perp_balance = perp_state.account_value
-            spot_balance = find_spot_balance(spot_state, spot_coin=spot_coin, raw_coin=coin)[0]
-            total_balance = perp_balance + spot_balance
+            # Unified margin: perp collateral is drawn from spot USDC, so do NOT
+            # add perp_state.account_value (it double-counts; see compute_total_usdc).
+            total_balance = find_spot_balance(spot_state, spot_coin=spot_coin, raw_coin=coin)[0]
         else:
             total_balance = compute_non_usdc_total(spot_state, spot_coin=spot_coin, raw_coin=coin)
 
