@@ -70,20 +70,13 @@ async def get_summary(request: Request) -> dict:
             detail=f"Failed to fetch HL state: {exc}",
         ) from exc
 
-    account_value = perp_state.account_value
-
     short_notional = 0.0
     long_notional = 0.0
-    unrealized = 0.0
-    cum_funding_received = 0.0
     for ap in perp_state.asset_positions:
         if ap.szi < 0:
             short_notional += ap.position_value
         elif ap.szi > 0:
             long_notional += ap.position_value
-        unrealized += ap.unrealized_pnl
-        # HL sign flip: cum_funding_since_open is negative when received
-        cum_funding_received += -ap.cum_funding_since_open
 
     from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
 
@@ -119,8 +112,15 @@ async def get_summary(request: Request) -> dict:
     # free: spot USDC total minus reserved (not minus hold, which is a HL internal concept)
     spot_free_usdc = spot_total_usdc - reserved_usdc
 
-    perp_standalone = account_value - spot_hold_usdc - unrealized - cum_funding_received
-    total_equity = spot_total_usdc + perp_standalone + spot_tokens_value + unrealized + cum_funding_received
+    # Total equity = spot USDC + spot tokens. We deliberately do NOT add the perp
+    # marginSummary.account_value: on HL these positions run on unified margin, so
+    # the perp collateral is drawn from the spot USDC already counted above, and the
+    # perp unrealized PnL is offset by the spot-token marks in this delta-neutral
+    # book. Adding account_value would double-count (~$17 on the live account) and
+    # diverges from HL's reported portfolio account value. Verified 2026-06-04:
+    # spot_usdc $73.63 + spot_tokens $50.65 = $124.28 ≈ HL $124.25 (net deposits
+    # $129.16, PnL -$4.9).
+    total_equity = spot_total_usdc + spot_tokens_value
 
     return {
         "ts_ms": int(time.time() * 1000),
