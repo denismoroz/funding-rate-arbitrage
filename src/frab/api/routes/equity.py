@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from frab.api.deps import get_session
 from frab.db.models import EquitySnapshot, FarbPosition as DBFarbPosition
 from frab.domain.enums import FarbState
+from frab.domain.equity import total_equity_usd
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -112,15 +113,7 @@ async def get_summary(request: Request) -> dict:
     # free: spot USDC total minus reserved (not minus hold, which is a HL internal concept)
     spot_free_usdc = spot_total_usdc - reserved_usdc
 
-    # Total equity = spot USDC + spot tokens. We deliberately do NOT add the perp
-    # marginSummary.account_value: on HL these positions run on unified margin, so
-    # the perp collateral is drawn from the spot USDC already counted above, and the
-    # perp unrealized PnL is offset by the spot-token marks in this delta-neutral
-    # book. Adding account_value would double-count (~$17 on the live account) and
-    # diverges from HL's reported portfolio account value. Verified 2026-06-04:
-    # spot_usdc $73.63 + spot_tokens $50.65 = $124.28 ≈ HL $124.25 (net deposits
-    # $129.16, PnL -$4.9).
-    total_equity = spot_total_usdc + spot_tokens_value
+    total_equity = total_equity_usd(spot_total_usdc, spot_tokens_value)
 
     return {
         "ts_ms": int(time.time() * 1000),

@@ -197,7 +197,8 @@ async def test_spot_long_populates_spot_value(session_factory, strategy_id, exch
     # spot price preferred over mark for SPOT positions
     assert snap.spot_value == pytest.approx(52_500.0)
     assert snap.perp_unrealized == pytest.approx(0.0)
-    assert snap.total_equity == pytest.approx(snap.cash + snap.spot_value + snap.perp_unrealized + snap.funding_cum)
+    # Canonical: total = cash + spot_value (perp_unrealized/funding are visibility-only)
+    assert snap.total_equity == pytest.approx(snap.cash + snap.spot_value)
 
 
 # ---------------------------------------------------------------------------

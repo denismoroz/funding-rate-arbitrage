@@ -5,6 +5,7 @@ import asyncio
 import logging
 from typing import Any
 
+from frab.domain.equity import total_equity_usd
 from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
 from frab.exchanges.hyperliquid.wire import HLPerpState, HLSpotState
 
@@ -63,12 +64,7 @@ class AccountSnapshotAction(HLAction):
             })
 
         spot_tokens_usd = sum(b["usd_value"] for b in spot_balances)
-        # Unified margin: perp positions are collateralized by spot USDC (already
-        # counted in usdc_spot) and perp unrealized PnL is offset by spot-token
-        # marks in the delta-neutral book. Adding perp_account_value here would
-        # double-count (~$17 on the live account) and diverge from HL's reported
-        # account value. total_usd = spot USDC + spot tokens.
-        total_usd = spot_tokens_usd + usdc_spot
+        total_usd = total_equity_usd(usdc_spot, spot_tokens_usd)
 
         return {
             "perp_account_value": perp_account_value,

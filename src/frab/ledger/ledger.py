@@ -12,12 +12,14 @@ Cash semantics:
     not relevant to this implementation. Step 7 may broaden this list.
 
 Total-equity formula:
-    total_equity = cash + spot_value + perp_unrealized + funding_cum
+    total_equity = cash + spot_value   (see frab.domain.equity.total_equity_usd)
 
-    perp_realized_cum and fees_cum are surfaced as *visibility counters only*.
-    They are NOT added to total_equity because in live mode realized P&L and
-    fees both flow through wallet balance movements that are already reflected
-    in cash. Adding them would double-count.
+    perp_unrealized, perp_realized_cum, funding_cum and fees_cum are surfaced as
+    *visibility counters only* — they are NOT added to total_equity. Under HL
+    unified margin the perp unrealized PnL mirrors the spot-token marks in this
+    delta-neutral book (and realized P&L / fees / funding already flow through
+    wallet balances reflected in cash), so adding any of them double-counts and
+    diverges from HL's reported account value.
 """
 from __future__ import annotations
 
@@ -39,6 +41,7 @@ from frab.db.models import (
 )
 from frab.db.session import session_scope
 from frab.domain.enums import FarbState, Instrument, PositionStatus, Side
+from frab.domain.equity import total_equity_usd
 from frab.exchanges.protocol import Quote
 
 logger = logging.getLogger(__name__)
@@ -121,19 +124,10 @@ class Ledger:
             funding_cum = await self._compute_funding_cum(session, strategy_id)
             fees_cum = await self._compute_fees_cum(session, strategy_id)
 
-        # total_equity: cash is the settled base; spot and unrealized perp add
-        # on top.  funding_cum is already flowing into cash in live mode, but
-        # we also add it here because wallet_snapshots may lag the last
-        # funding epoch — i.e. un-yet-settled funding.  See note below.
-        #
-        # NOTE: In live Hyperliquid mode, funding payments are immediately
-        # reflected in the perp-wallet balance.  wallet_snapshots captures
-        # this balance, so funding_cum would double-count if wallet_snapshots
-        # is always up-to-date.  However, Ledger does not know the cadence of
-        # wallet snapshot refreshes.  The conservative approach for now:
-        # follow the formula in the spec verbatim.  Step 7 / real trading will
-        # clarify whether wallet_snapshots is refreshed on every funding epoch.
-        total_equity = cash + spot_value + perp_unrealized + funding_cum
+        # Canonical equity: cash (spot USDC) + spot tokens. perp_unrealized /
+        # funding_cum / fees are visibility-only counters (see module docstring
+        # and frab.domain.equity.total_equity_usd).
+        total_equity = total_equity_usd(cash, spot_value)
 
         return EquitySnapshot(
             strategy_id=strategy_id,
