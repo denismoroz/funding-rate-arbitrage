@@ -16,10 +16,18 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import two_phase_margin as _tpm  # noqa: E402
 from two_phase_margin import (  # noqa: E402
     TwoPhaseParams, load_prod_params, load_coin_df, common_timeline, simulate,
     RESEARCH_LEVERAGE, FALLBACK_LEVERAGE,
 )
+
+# Prod actually caps BTC/ETH at 20x (per state_data.leverage on live farb_positions),
+# not the 40x/25x in src/frab/constants.RESEARCH_LEVERAGE. Override the leverage map
+# IN MEMORY for this research run only (do NOT edit prod constants). PURR/SOL/HYPE
+# already match prod (3/20/10). This makes the sim's req_margin + APR denominator
+# faithful to prod's real per-coin leverage.
+_tpm.RESEARCH_LEVERAGE.update({"BTC": 20, "ETH": 20})
 
 POSITION_SIZE = 100.0
 BUDGET = 1000.0
