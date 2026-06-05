@@ -1,14 +1,17 @@
 > **>> CORRECTION NOTE (2026-06-05):** The Backpack funding numbers in this file are
-> **superseded** by the interval-aware fix documented in `CROSS_VENUE_BACKTEST_REPORT.md`.
-> Backpack's 8h funding era was previously annualized ~8× too high. After correction:
-> corrected Backpack cold numbers: ETH 3.80%, LINK 10.36%, DOGE 7.82%, BTC 3.83%,
-> SOL −7.91%, AVAX −1.03%. Corrected routing (never Backpack):
-> **HL best:** BTC (9.23%), HYPE (19.40%), LINK (11.21%)
+> **superseded** by a cadence-agnostic (time-weighted) annualization. Backpack's 8h
+> funding era was previously annualized ~8× too high. Canonical corrected Backpack
+> cold numbers (from the fixed `backpack/compare_hl_backpack.py`): BTC 4.09%, ETH 4.62%,
+> SOL 0.06%, AVAX 0.86%, LINK 11.96%, DOGE 6.35%. Corrected routing:
+> **HL best:** BTC (9.23%), HYPE (19.40%), LINK (11.21% — see caveat)
 > **Aster best:** ETH (8.06%), SOL (6.14%), AVAX (10.49%), DOGE (7.94%)
-> **Backpack: never the best venue on any coin after the interval-aware fix.**
-> The old "best-of-3" routing table below (Backpack winning ETH/LINK/DOGE) is wrong.
-> Old portfolio APR claims (12.05% gross, 11.0% 50/50) are inflated. See the corrected
-> model in `portfolio_50k_model.py` and `PORTFOLIO_50K_REPORT.md`.
+> **Backpack:** not best on any coin worth routing — it only *marginally* edges HL on
+> LINK (11.96 vs 11.21, +0.75pp), but with ~2× the negative-hours (13% vs 6%) and thinner
+> liquidity, so LINK stays on HL. The old "best-of-3" table below (Backpack winning
+> ETH/LINK/DOGE by wide margins) is wrong — those were the inflated numbers.
+> Old portfolio APR claims (12.05% gross, 11.0% 50/50) are inflated; the corrected
+> two-phase backtest (`CROSS_VENUE_BACKTEST_REPORT.md`) gives occupied-APR ~6.7%
+> (8.3% +staking). See corrected `portfolio_50k_model.py` / `PORTFOLIO_50K_REPORT.md`.
 
 # Cross-Venue Funding Harvest — синтез (HL + Backpack + Aster)
 
