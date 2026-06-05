@@ -1,0 +1,8 @@
+coin,lst,staking_apr_conservative,staking_apr_recent,max_observed_depeg_pct,typical_recovery_days,notes
+SOL,jitoSOL,0.065,0.0562,0.0,0,"MEV-boosted; 2024 peak ~8%; 2026 run-rate 5.6-7.7%; conservative = mid-2025 average; no historical depeg"
+AVAX,sAVAX,0.045,0.0497,0.01,1,"BENQI; historically 4.5-5.5%; no documented major depeg; thin secondary-market liquidity"
+ETH,wstETH,0.025,0.0245,0.07,120,"Lido; 2024 avg ~3-4%; 2026 run-rate ~2.4%; max depeg Jun 2022 (structurally fixed post-Shanghai Apr 2023)"
+HYPE,kHYPE,0.022,0.0237,0.0,0,"Kinetiq; launched Jul 2025; base validator rate 2.18%; no depeg history; flag as unvalidated"
+BTC,none,0.0,0.0,0.0,0,"PoW; no native staking; cross-chain wrappers (Lombard/Solv) not suitable for clean hedged spot"
+LINK,none,0.0,0.0,0.0,0,"Staking exists (v0.2 ~4%) but capped pool + 28-day unbonding makes it impractical for hedged spot leg"
+DOGE,none,0.0,0.0,0.0,0,"PoW; no staking mechanism; no liquid staking exists"
