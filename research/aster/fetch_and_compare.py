@@ -4,7 +4,10 @@ Aster is a Binance-fork perp DEX (BNB ecosystem), 8h funding interval.
 Endpoint: GET /fapi/v1/fundingRate?symbol=&startTime=&limit=1000  (Binance-style).
 Covers all 7 of our universe coins INCLUDING HYPE (rare off-HL).
 
-annualized = rate * (8760/8) = rate * 1095.
+Annualization is cadence-agnostic via `hourly_annualized` (rate / interval_hours,
+spread over the hours it covers) rather than a hardcoded ×1095. Aster is uniformly
+8h today, so both agree — but if the venue ever changes cadence (as Backpack did:
+8h→hourly), the per-interval method stays correct instead of silently mis-scaling.
 
 Cold regime 2025-01-01 → 2026-04-01 vs HL (research/drift/funding_history_hl/).
 Writes funding_history/<COIN>.csv + regime_comparison.csv. Research only.
@@ -22,7 +25,6 @@ FH_DIR = HERE / "funding_history"
 FH_DIR.mkdir(exist_ok=True)
 
 API = "https://fapi.asterdex.com/fapi/v1/fundingRate"
-PERIODS_PER_YEAR = 8760 / 8  # 8h funding
 
 COINS = ["BTC", "ETH", "SOL", "HYPE", "AVAX", "LINK", "DOGE"]
 SYMBOL = {c: f"{c}USDT" for c in COINS}
@@ -61,6 +63,24 @@ def fetch(coin: str) -> pd.DataFrame:
     return df
 
 
+def hourly_annualized(rate: pd.Series) -> pd.Series:
+    """Cadence-agnostic hourly annualized-% series from per-settlement rates.
+
+    Converts each settlement to a per-hour equivalent (rate / interval_hours) and
+    spreads it across the hours it covers, so ×8760 is correct for ANY interval.
+    A fixed periods-per-year multiplier silently mis-scales if the venue changes
+    cadence — the rake Backpack's 8h→hourly switch exposed.
+
+    interval_hours = gap to the NEXT settlement, clipped to [1, 8].
+    """
+    rate = rate.sort_index()
+    gap_h = rate.index.to_series().diff().shift(-1).dt.total_seconds() / 3600.0
+    gap_h = gap_h.fillna(gap_h.median()).clip(lower=1.0, upper=8.0)
+    hourly_equiv = rate / gap_h.values
+    hourly = hourly_equiv.resample("1h").ffill().dropna()
+    return hourly * 8760 * 100.0
+
+
 def load_hl_cold(coin: str) -> pd.Series:
     p = HL_DIR / f"{coin}.csv"
     if not p.exists():
@@ -75,8 +95,8 @@ def aster_cold(df: pd.DataFrame) -> pd.Series:
     if df.empty:
         return pd.Series(dtype=float)
     t = pd.to_datetime(df["fundingTime"], unit="ms", utc=True)
-    s = pd.Series((df["fundingRate"] * PERIODS_PER_YEAR * 100).values, index=t).sort_index()
-    return s.loc[COLD_START:COLD_END]
+    rate = pd.Series(df["fundingRate"].values, index=t)
+    return hourly_annualized(rate).loc[COLD_START:COLD_END]
 
 
 def main():

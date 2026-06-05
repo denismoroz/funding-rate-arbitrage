@@ -3,10 +3,12 @@
 Backpack data starts 2025-01 → only the COLD regime (2025-01-01 → 2026-04-01)
 overlaps with our HL history; there is no hot-window Backpack data.
 
-Backpack funding is hourly, but the early-2025 dump has sub-hourly (10-min)
-rows — we resample to hourly mean before annualizing (×8760) so the cadence
-artifact does not 6× inflate the annualized figure. HL cold-window data is
-already hourly with annualized_pct precomputed.
+⚠️ Backpack's funding INTERVAL is not constant: ~8h in 2025, hourly by 2026,
+and `fundingRate` is a PER-SETTLEMENT figure. A fixed ×8760 (assume hourly)
+inflates the 8h era ~8× — the bug that contaminated earlier numbers. We now
+annualize cadence-agnostically via `hourly_annualized` (rate / interval_hours,
+spread over the hours it covers), correct for any interval. HL cold-window data
+is already hourly with annualized_pct precomputed.
 
 Output: console table + regime_comparison.csv (schema matches drift/dydx).
 Research only.
@@ -27,6 +29,26 @@ COLD_START = pd.Timestamp("2025-01-01", tz="UTC")
 COLD_END = pd.Timestamp("2026-04-01", tz="UTC")
 
 
+def hourly_annualized(rate: pd.Series) -> pd.Series:
+    """Cadence-agnostic hourly annualized-% series from per-settlement rates.
+
+    Funding rate is charged PER SETTLEMENT, and the interval can vary (Backpack
+    ran 8h in 2025, hourly by 2026). Converting each settlement to a per-hour
+    equivalent (rate / interval_hours) and spreading it across the hours it
+    covers makes ×8760 correct for ANY cadence. The rake we stepped on: a fixed
+    periods-per-year multiplier silently inflates the 8h era ~8× as if hourly.
+
+    interval_hours = gap to the NEXT settlement, clipped to [1, 8] (≤1h sub-hourly
+    cadence collapses to hourly; >8h is treated as a data gap, not a real interval).
+    """
+    rate = rate.sort_index()
+    gap_h = rate.index.to_series().diff().shift(-1).dt.total_seconds() / 3600.0
+    gap_h = gap_h.fillna(gap_h.median()).clip(lower=1.0, upper=8.0)
+    hourly_equiv = rate / gap_h.values
+    hourly = hourly_equiv.resample("1h").ffill().dropna()
+    return hourly * 8760 * 100.0
+
+
 def load_hl(coin: str) -> pd.Series:
     """HL hourly annualized %, indexed by UTC hour, cold window only."""
     df = pd.read_csv(HL_DIR / f"{coin}.csv")
@@ -37,12 +59,11 @@ def load_hl(coin: str) -> pd.Series:
 
 
 def load_bp(coin: str) -> pd.Series:
-    """Backpack hourly annualized %, resampled from raw rate × 8760."""
+    """Backpack hourly annualized %, cadence-agnostic (handles 8h↔hourly switch)."""
     df = pd.read_csv(BP_DIR / f"{coin}.csv")
     df["t"] = pd.to_datetime(df["time"], utc=True)
     df = df.set_index("t").sort_index()
-    hourly = df["fundingRate"].resample("1h").mean().dropna()
-    ann = hourly * 8760 * 100.0
+    ann = hourly_annualized(df["fundingRate"])
     return ann.loc[COLD_START:COLD_END]
 
 
