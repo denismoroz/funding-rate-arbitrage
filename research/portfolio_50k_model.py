@@ -22,33 +22,45 @@ APR is on OCCUPIED capital:
   income    = (funding + staking - fee_drag) * N    [staking=0 if no LST]
 
 Research only. Funding = cold-regime best-venue means (2025-01→2026-04) from
-backpack/aster/HL comparison CSVs. Staking yields are APPROXIMATE market rates
-(late-2025/early-2026) — flagged, need verification before any real allocation.
+interval-aware cross-venue backtest (CROSS_VENUE_BACKTEST_REPORT.md). Staking
+yields from research/staking/staking_inputs.csv (conservative column).
+
+CORRECTION 2026-06-05: Backpack funding numbers have been superseded by the
+interval-aware annualization fix in CROSS_VENUE_BACKTEST_REPORT.md. Backpack's
+8h-era was previously inflated ~8×; after correction Backpack is NEVER the
+best venue on any coin. The old (inflated) routing was:
+  LINK → Backpack 19.94 (was wrong)   now LINK → HL 11.21
+  DOGE → Backpack 10.89 (was wrong)   now DOGE → Aster 7.94
+  ETH  → Backpack 8.25 (was wrong)    now ETH  → Aster 8.06
+Staking yields also updated from approximate market rates to conservative
+values from staking/staking_inputs.csv (SOL 7.5→6.5, AVAX 5.0→4.5,
+ETH 3.0→2.5, HYPE 2.5→2.2).
 """
 
 # ── inputs ────────────────────────────────────────────────────────────────────
 
-# best-venue cold-regime funding (annualized %), source: research/{aster,backpack}/
-#   regime_comparison.csv + HL columns therein
+# best-venue cold-regime funding (annualized %), interval-aware.
+# Source: CROSS_VENUE_BACKTEST_REPORT.md (2026-06-05 corrected routing).
+# Backpack is never the best venue after the interval-aware annualization fix.
 FUNDING = {  # coin: (annualized_funding_pct, venue)
     "BTC":  (9.23,  "HL"),
-    "ETH":  (8.25,  "Backpack"),
-    "SOL":  (6.13,  "Aster"),
+    "ETH":  (8.06,  "Aster"),
+    "SOL":  (6.14,  "Aster"),
     "HYPE": (19.40, "HL"),
     "AVAX": (10.49, "Aster"),
-    "LINK": (19.94, "Backpack"),
-    "DOGE": (10.89, "Backpack"),
+    "LINK": (11.21, "HL"),
+    "DOGE": (7.94,  "Aster"),
 }
 
-# APPROXIMATE staking yields via LST (%). 0 = no practical liquid staking.
-# TODO verify with real historical rates (jitoSOL/sAVAX/wstETH/HYPE-LST).
+# Conservative staking yields via LST (%). 0 = no practical liquid staking.
+# Source: research/staking/staking_inputs.csv (staking_apr_conservative column).
 STAKING = {
-    "SOL":  7.5,   # jitoSOL / mSOL
-    "AVAX": 5.0,   # sAVAX (BENQI)
-    "ETH":  3.0,   # wstETH
-    "HYPE": 2.5,   # stHYPE / kHYPE (young)
+    "SOL":  6.5,   # jitoSOL / mSOL (conservative, mid-2025 avg)
+    "AVAX": 4.5,   # sAVAX (BENQI, historically 4.5-5.5%)
+    "ETH":  2.5,   # wstETH (2026 run-rate ~2.4%; conservative)
+    "HYPE": 2.2,   # kHYPE / Kinetiq (young, unvalidated; base validator rate)
     "BTC":  0.0,   # no native staking
-    "LINK": 0.0,   # staking capped/illiquid → impractical
+    "LINK": 0.0,   # staking capped + 28d unbonding → impractical
     "DOGE": 0.0,   # PoW, none
 }
 

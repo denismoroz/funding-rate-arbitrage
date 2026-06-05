@@ -1,3 +1,10 @@
+# >> CORRECTION NOTE (2026-06-05): bp_cold values in this file used raw per-interval
+# >> funding annualized without accounting for Backpack's variable funding interval.
+# >> During the 8h-era Backpack payments were ~8× over-counted. Corrected Backpack
+# >> cold numbers (interval-aware): ETH 3.80%, LINK 10.36%, DOGE 7.82%, BTC 3.83%,
+# >> SOL -7.91%, AVAX -1.03%. After correction Backpack is NEVER the best venue.
+# >> Corrected routing: HL best for BTC/HYPE/LINK; Aster best for ETH/SOL/AVAX/DOGE.
+# >> See CROSS_VENUE_BACKTEST_REPORT.md for the interval-aware analysis.
 coin,hl_cold,bp_cold,delta_cold,bp_gt_hl_pct_hours,bp_neg_pct,hl_neg_pct,n_common_hours
 BTC,9.2316,7.3193,-1.9123,26.4,28.23,12.86,6049
 ETH,7.6784,8.2542,0.5758,28.24,28.58,18.11,6049
