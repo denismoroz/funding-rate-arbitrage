@@ -190,21 +190,45 @@ class EngineLoop:
         quote_map = {q.coin: q for q in quotes}
         # Pull authoritative state from the exchange when available
         # (HL: assetPositions[].unrealizedPnl + allMids for spot pairs).
-        # Ledger falls back to local computation if either is missing.
         perp_unrealized_by_coin: dict[str, float] | None = None
         spot_mids_by_coin: dict[str, float] | None = None
+        failed_feeds: list[str] = []
+
         perp_getter = getattr(self._exchange, "get_perp_unrealized_by_coin", None)
         if perp_getter is not None:
             try:
                 perp_unrealized_by_coin = await perp_getter()
             except Exception as exc:  # noqa: BLE001
                 await self._log_error("perp_unrealized_fetch_failed", exc)
+                failed_feeds.append("perp_unrealized")
         spot_getter = getattr(self._exchange, "get_spot_mids_by_coin", None)
         if spot_getter is not None:
             try:
                 spot_mids_by_coin = await spot_getter()
             except Exception as exc:  # noqa: BLE001
                 await self._log_error("spot_mids_fetch_failed", exc)
+                failed_feeds.append("spot_mids")
+
+        # Equity snapshot must be all-or-nothing: it is computed from quotes +
+        # perp/spot feeds, and a *partial* input set silently prices the missing
+        # legs at 0 (spot_value collapses → phantom equity drop persisted to the
+        # DB and drawn on the graph). If any input is incomplete, log an event
+        # and skip the write entirely — a gap is honest, a phantom drop is not.
+        missing_quotes = [c for c in self._coins if c not in quote_map]
+        if missing_quotes or failed_feeds:
+            await self._log_error(
+                "equity_snapshot_skipped",
+                RuntimeError(
+                    "incomplete equity inputs; snapshot NOT persisted "
+                    f"(missing_quotes={missing_quotes}, failed_feeds={failed_feeds})"
+                ),
+                extra={
+                    "missing_quotes": missing_quotes,
+                    "failed_feeds": failed_feeds,
+                },
+            )
+            return
+
         await self._ledger.compute_and_save(
             self._strategy.strategy_id,
             quote_map,

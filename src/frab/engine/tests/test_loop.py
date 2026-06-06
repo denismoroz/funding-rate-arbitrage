@@ -34,6 +34,14 @@ def _make_funding_tick(coin: str = "BTC") -> FundingTick:
     return FundingTick(coin=coin, ts_ms=1_700_000_000_000, rate=0.0001, premium=0.0001, annualized_pct=8.76)
 
 
+def _drain(q) -> list:
+    """Synchronously pull all events currently queued on a bus subscription."""
+    out = []
+    while not q.empty():
+        out.append(q.get_nowait())
+    return out
+
+
 @pytest.fixture
 def mock_exchange():
     exc = MagicMock()
@@ -41,6 +49,11 @@ def mock_exchange():
     exc.get_quote = AsyncMock(side_effect=lambda coin: _make_quote(coin))
     exc.get_funding_rate = AsyncMock(side_effect=lambda coin: _make_funding_tick(coin))
     exc.get_wallet = AsyncMock(return_value=1000.0)
+    # Authoritative equity feeds (HL: assetPositions unrealized + spot mids).
+    # Default to empty dicts so the happy-path snapshot is computed; tests that
+    # exercise feed failure override these with a side_effect that raises.
+    exc.get_perp_unrealized_by_coin = AsyncMock(return_value={})
+    exc.get_spot_mids_by_coin = AsyncMock(return_value={})
     return exc
 
 
@@ -282,6 +295,68 @@ async def test_quote_failure_one_coin_other_coins_still_fetched(
     assert "BTC" not in saved_coins
     assert "ETH" in saved_coins
     assert "SOL" in saved_coins
+
+
+# ─── 5b. Missing quote → equity snapshot skipped (no phantom drop persisted) ──
+
+@pytest.mark.asyncio
+async def test_minute_tick_skips_equity_snapshot_when_quote_missing(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory, event_bus,
+):
+    """If any configured coin has no quote, the equity snapshot must NOT be
+    persisted (a partial set silently prices missing legs at 0 → phantom drop).
+    An equity_snapshot_skipped event is logged instead."""
+    async def get_quote_side(coin):
+        if coin == "BTC":
+            raise ConnectionError("HL 502")
+        return _make_quote(coin)
+
+    mock_exchange.get_quote = AsyncMock(side_effect=get_quote_side)
+
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        event_bus=event_bus, coins=["BTC", "ETH"],
+    )
+    loop._exchange_id_cache = 1
+    loop._save_prices = AsyncMock()
+
+    async with event_bus.subscribe() as q:
+        await loop._minute_tick(1_700_000_060_000)
+        events = _drain(q)
+
+    # The equity snapshot was NOT written.
+    mock_ledger.compute_and_save.assert_not_awaited()
+    # A skip event was published naming the missing coin.
+    skip_events = [e for e in events if e.kind == "equity_snapshot_skipped"]
+    assert len(skip_events) == 1
+    assert "BTC" in skip_events[0].payload_json["missing_quotes"]
+
+
+# ─── 5c. Feed failure (spot mids / perp unrealized) → equity snapshot skipped ──
+
+@pytest.mark.asyncio
+async def test_minute_tick_skips_equity_snapshot_when_feed_fails(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory, event_bus,
+):
+    """If an authoritative feed (spot mids) raises, the snapshot is skipped even
+    when all quotes are present."""
+    mock_exchange.get_spot_mids_by_coin = AsyncMock(side_effect=TimeoutError("504"))
+
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        event_bus=event_bus, coins=["BTC", "ETH"],
+    )
+    loop._exchange_id_cache = 1
+    loop._save_prices = AsyncMock()
+
+    async with event_bus.subscribe() as q:
+        await loop._minute_tick(1_700_000_060_000)
+        events = _drain(q)
+
+    mock_ledger.compute_and_save.assert_not_awaited()
+    skip_events = [e for e in events if e.kind == "equity_snapshot_skipped"]
+    assert len(skip_events) == 1
+    assert "spot_mids" in skip_events[0].payload_json["failed_feeds"]
 
 
 # ─── 6. asyncio.CancelledError propagates ─────────────────────────────────────
