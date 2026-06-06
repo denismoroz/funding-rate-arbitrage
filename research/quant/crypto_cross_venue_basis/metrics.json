@@ -1,0 +1,735 @@
+{
+  "strategy": "crypto_cross_venue_basis",
+  "description": "Delta-neutral perp-perp cross-venue funding basis. SHORT high-funding venue + LONG low-funding venue, same coin, equal notional.",
+  "capital_model": "2x notional (margin on both venues), return_on_capital = spread / 2",
+  "cost_model": {
+    "rt_bps_on_notional": 16.0,
+    "rt_bps_on_2x_capital": 8.0,
+    "flip_bps_on_2x_capital": 4.0,
+    "note": "4 taker fills \u00d7 4 bps each; flip = 2 fills on 1 venue"
+  },
+  "data_quality_notes": {
+    "MATIC": "HL MATIC perp delisted/renamed Sep 2024. All MATIC data truncated at 2024-09-10. Post-delisting HL records 0 % funding while Binance quotes 10.95 % cap \u2014 holding this pair post-delisting would be catastrophic.",
+    "Drift": "Ends 2025-01-08; data shows Drift > HL for most coins (negative spread). NOT viable."
+  },
+  "universe": [
+    "ARB",
+    "AVAX",
+    "BTC",
+    "DOGE",
+    "ETH",
+    "LINK",
+    "MATIC",
+    "OP",
+    "SOL"
+  ],
+  "spread_characterization": {
+    "HL_Binance_pooled": {
+      "label": "HL-Binance (all coins)",
+      "mean_ann": 0.058423068868074295,
+      "median_ann": 0.036211650000000005,
+      "std_ann": 0.28463770712286146,
+      "pct_days_positive": 0.6639145750770585,
+      "lag1_autocorr": 0.6920003900696459,
+      "half_life_days": 1.882688746220867,
+      "n_days": 9084
+    },
+    "HL_Bybit_pooled": {
+      "label": "HL-Bybit (all coins)",
+      "mean_ann": 0.050060170174219466,
+      "median_ann": 0.030929078,
+      "std_ann": 0.28497934496680216,
+      "pct_days_positive": 0.6378152185882612,
+      "lag1_autocorr": 0.6601328989648587,
+      "half_life_days": 1.668970971483417,
+      "n_days": 9081
+    },
+    "per_coin": {
+      "ARB_HL-Binance": {
+        "label": "ARB HL-Binance",
+        "mean_ann": 0.027727885372835173,
+        "median_ann": 0.013105726499999998,
+        "std_ann": 0.19590013871591402,
+        "pct_days_positive": 0.5710306406685237,
+        "lag1_autocorr": 0.5696121940623933,
+        "half_life_days": 1.231605868545183,
+        "n_days": 1077
+      },
+      "ARB_HL-Bybit": {
+        "label": "ARB HL-Bybit",
+        "mean_ann": 0.020073154175063584,
+        "median_ann": 0.0015371975000000038,
+        "std_ann": 0.20478108032869605,
+        "pct_days_positive": 0.510677808727948,
+        "lag1_autocorr": 0.5491321960266994,
+        "half_life_days": 1.1563706958520457,
+        "n_days": 1077
+      },
+      "ARB_Binance-Bybit": {
+        "label": "ARB Binance-Bybit",
+        "mean_ann": -0.007560985157699445,
+        "median_ann": 0.0,
+        "std_ann": 0.0740402090548358,
+        "pct_days_positive": 0.32653061224489793,
+        "lag1_autocorr": 0.26749213316059767,
+        "half_life_days": 0.5256430681970251,
+        "n_days": 1078
+      },
+      "AVAX_HL-Binance": {
+        "label": "AVAX HL-Binance",
+        "mean_ann": 0.04103678378803844,
+        "median_ann": 0.035823180499999996,
+        "std_ann": 0.26759649114030515,
+        "pct_days_positive": 0.6295264623955432,
+        "lag1_autocorr": 0.6759558112172315,
+        "half_life_days": 1.7699141433721213,
+        "n_days": 1077
+      },
+      "AVAX_HL-Bybit": {
+        "label": "AVAX HL-Bybit",
+        "mean_ann": 0.022509109275503612,
+        "median_ann": 0.020792480500000002,
+        "std_ann": 0.28156511116455873,
+        "pct_days_positive": 0.5896007428040855,
+        "lag1_autocorr": 0.5744161918185882,
+        "half_life_days": 1.2502630584326027,
+        "n_days": 1077
+      },
+      "AVAX_Binance-Bybit": {
+        "label": "AVAX Binance-Bybit",
+        "mean_ann": -0.01863699141929499,
+        "median_ann": -0.010254674999999998,
+        "std_ann": 0.11604809168442054,
+        "pct_days_positive": 0.26159554730983303,
+        "lag1_autocorr": 0.0732523858388239,
+        "half_life_days": 0.26518302487060963,
+        "n_days": 1078
+      },
+      "BTC_HL-Binance": {
+        "label": "BTC HL-Binance",
+        "mean_ann": 0.07867402603966686,
+        "median_ann": 0.05227918725,
+        "std_ann": 0.14916925883084498,
+        "pct_days_positive": 0.7996289424860853,
+        "lag1_autocorr": 0.6424137822993679,
+        "half_life_days": 1.5663540871063735,
+        "n_days": 1078
+      },
+      "BTC_HL-Bybit": {
+        "label": "BTC HL-Bybit",
+        "mean_ann": 0.07452446699513997,
+        "median_ann": 0.05343528825,
+        "std_ann": 0.1445167024184661,
+        "pct_days_positive": 0.7903525046382189,
+        "lag1_autocorr": 0.6239145026157339,
+        "half_life_days": 1.4693355181633763,
+        "n_days": 1078
+      },
+      "BTC_Binance-Bybit": {
+        "label": "BTC Binance-Bybit",
+        "mean_ann": -0.004149559044526901,
+        "median_ann": 0.0,
+        "std_ann": 0.05166592343883512,
+        "pct_days_positive": 0.3961038961038961,
+        "lag1_autocorr": 0.4674767795695013,
+        "half_life_days": 0.91154928340709,
+        "n_days": 1078
+      },
+      "DOGE_HL-Binance": {
+        "label": "DOGE HL-Binance",
+        "mean_ann": 0.09585401781211901,
+        "median_ann": 0.04411663749999999,
+        "std_ann": 0.3752687228218759,
+        "pct_days_positive": 0.6889507892293407,
+        "lag1_autocorr": 0.7195120685074835,
+        "half_life_days": 2.1056656320258362,
+        "n_days": 1077
+      },
+      "DOGE_HL-Bybit": {
+        "label": "DOGE HL-Bybit",
+        "mean_ann": 0.08282928596439386,
+        "median_ann": 0.0379623725,
+        "std_ann": 0.35896056858499453,
+        "pct_days_positive": 0.6610956360259982,
+        "lag1_autocorr": 0.6547541647369898,
+        "half_life_days": 1.6367288135501568,
+        "n_days": 1077
+      },
+      "DOGE_Binance-Bybit": {
+        "label": "DOGE Binance-Bybit",
+        "mean_ann": -0.012996519109461969,
+        "median_ann": -0.001423500000000008,
+        "std_ann": 0.09780265479378876,
+        "pct_days_positive": 0.3450834879406308,
+        "lag1_autocorr": 0.25379193585827203,
+        "half_life_days": 0.5054891404276531,
+        "n_days": 1078
+      },
+      "ETH_HL-Binance": {
+        "label": "ETH HL-Binance",
+        "mean_ann": 0.08618400186322717,
+        "median_ann": 0.04863756400000001,
+        "std_ann": 0.20551864575312928,
+        "pct_days_positive": 0.7465181058495822,
+        "lag1_autocorr": 0.6807546572335702,
+        "half_life_days": 1.802473596042366,
+        "n_days": 1077
+      },
+      "ETH_HL-Bybit": {
+        "label": "ETH HL-Bybit",
+        "mean_ann": 0.08521393895700617,
+        "median_ann": 0.049521813,
+        "std_ann": 0.20051976336787322,
+        "pct_days_positive": 0.7502321262766946,
+        "lag1_autocorr": 0.6605442701032128,
+        "half_life_days": 1.6714781842625892,
+        "n_days": 1077
+      },
+      "ETH_Binance-Bybit": {
+        "label": "ETH Binance-Bybit",
+        "mean_ann": -0.0009765476808905395,
+        "median_ann": 0.0,
+        "std_ann": 0.05420066492676461,
+        "pct_days_positive": 0.4202226345083488,
+        "lag1_autocorr": 0.4674189325135734,
+        "half_life_days": 0.9114009591221215,
+        "n_days": 1078
+      },
+      "LINK_HL-Binance": {
+        "label": "LINK HL-Binance",
+        "mean_ann": 0.07060476277655323,
+        "median_ann": 0.04267945000000001,
+        "std_ann": 0.2675424345568163,
+        "pct_days_positive": 0.7335190343546889,
+        "lag1_autocorr": 0.7400165011699823,
+        "half_life_days": 2.3021813069961983,
+        "n_days": 1077
+      },
+      "LINK_HL-Bybit": {
+        "label": "LINK HL-Bybit",
+        "mean_ann": 0.06930588468927376,
+        "median_ann": 0.0411715985,
+        "std_ann": 0.2835539549403033,
+        "pct_days_positive": 0.7279480037140205,
+        "lag1_autocorr": 0.6791213894078691,
+        "half_life_days": 1.7912844666090744,
+        "n_days": 1077
+      },
+      "LINK_Binance-Bybit": {
+        "label": "LINK Binance-Bybit",
+        "mean_ann": -0.0012976731910946194,
+        "median_ann": 0.0,
+        "std_ann": 0.10223829049573381,
+        "pct_days_positive": 0.3812615955473098,
+        "lag1_autocorr": 0.1190730694893543,
+        "half_life_days": 0.3257243117675511,
+        "n_days": 1078
+      },
+      "MATIC_HL-Binance": {
+        "label": "MATIC HL-Binance",
+        "mean_ann": 0.008064540067917313,
+        "median_ann": 0.0172572,
+        "std_ann": 0.5614686347586714,
+        "pct_days_positive": 0.5438972162740899,
+        "lag1_autocorr": 0.7509835673226866,
+        "half_life_days": 2.4204474255992507,
+        "n_days": 467
+      },
+      "MATIC_HL-Bybit": {
+        "label": "MATIC HL-Bybit",
+        "mean_ann": 0.004107756931502985,
+        "median_ann": 0.011734822999999998,
+        "std_ann": 0.550462665914456,
+        "pct_days_positive": 0.5452586206896551,
+        "lag1_autocorr": 0.7709520580797926,
+        "half_life_days": 2.6646277187792835,
+        "n_days": 464
+      },
+      "MATIC_Binance-Bybit": {
+        "label": "MATIC Binance-Bybit",
+        "mean_ann": -0.0012993606681034485,
+        "median_ann": 0.0,
+        "std_ann": 0.12300426142326709,
+        "pct_days_positive": 0.33836206896551724,
+        "lag1_autocorr": 0.19255366053982925,
+        "half_life_days": 0.4207572077302162,
+        "n_days": 464
+      },
+      "OP_HL-Binance": {
+        "label": "OP HL-Binance",
+        "mean_ann": 0.014963375237959707,
+        "median_ann": 0.0,
+        "std_ann": 0.2470441962879381,
+        "pct_days_positive": 0.4948932219127205,
+        "lag1_autocorr": 0.646019633244196,
+        "half_life_days": 1.5864200307646026,
+        "n_days": 1077
+      },
+      "OP_HL-Bybit": {
+        "label": "OP HL-Bybit",
+        "mean_ann": 0.0065399411618222904,
+        "median_ann": 0.0,
+        "std_ann": 0.24942474010811516,
+        "pct_days_positive": 0.4596100278551532,
+        "lag1_autocorr": 0.6635325257371831,
+        "half_life_days": 1.6898716803725593,
+        "n_days": 1077
+      },
+      "OP_Binance-Bybit": {
+        "label": "OP Binance-Bybit",
+        "mean_ann": -0.0085157547309833,
+        "median_ann": 0.0,
+        "std_ann": 0.06649805510462403,
+        "pct_days_positive": 0.3738404452690167,
+        "lag1_autocorr": 0.34559945522143665,
+        "half_life_days": 0.6523892788504803,
+        "n_days": 1078
+      },
+      "SOL_HL-Binance": {
+        "label": "SOL HL-Binance",
+        "mean_ann": 0.07415695152912681,
+        "median_ann": 0.050283568,
+        "std_ann": 0.3037051052576845,
+        "pct_days_positive": 0.6991643454038997,
+        "lag1_autocorr": 0.6489561806908415,
+        "half_life_days": 1.6030598485192527,
+        "n_days": 1077
+      },
+      "SOL_HL-Bybit": {
+        "label": "SOL HL-Bybit",
+        "mean_ann": 0.05926037632021315,
+        "median_ann": 0.04230371899999999,
+        "std_ann": 0.30548124432338664,
+        "pct_days_positive": 0.6527390900649953,
+        "lag1_autocorr": 0.6339026694763179,
+        "half_life_days": 1.520526920078981,
+        "n_days": 1077
+      },
+      "SOL_Binance-Bybit": {
+        "label": "SOL Binance-Bybit",
+        "mean_ann": -0.014789681493506495,
+        "median_ann": -0.007256199999999997,
+        "std_ann": 0.06815514463316194,
+        "pct_days_positive": 0.33116883116883117,
+        "lag1_autocorr": 0.3757930721358218,
+        "half_life_days": 0.7082205015551064,
+        "n_days": 1078
+      }
+    }
+  },
+  "variant_1_static_HL_Binance": {
+    "metrics": {
+      "cagr": 0.029033018495915774,
+      "vol": 0.004811512056265184,
+      "sharpe": 5.950776052047612,
+      "sortino": 6.665290545806802,
+      "max_drawdown": -0.031976265694372064,
+      "calmar": 0.9079552557328697,
+      "mean_ann": 0.02863223071856122,
+      "n_bars": 1078,
+      "years": 2.9534246575342467,
+      "exposure": 0.9990723562152134,
+      "final_equity": 1.0882007755625294
+    },
+    "yearly": [
+      {
+        "year": 2023,
+        "cagr": 0.003166801803727415,
+        "sharpe": 0.36939954850724294,
+        "max_dd": -0.031976265694372064,
+        "n": 214
+      },
+      {
+        "year": 2024,
+        "cagr": 0.061213631400972135,
+        "sharpe": 14.439843620718024,
+        "max_dd": -0.0005707856244899778,
+        "n": 366
+      },
+      {
+        "year": 2025,
+        "cagr": 0.02125041662420246,
+        "sharpe": 12.182793783683236,
+        "max_dd": -0.0020532356699217713,
+        "n": 365
+      },
+      {
+        "year": 2026,
+        "cagr": 0.005691920069140544,
+        "sharpe": 6.183908950838276,
+        "max_dd": -0.0005974674231743471,
+        "n": 133
+      }
+    ],
+    "correlations": {
+      "corr_BTC": 0.013276425517516538,
+      "corr_HL_carry": 0.7025928956648416
+    }
+  },
+  "variant_2_static_HL_Bybit": {
+    "metrics": {
+      "cagr": 0.024637092273964045,
+      "vol": 0.004863613373288959,
+      "sharpe": 5.006796241768019,
+      "sortino": 5.670348956613524,
+      "max_drawdown": -0.034337390139557944,
+      "calmar": 0.717500432439133,
+      "mean_ann": 0.024351121158795837,
+      "n_bars": 1078,
+      "years": 2.9534246575342467,
+      "exposure": 0.9990723562152134,
+      "final_equity": 1.0745284423534567
+    },
+    "yearly": [
+      {
+        "year": 2023,
+        "cagr": -0.004776760524539125,
+        "sharpe": -0.5567696614382225,
+        "max_dd": -0.034337390139557944,
+        "n": 214
+      },
+      {
+        "year": 2024,
+        "cagr": 0.059062329738791775,
+        "sharpe": 14.851612288713344,
+        "max_dd": -0.0005434471310661326,
+        "n": 366
+      },
+      {
+        "year": 2025,
+        "cagr": 0.017026376591997572,
+        "sharpe": 6.414116106155444,
+        "max_dd": -0.0028699771808560204,
+        "n": 365
+      },
+      {
+        "year": 2026,
+        "cagr": 0.0007276518050076675,
+        "sharpe": 0.7181803757654077,
+        "max_dd": -0.0018511672866146078,
+        "n": 133
+      }
+    ],
+    "correlations": {
+      "corr_BTC": 0.027562899864154236,
+      "corr_HL_carry": 0.6628307849763626
+    }
+  },
+  "variant_3_dynamic_grid": {
+    "thresh_00pct": {
+      "entry_thresh_ann": 0.0,
+      "metrics": {
+        "cagr": 0.0024336117821663894,
+        "vol": 0.005401869248255931,
+        "sharpe": 0.4526638557822467,
+        "sortino": 1.4355789943491197,
+        "max_drawdown": -0.06940825188397703,
+        "calmar": 0.03506228317397216,
+        "mean_ann": 0.0024452309623470762,
+        "n_bars": 1097,
+        "years": 3.0054794520547947,
+        "exposure": 0.9863263445761167,
+        "final_equity": 1.0073320333813365
+      },
+      "yearly": [
+        {
+          "year": 2023,
+          "cagr": 0.10124283272475121,
+          "sharpe": 12.842522160283604,
+          "max_dd": -0.0024747601723761337,
+          "n": 214
+        },
+        {
+          "year": 2024,
+          "cagr": 0.008014163754529235,
+          "sharpe": 1.7047885443763153,
+          "max_dd": -0.021786305270210193,
+          "n": 366
+        },
+        {
+          "year": 2025,
+          "cagr": -0.0378694549954427,
+          "sharpe": -12.520286414405236,
+          "max_dd": -0.03773901931066992,
+          "n": 365
+        },
+        {
+          "year": 2026,
+          "cagr": -0.043764865357013516,
+          "sharpe": -21.581345091942634,
+          "max_dd": -0.018257115565295967,
+          "n": 152
+        }
+      ],
+      "avg_deployed_frac": 0.957877544819204
+    },
+    "thresh_03pct": {
+      "entry_thresh_ann": 0.03,
+      "metrics": {
+        "cagr": -0.02234908416561332,
+        "vol": 0.006011733770285242,
+        "sharpe": -3.7566308605012813,
+        "sortino": -9.102933534547672,
+        "max_drawdown": -0.12539596246430684,
+        "calmar": -0.17822810022272323,
+        "mean_ann": -0.02258386460657126,
+        "n_bars": 1097,
+        "years": 3.0054794520547947,
+        "exposure": 0.9863263445761167,
+        "final_equity": 0.9343243060851472
+      },
+      "yearly": [
+        {
+          "year": 2023,
+          "cagr": 0.0850700376579352,
+          "sharpe": 10.321431033543583,
+          "max_dd": -0.005228734175291239,
+          "n": 214
+        },
+        {
+          "year": 2024,
+          "cagr": -0.01441514729952098,
+          "sharpe": -2.7362306877701603,
+          "max_dd": -0.036669591722127026,
+          "n": 366
+        },
+        {
+          "year": 2025,
+          "cagr": -0.06878280959182381,
+          "sharpe": -19.37259372078398,
+          "max_dd": -0.06855875663426769,
+          "n": 365
+        },
+        {
+          "year": 2026,
+          "cagr": -0.06945534438346934,
+          "sharpe": -24.875670515246465,
+          "max_dd": -0.029276724277798816,
+          "n": 152
+        }
+      ],
+      "avg_deployed_frac": 0.8416388129241366
+    },
+    "thresh_06pct": {
+      "entry_thresh_ann": 0.06,
+      "metrics": {
+        "cagr": -0.040044954164432656,
+        "vol": 0.006359253978996263,
+        "sharpe": -6.423134266341567,
+        "sortino": -15.255346452060254,
+        "max_drawdown": -0.16707709232295975,
+        "calmar": -0.23967950128690188,
+        "mean_ann": -0.04084634214085985,
+        "n_bars": 1097,
+        "years": 3.0054794520547947,
+        "exposure": 0.9863263445761167,
+        "final_equity": 0.8844136398786921
+      },
+      "yearly": [
+        {
+          "year": 2023,
+          "cagr": 0.07544729041223563,
+          "sharpe": 9.053639546882767,
+          "max_dd": -0.0049191034508961895,
+          "n": 214
+        },
+        {
+          "year": 2024,
+          "cagr": -0.027063412019508015,
+          "sharpe": -4.901247639965197,
+          "max_dd": -0.04672672578469739,
+          "n": 366
+        },
+        {
+          "year": 2025,
+          "cagr": -0.09014126395901156,
+          "sharpe": -25.13160607166216,
+          "max_dd": -0.09002728092595957,
+          "n": 365
+        },
+        {
+          "year": 2026,
+          "cagr": -0.09918353423294268,
+          "sharpe": -31.23293258415385,
+          "max_dd": -0.042103132256546716,
+          "n": 152
+        }
+      ],
+      "avg_deployed_frac": 0.6714018028967893
+    },
+    "thresh_10pct": {
+      "entry_thresh_ann": 0.1,
+      "metrics": {
+        "cagr": -0.030055458287201797,
+        "vol": 0.005777847007535488,
+        "sharpe": -5.278512712519451,
+        "sortino": -12.740232966646843,
+        "max_drawdown": -0.13547686361842903,
+        "calmar": -0.22184938065774154,
+        "mean_ann": -0.03049843888026854,
+        "n_bars": 1097,
+        "years": 3.0054794520547947,
+        "exposure": 0.97538742023701,
+        "final_equity": 0.9123638949324402
+      },
+      "yearly": [
+        {
+          "year": 2023,
+          "cagr": 0.06960508080335392,
+          "sharpe": 8.656320740719233,
+          "max_dd": -0.004733210572375968,
+          "n": 214
+        },
+        {
+          "year": 2024,
+          "cagr": -0.02660534044728169,
+          "sharpe": -5.198942062224041,
+          "max_dd": -0.041661123178209136,
+          "n": 366
+        },
+        {
+          "year": 2025,
+          "cagr": -0.06819466285758669,
+          "sharpe": -20.460364670791414,
+          "max_dd": -0.06802531658621125,
+          "n": 365
+        },
+        {
+          "year": 2026,
+          "cagr": -0.07728770899340931,
+          "sharpe": -27.542459838678013,
+          "max_dd": -0.03274911146397774,
+          "n": 152
+        }
+      ],
+      "avg_deployed_frac": 0.4661956852020662
+    }
+  },
+  "variant_3_default_3pct": {
+    "metrics": {
+      "cagr": -0.02234908416561332,
+      "vol": 0.006011733770285242,
+      "sharpe": -3.7566308605012813,
+      "sortino": -9.102933534547672,
+      "max_drawdown": -0.12539596246430684,
+      "calmar": -0.17822810022272323,
+      "mean_ann": -0.02258386460657126,
+      "n_bars": 1097,
+      "years": 3.0054794520547947,
+      "exposure": 0.9863263445761167,
+      "final_equity": 0.9343243060851472
+    },
+    "correlations": {
+      "corr_BTC": 0.03676068605769039,
+      "corr_HL_carry": 0.5143760331770691
+    }
+  },
+  "drift_secondary": {
+    "note": "ENDS 2025-01-08, Drift funding > HL for most coins, NOT viable today",
+    "per_coin_stats": {
+      "ARB": {
+        "label": "HL-Drift/ARB",
+        "mean_ann": -0.17949241173193012,
+        "median_ann": -0.12372598657529099,
+        "std_ann": 0.4713331960267996,
+        "pct_days_positive": 0.3390119250425894,
+        "lag1_autocorr": 0.6820613949196316,
+        "half_life_days": 1.811507278874245,
+        "n_days": 587
+      },
+      "AVAX": {
+        "label": "HL-Drift/AVAX",
+        "mean_ann": -0.2737644232228784,
+        "median_ann": -0.19234949846623273,
+        "std_ann": 0.5133895934216754,
+        "pct_days_positive": 0.22849462365591397,
+        "lag1_autocorr": 0.538840551317245,
+        "half_life_days": 1.120988680885491,
+        "n_days": 372
+      },
+      "BTC": {
+        "label": "HL-Drift/BTC",
+        "mean_ann": -0.09331082909538156,
+        "median_ann": -0.059274402455844616,
+        "std_ann": 0.265894771384163,
+        "pct_days_positive": 0.3339011925042589,
+        "lag1_autocorr": 0.6548587090664206,
+        "half_life_days": 1.6373460894141934,
+        "n_days": 587
+      },
+      "DOGE": {
+        "label": "HL-Drift/DOGE",
+        "mean_ann": -0.31636673789717645,
+        "median_ann": -0.16568709511883772,
+        "std_ann": 0.7819204248598128,
+        "pct_days_positive": 0.29471890971039183,
+        "lag1_autocorr": 0.6661406739349256,
+        "half_life_days": 1.7061899288968945,
+        "n_days": 587
+      },
+      "ETH": {
+        "label": "HL-Drift/ETH",
+        "mean_ann": 0.00993128466566919,
+        "median_ann": 0.008448569518857644,
+        "std_ann": 0.29897770428097065,
+        "pct_days_positive": 0.5264054514480409,
+        "lag1_autocorr": 0.6026060582272037,
+        "half_life_days": 1.3685265108547646,
+        "n_days": 587
+      },
+      "LINK": {
+        "label": "HL-Drift/LINK",
+        "mean_ann": -0.27987300359585565,
+        "median_ann": -0.1777767128903324,
+        "std_ann": 0.6276038373553144,
+        "pct_days_positive": 0.30248306997742663,
+        "lag1_autocorr": 0.5438351937838194,
+        "half_life_days": 1.1379689771538959,
+        "n_days": 443
+      },
+      "MATIC": {
+        "label": "HL-Drift/MATIC",
+        "mean_ann": -0.23594908635121287,
+        "median_ann": -0.14960721240630906,
+        "std_ann": 0.6051007462240696,
+        "pct_days_positive": 0.3169164882226981,
+        "lag1_autocorr": 0.6863266880037059,
+        "half_life_days": 1.8415099337074368,
+        "n_days": 467
+      },
+      "OP": {
+        "label": "HL-Drift/OP",
+        "mean_ann": -0.2337231522410398,
+        "median_ann": -0.11683431310102094,
+        "std_ann": 0.5972850667261574,
+        "pct_days_positive": 0.3642611683848797,
+        "lag1_autocorr": 0.6754962892932405,
+        "half_life_days": 1.7668461031210607,
+        "n_days": 582
+      },
+      "SOL": {
+        "label": "HL-Drift/SOL",
+        "mean_ann": -0.0392713856820523,
+        "median_ann": -0.01680450405791544,
+        "std_ann": 0.403221983844963,
+        "pct_days_positive": 0.46678023850085176,
+        "lag1_autocorr": 0.6003588930213851,
+        "half_life_days": 1.3585057255975206,
+        "n_days": 587
+      }
+    },
+    "portfolio_metrics": {
+      "cagr": -0.08525134026652992,
+      "vol": 0.006920554885493685,
+      "sharpe": -12.870520504323009,
+      "sortino": -14.05631262399317,
+      "max_drawdown": -0.13357940426068116,
+      "calmar": -0.6382072201801509,
+      "mean_ann": -0.08907114355503924,
+      "n_bars": 587,
+      "years": 1.6082191780821917,
+      "exposure": 0.9982964224872232,
+      "final_equity": 0.8664924509333531
+    }
+  }
+}
