@@ -1,0 +1,86 @@
+{
+  "strategy": "crypto_pairs_cointegration",
+  "tf": "1d",
+  "universe": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "AVAX",
+    "LINK",
+    "AAVE",
+    "ARB",
+    "OP",
+    "DOGE",
+    "UNI",
+    "INJ",
+    "TIA"
+  ],
+  "n_pairs_traded": 8,
+  "pairs": [
+    "INJ-TIA",
+    "AVAX-OP",
+    "OP-INJ",
+    "AVAX-ARB",
+    "OP-TIA",
+    "ARB-TIA",
+    "AVAX-INJ",
+    "LINK-ARB"
+  ],
+  "params": {
+    "FORMATION_DAYS": 365,
+    "LOOKBACK": 60,
+    "Z_ENTRY": 2.0,
+    "Z_EXIT": 0.5,
+    "Z_STOP": 4.0,
+    "cost_bps": 5.0
+  },
+  "full_sample": {
+    "cagr": 0.23319229045340073,
+    "vol": 0.17303554314848502,
+    "sharpe": 1.2980482889811065,
+    "sortino": 1.560813315782625,
+    "max_drawdown": -0.14959871539587255,
+    "calmar": 1.5587853801840503,
+    "mean_ann": 0.2246084907168074,
+    "n_bars": 925,
+    "years": 2.5342465753424657,
+    "exposure": 0.8281081081081081,
+    "final_equity": 1.7009615464329129
+  },
+  "out_of_sample": {
+    "cagr": 0.040480100612865444,
+    "vol": 0.17833459116012818,
+    "sharpe": 0.3115406123838978,
+    "sortino": 0.39798331183036606,
+    "max_drawdown": -0.149598715395872,
+    "calmar": 0.27059123138688695,
+    "mean_ann": 0.05555846773925838,
+    "n_bars": 560,
+    "years": 1.5342465753424657,
+    "exposure": 0.9928571428571429,
+    "final_equity": 1.0627738647271718
+  },
+  "yearly_oos": [
+    {
+      "year": 2024,
+      "cagr": 0.2384031873491026,
+      "sharpe": 1.173307891166084,
+      "max_dd": -0.058444228488147676,
+      "n": 63
+    },
+    {
+      "year": 2025,
+      "cagr": -0.06732176346649099,
+      "sharpe": -0.28786221435596865,
+      "max_dd": -0.14055388218315834,
+      "n": 365
+    },
+    {
+      "year": 2026,
+      "cagr": 0.29565242345278775,
+      "sharpe": 1.783312562183421,
+      "max_dd": -0.06361940424721702,
+      "n": 132
+    }
+  ]
+}
