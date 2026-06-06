@@ -11,13 +11,18 @@ turnover costs, metrics annualized from the equity curve. Numbers below are **ne
 We researched 15 candidate strategies, shortlisted 7, and **backtested all 7** across crypto (3yr
 hourly Hyperliquid OHLCV + funding) and FX (22yr daily G10).
 
-**Honest headline: there is no clean, robust 25%-CAGR strategy in this evidence set.** Two genuine,
-deployable edges emerged, sitting at opposite corners of the risk/return plane:
+**Updated headline (after walk-forward follow-up, `_wfo_probe/`): THREE crypto strategies work**, and
+two of them reach/exceed 25% CAGR — but the famous "free" textbook strategies (cross-sectional
+momentum, pairs, FX trend, reversal) fail, exactly as efficient-market priors predict for public alpha.
 
-1. **Crypto trend / breakout** — high return *when crypto trends*, but heavily regime-dependent
-   (most P&L from the 2023 ramp; flat-to-negative in the 2025-26 chop).
-2. **Funding-rate carry (delta-neutral)** — superb risk-adjusted (Sharpe ≫ trend, sub-1% drawdown)
-   but **low absolute return (~6-7%)** on clean major coins, and **compressing** (2026 ≈ 0).
+The deployable edges, at opposite corners of the risk/return plane:
+
+1. **Crypto trend / breakout** — Donchian 28.5% (Calmar 1.0) and the trend **parameter-ensemble
+   34.3%** (Sharpe 0.99, Calmar 1.01, cost-insensitive) both BEAT buy-and-hold on risk-adjusted terms
+   and clear 25%. Caveat: regime-dependent (most P&L from 2023 ramp; negative in 2026).
+2. **Funding-rate carry (delta-neutral)** — superb risk-adjusted (sub-1% drawdown); ~6-7% on clean
+   majors in the conservative model, but **~19-25% live** (the user's own book) using high-funding
+   alts + capital efficiency. Real, compressing, operationally demanding.
 
 The other four candidates were **rejected**: cross-sectional momentum, short-term reversal, pairs/
 cointegration, and FX trend all failed out-of-sample or net of costs — several were negative even
@@ -79,7 +84,8 @@ short-vol & cross-exchange (no data), intraday seasonality / FX session / Bollin
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | **Donchian breakout** (N55/M20, BTC/ETH/SOL) | Crypto | 1d | **+28.5%** (best cell 32.4%) | 0.96 | 0.99 | −28.6% | **1.00** | 21 | ⚠️ Meets target, 2023-dependent |
 | 2 | **Funding carry** (delta-neutral, +staking) | Crypto | 1h | +7.3% | **36.6**¹ | — | **−0.69%** | 10.7 | many | ✅ Best risk-adj; low return; decaying |
-| 3 | **TS-momentum trend** (50/200 vol-tgt) | Crypto | 1d | +9.2% (grid 30-45% in-sample) | 0.46 | 0.49 | −27.7% | 0.33 | 9 | ⚠️ Below target; drawdown-reducer |
+| 3 | **TS-momentum trend** — single param 50/200 | Crypto | 1d | +9.2% | 0.46 | 0.49 | −27.7% | 0.33 | 9 | naive default understates it |
+| 3b | **TS-momentum trend — PARAMETER ENSEMBLE** (avg of 6 horizons) | Crypto | 1d | **+34.3%** | **0.99** | 1.29 | −33.9% | **1.01** | — | ✅ Clears target, cost-insensitive, beats B&H risk-adj (regime caveat) |
 | 4 | Pairs / cointegration (8 pairs) | Crypto | 1d | +4.0% OOS | 0.31 | 0.40 | −15.0% | 0.27 | ~ | ❌ Decayed in 2025 |
 | 5 | Cross-sectional momentum (K30/N3) | Crypto | 1d | −10.1% LO / +8.1% LS | 0.25 / 0.42 | — | −81% / −50% | neg | weekly | ❌ Survivorship-biased, poor |
 | 6 | Short-term reversal / z-score MR | Crypto | 1d/1h | −23% to −30% | <0 | <0 | −60 to −82% | neg | many | ❌ Negative even at 0bps |
