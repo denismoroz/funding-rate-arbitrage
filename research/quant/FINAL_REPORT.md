@@ -172,6 +172,22 @@ naive capital split can't beat *both* endpoints on Calmar; risk-parity degenerat
 would shift the whole frontier up — a 50/50 with live carry plausibly reaches **25%+ at Calmar 2-3×
 trend-only**. That re-run (with the live book's realized carry stream) is the right next step.
 
+## 6c. Novelty follow-ups (idea hunt beyond carry/trend)
+
+Two genuinely-new ideas were tested to find alpha the live book does NOT already have. Both came
+back negative — but informatively:
+
+| Idea | Folder | Result | Verdict |
+|---|---|---|---|
+| **Funding-extreme reversal** (directional contrarian on funding z-score; PnL decomposed into price vs funding) | `crypto_funding_reversal/` | **Price-only PnL negative in ALL 18 grid cells** (A: −18% CAGR price-only; B: −8%). The only positive component is funding (+4-12%) = pure carry. | ❌ No price-reversal alpha. High funding does NOT predict price decline 2023-26; fading it is momentum-fading in a trending market. "Carry in disguise" — proven by decomposition. |
+| **Regime-switch trend↔carry** (Kaufman ER / strategy-momentum filter) | `crypto_regime_switch/` | **No variant beats static 50/50** on Calmar AND Sharpe net of switching costs (best switch Calmar 1.14 vs static 1.29). | ❌ Regime timing fails; static blend wins. Carry's near-zero drawdown makes any reallocation costly. |
+
+**Meta-finding:** systematic signal-mining on public price/funding daily data keeps collapsing onto
+the two edges already known (carry, trend). This is the efficient-market result for public data.
+Genuinely new alpha is more likely to live in (a) the **proprietary multi-venue/microstructure**
+data (cross-venue funding dislocation, execution flow — untested), or (b) a **different instrument**
+(options variance-risk-premium — needs Deribit data), not in more daily price/funding signals.
+
 ## 7. Rejected strategies and reasons (Stage 5)
 
 | Strategy | Why rejected |
