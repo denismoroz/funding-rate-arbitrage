@@ -148,6 +148,30 @@ slippage, depeg and liquidation risk. Trust the **return** (~6-7%); the live boo
 
 ---
 
+## 6b. Trend + carry blend (follow-up) — `research/quant/crypto_trend_carry_blend/`
+
+Daily correlation trend-ensemble vs carry = **+0.16** (low, as the regime thesis predicts).
+Capital-split frontier (conservative carry, 3yr):
+
+| w_trend / w_carry | CAGR | Sharpe | MaxDD | Calmar |
+|---|---|---|---|---|
+| 100 / 0 (trend only) | 34.3% | 0.99 | −33.9% | 1.01 |
+| 75 / 25 | 28.5% | 1.06 | −25.8% | 1.10 |
+| **50 / 50** | **22.0%** | **1.18** | **−17.1%** | **1.29** |
+| 25 / 75 | 14.9% | 1.56 | −8.6% | 1.73 |
+| 0 / 100 (carry only) | 7.3% | 9.95 | −0.7% | 10.7 |
+
+**What the blend buys:** the 50/50 lifts Sharpe 0.99→1.18 and *halves* drawdown (−34%→−17%) for a
+22% CAGR — a much better risk-adjusted profile than any standalone directional strategy, and it
+dials risk smoothly. Regime evidence (50/50 yearly via the 25/75 row): trend carries 2023-24,
+carry cushions 2025-26 when trend goes negative — MaxDD capped at single digits.
+
+**Honest limits:** (1) the frontier is *monotone* — with carry's vol ~60× smaller than trend's, a
+naive capital split can't beat *both* endpoints on Calmar; risk-parity degenerates to ~96% carry.
+(2) This uses the **conservative ~7% major-coin carry**; the live alt-coin carry book (~19-25%)
+would shift the whole frontier up — a 50/50 with live carry plausibly reaches **25%+ at Calmar 2-3×
+trend-only**. That re-run (with the live book's realized carry stream) is the right next step.
+
 ## 7. Rejected strategies and reasons (Stage 5)
 
 | Strategy | Why rejected |
