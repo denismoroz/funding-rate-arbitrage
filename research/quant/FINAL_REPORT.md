@@ -182,11 +182,22 @@ back negative — but informatively:
 | **Funding-extreme reversal** (directional contrarian on funding z-score; PnL decomposed into price vs funding) | `crypto_funding_reversal/` | **Price-only PnL negative in ALL 18 grid cells** (A: −18% CAGR price-only; B: −8%). The only positive component is funding (+4-12%) = pure carry. | ❌ No price-reversal alpha. High funding does NOT predict price decline 2023-26; fading it is momentum-fading in a trending market. "Carry in disguise" — proven by decomposition. |
 | **Regime-switch trend↔carry** (Kaufman ER / strategy-momentum filter) | `crypto_regime_switch/` | **No variant beats static 50/50** on Calmar AND Sharpe net of switching costs (best switch Calmar 1.14 vs static 1.29). | ❌ Regime timing fails; static blend wins. Carry's near-zero drawdown makes any reallocation costly. |
 
-**Meta-finding:** systematic signal-mining on public price/funding daily data keeps collapsing onto
-the two edges already known (carry, trend). This is the efficient-market result for public data.
-Genuinely new alpha is more likely to live in (a) the **proprietary multi-venue/microstructure**
-data (cross-venue funding dislocation, execution flow — untested), or (b) a **different instrument**
-(options variance-risk-premium — needs Deribit data), not in more daily price/funding signals.
+| **Cross-venue funding basis** (perp-perp, no price exposure; short high-funding venue / long low) | `crypto_cross_venue_basis/` | Spread structurally one-sided (HL > Binance 66% of days, mean +5.8% ann) but very noisy (~2-day half-life). Static HL-Binance = **2.9% CAGR on 2× capital**, **corr 0.70 to existing HL carry**, compressing (peak 2024, 3× lower by 2026). Dynamic variants lose to flip costs. | ❌ Real but not tradeable: low net return, 0.70-correlated to the carry book (same "HL funding high" factor — not additive), heavy operational risk (dual-venue margin, transfer, independent liquidation). |
+
+**Meta-finding (11 strategies + 2 recombinations tested):** systematic signal-mining on public
+crypto/FX data **keeps collapsing onto the two edges already known — funding carry and trend.**
+Everything else either fails OOS, fails net of costs, or (by correlation) IS carry/trend in
+disguise. This is not a series of unlucky misses; it is the **efficient-market verdict for public
+data**: the live CarryMesh book (carry) + a trend overlay is close to the extractable frontier for
+a systematic prosumer operation on this data.
+
+Genuinely new, *uncorrelated* alpha now requires stepping outside this data regime:
+1. **Options variance-risk-premium (Deribit)** — the one remaining qualitatively-different,
+   plausibly-uncorrelated source not yet tested; needs an IV-data download.
+2. **Sub-minute microstructure** (lead-lag, liquidation-cascade fading, order-flow) — needs
+   tick/L2 data + low-latency infra; a different game.
+3. **Execution & capital-efficiency on the existing carry book** — the lever that took the live
+   book from ~7% (this conservative model) to ~19-25%; boring, but where the real marginal dollar is.
 
 ## 7. Rejected strategies and reasons (Stage 5)
 
