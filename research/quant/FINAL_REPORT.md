@@ -191,13 +191,31 @@ disguise. This is not a series of unlucky misses; it is the **efficient-market v
 data**: the live CarryMesh book (carry) + a trend overlay is close to the extractable frontier for
 a systematic prosumer operation on this data.
 
-Genuinely new, *uncorrelated* alpha now requires stepping outside this data regime:
-1. **Options variance-risk-premium (Deribit)** — the one remaining qualitatively-different,
-   plausibly-uncorrelated source not yet tested; needs an IV-data download.
-2. **Sub-minute microstructure** (lead-lag, liquidation-cascade fading, order-flow) — needs
-   tick/L2 data + low-latency infra; a different game.
-3. **Execution & capital-efficiency on the existing carry book** — the lever that took the live
-   book from ~7% (this conservative model) to ~19-25%; boring, but where the real marginal dollar is.
+Genuinely new, *uncorrelated* alpha required stepping outside this data regime → next section.
+
+## 6d. Options Variance Risk Premium (the circle-breaker) — `research/quant/crypto_vol_risk_premium/`
+
+The one qualitatively-different class, tested on downloaded **Deribit DVOL** (implied vol) +
+BTC/ETH price 2021-2026. Short-vol via a non-overlapping 30-day vol-swap proxy, 2-vol-pt costs.
+
+- **BTC plain: CAGR 18.6%, Sharpe 1.19, MaxDD −11.2%, Calmar 1.66**, win-rate 72%, positive in
+  4 of 5 years. (ETH VRP is structurally weak — skip.) The "size-scaled 40%" variant is DISCARDED
+  (full-sample look-ahead in its normalization).
+- **It is genuinely UNCORRELATED:** monthly corr to carry **+0.00**, to trend **+0.03** (vs
+  carry↔trend +0.70). Different risk factor entirely (vega/theta vs funding vs momentum).
+- **It is ADDITIVE to a balanced book.** Adding VRP to the 50/50 trend+carry blend lifts
+  **Calmar 1.43 → 1.71 and Sharpe 0.93 → 1.01** (40/40/20). [The agent's "not additive" used a
+  degenerate inv-vol base that is 96% carry — corrected by the lead.]
+- **Two hard caveats:** (1) the DVOL series has a **201-day gap (Dec-2022→Jun-2022/23)** so the
+  **post-FTX tail is missing** — true worst-case is far worse than the −10.8% observed; a single
+  vol spike can lose 30-50%+. (2) The vol-swap proxy overstates real delta-hedged P&L. Live VRP
+  **requires a tail hedge and small sizing** — non-negotiable.
+
+**This is the study's one genuinely new, uncorrelated, additive edge.** It does not by itself hit
+25%, but it is the first thing found that *expands the frontier* rather than re-expressing carry or
+trend. The remaining levers (untested) are sub-minute microstructure (needs tick/L2 + infra) and
+execution/capital-efficiency on the existing carry book (engineering, not research — the lever that
+took the live book from ~7% to ~19-25%).
 
 ## 7. Rejected strategies and reasons (Stage 5)
 

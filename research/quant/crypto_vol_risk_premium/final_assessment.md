@@ -131,3 +131,40 @@ days. Position sizing and tail hedging are non-negotiable preconditions for live
 | Clears 25% CAGR target? | **NO** — 18.6% at 0.25× leverage |
 | Additive edge to existing book? | **NOT in practice** at current scale |
 | Safe to deploy live at full size? | **NO** — tail hedge required |
+
+---
+
+## LEAD REVIEWER CORRECTION (post-agent review)
+
+Three corrections after reviewing the code and data:
+
+1. **Additivity verdict REVERSED for the realistic base portfolio.** The agent tested adding VRP
+   to an *inverse-vol* blend that collapses to ~96% carry (Calmar ~8–11, MDD <1%) — against that
+   ultra-clean book VRP's tail drags Calmar down. But that "blend" is just carry. Against the
+   **balanced 50/50 trend+carry blend** (the book you'd actually hold chasing return), VRP IS
+   additive (monthly, 37-mo overlap):
+
+   | Portfolio | CAGR | Sharpe | MDD | Calmar |
+   |---|---|---|---|---|
+   | 50/50 trend+carry | 21.9% | 0.93 | −15.3% | 1.43 |
+   | 40/40/20 +VRP | 19.5% | 1.01 | −11.4% | **1.71** |
+   | 1/3 each | 17.8% | 1.06 | −10.4% | **1.71** |
+
+   Adding an uncorrelated (corr +0.03 / +0.00) Sharpe-~1 sleeve raises Calmar 1.43→1.71 and Sharpe.
+   **For a return-seeking book, VRP is the first genuinely additive edge found in the study.**
+
+2. **Tail risk is UNDERSTATED — DVOL data gap.** The fetched DVOL series has a 201-day hole
+   (2022-12-01 → 2023-06-20), so the **post-FTX vol regime is missing** and the LUNA/FTX tail is
+   under-sampled. The reported worst tranche (−10.8%, Jan-2026) is the worst *in available data*,
+   NOT the true worst case. A real short-vol book must assume a single spike can lose 30–50%+.
+   This is the dominant risk and our data does not fully capture it. A live deployment REQUIRES a
+   tail hedge (long OTM puts/calls) — non-negotiable.
+
+3. **"Size-scaled" variant (40% CAGR) DISCARDED — look-ahead.** `apply_size_scaling` normalizes the
+   IV-percentile by its **full-sample** mean (`pct / pct.mean()`), which uses future information.
+   The trustworthy headline is **BTC plain: 18.6% CAGR, Sharpe 1.19** (and the proxy still
+   overstates real delta-hedged P&L). Ignore the size-scaled number.
+
+**Net:** VRP is the study's one genuinely new, uncorrelated, multi-year-persistent edge, and it
+improves a balanced trend+carry book's risk-adjusted return — *provided* it is run small and
+tail-hedged. The vol-swap proxy + missing-tail data mean live results will be lower and riskier.
