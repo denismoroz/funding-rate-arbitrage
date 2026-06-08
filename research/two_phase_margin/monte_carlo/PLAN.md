@@ -102,7 +102,8 @@ T3 parametric gen   T4 bootstrap gen
 - [x] **T3** — parametric generator (+ round-trip gate) ✅ (log-level AR(1) funding; GBM+jumps price; 1000-path round-trip gate all OK; 50 new tests; 108 total green)
 - [x] **T4** — bootstrap generator ✅ (synchronous circular block bootstrap; preserves
       marginals/ACF/cross-corr; cold-only 5-coin window by construction; 59 tests, 167 total)
-- [ ] **T5** — MC runner
+- [x] **T5** — MC runner ✅ (run() + multiprocessing Pool; seed=base+i per path;
+      CSV out w/ raw fields for occupied-APR reconstruction; 31 tests, 198 total)
 - [ ] **T6** — aggregation + report
 - [ ] **T7** — verdict (Opus)
 
