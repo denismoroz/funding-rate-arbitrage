@@ -1,30 +1,51 @@
 # T7 — Verdict: is the `two_phase` edge real or an overfit artifact?
 
 _Opus, 2026-06-08. Companion to the auto-generated `MONTE_CARLO_REPORT.md` (T6).
-Numbers from the production run: 500 paths × 365 d × 5 coins (BTC/ETH/SOL/HYPE/PURR),
-mbuf 3.0, prod params, both generators. Occupied-capital figures from a 120-path
-per-path measurement (net P&L ÷ measured avg-deployed)._
+500 paths × 365 d × 5 coins (BTC/ETH/SOL/HYPE/PURR), mbuf 3.0, both generators._
+
+> **⚠️ SIZING CORRECTION (2026-06-08, after live cross-check).** The first pass used
+> the research sweep's FLAT sizing (fixed $100 notional, ~70% budget idle), which is
+> NOT how prod allocates. Prod fills a fixed **slot = budget/K** per position with
+> per-coin `notional = slot/(1+buffer/lev)` + a locked margin buffer (params.py). The
+> engine now has a `prod_slot` mode replicating this; all numbers below are prod_slot.
+> The earlier "occupied 8.6%/25.6%" figures OMITTED the buffer haircut and the
+> cold-regime idle — the corrected numbers are LOWER. (`flat` mode and the original
+> report are preserved unchanged for the regression anchor.)
 
 ## Short answer
 
 **The edge is REAL — but thin, regime-conditional, and structurally low-risk; NOT the
 fantasy the single-path Calmar implied.** It is a funding-harvesting utility, not an
-alpha engine. It does not lose money on a yearly basis in 1000 simulated paths, but
-its return is almost entirely a function of the funding regime, which we do not control.
+alpha engine. It never loses on a yearly basis in 1000 simulated paths, but its return
+is almost entirely a function of (a) the funding regime and (b) how much of the budget
+it can actually deploy — neither of which it controls in cold.
 
-## The numbers that matter (occupied capital — base-independent)
+## The numbers that matter (prod_slot sizing — full strategy budget)
 
-| | cold-only (bootstrap) | full hot+cold (parametric) |
+| | cold (bootstrap) | hot+cold (parametric) |
 |---|---|---|
-| occupied APR median | **8.6%** | **25.6%** |
-| occupied APR p05 → p95 | 7.1% → 10.6% | 15.5% → 52.3% |
+| **APR on strategy budget** median | **1.3%** | **12.1%** |
+| APR on budget p05 → p95 | 0.5 → 2.6% | 6.6 → 18.1% |
+| **APR on _deployed_ capital** (≈ the edge on working money) | **~8%** | **~17%** |
+| budget actually deployed (avg) | **16%** | **73%** |
 | P(annual loss) | **0%** (0/500) | **0%** (0/500) |
-| avg deployed capital | $286 | $299 |
+| max_dd median / p95 | 0.08% / 0.16% | 0.14% / 0.18% |
+| liquidations / path | 0.02 | 0.61 |
 
-Full-budget basis (budget $1 000, ~70% idle): cold median 1.5%, full-cycle median 8.0%.
-**Occupied multiplier ≈ 3.3×** (budget / avg-deployed ~$290–300), stable across regimes
-because the K=3 concurrency cap binds deployment in both. This matches the documented
-live occupancy (~$345) and prior memory (`feedback_apr_denominator`: Real APR ~20–25%).
+**Two denominators, both true and important:**
+- **On DEPLOYED capital** the edge is intact and regime-driven: ~8% cold, ~17% hot —
+  consistent with live (~6% gross-funding-on-notional, 2026-06) and the documented
+  occupancy. This is "funding carry minus fees minus the leverage-dependent buffer
+  haircut" (BTC@40× ≈ 7% haircut → PURR@3× ≈ 50%).
+- **On the strategy BUDGET** the cold number collapses to **1.3%** — NOT because the
+  edge died, but because **in cold only ~16% of the budget deploys**: few coins clear
+  the entry threshold, so ~84% sits idle. In hot, 73% deploys → 12.1%.
+
+**Consequence (vindicates the earlier "stack idle into lending"):** the cold-regime
+idle is REAL in prod (coin-availability under the entry threshold), not a sizing
+artifact. That idle budget MUST earn a base lending yield or the blended cold return is
+~1.3%. With idle parked at ~5% lending, blended cold ≈ 0.84×5% + 0.16×8% ≈ **~5.5%** —
+back to ≥ lending, as the live cross-check suggested.
 
 ## Why "real, not overfit"
 
@@ -44,10 +65,11 @@ live occupancy (~$345) and prior memory (`feedback_apr_denominator`: Real APR ~2
 
 ## Why "thin and regime-conditional"
 
-- Occupied APR spans ~8.6% (cold) to ~25.6% (full cycle) — a **3× spread driven entirely
-  by the funding regime**, not by skill. In cold the strategy earns ≈ lending; the upside
-  is hot-funding rent we don't control. This *quantifies* the thesis we kept landing on:
-  **frab in cold ≈ lending; the rest is regime luck.**
+- On-deployed APR spans ~8% (cold) to ~17% (hot) — a spread **driven entirely by the
+  funding regime**, not by skill. Worse, on the *budget* the spread is 1.3% → 12.1%
+  because cold ALSO starves deployment (only 16% of budget finds qualifying coins). The
+  upside is hot-funding rent we don't control. This *quantifies* the thesis we kept
+  landing on: **frab in cold ≈ lending; the rest is regime luck.**
 - There is no edge beyond "capture funding net of fees without losing principal."
 
 ## Two risks the MC surfaced that the single cold backtest hid
@@ -77,23 +99,25 @@ live occupancy (~$345) and prior memory (`feedback_apr_denominator`: Real APR ~2
 
 ## Recommendation (capital sizing)
 
-- **Forward expectation on occupied capital:** cold floor ~8%, full-cycle blend ~15–26%,
-  no yearly loss *in the model*. On TOTAL capital with ~30% deployment that is the
-  ~1.5–8% full-budget band — i.e. to earn occupied-rate returns on $50k you must deploy
-  more (more coins / higher concurrency), which raises the liquidation + operational risk
-  the MC just flagged.
+- **Forward expectation on the strategy budget:** ~1.3% cold → ~12% hot, never a yearly
+  loss *in the model*. The cold number is dragged by idle (only 16% deploys). The fix is
+  NOT to over-deploy (that raises the liquidation/ops risk the MC flagged: 0.6 liq/path
+  in hot) but to **park idle budget in base lending** — blended cold then ≈ 5.5%, i.e.
+  ≥ lending. On-deployed the edge is ~8% cold / ~17% hot.
 - **Role:** size `two_phase` as the **capital-preservation + modest-carry sleeve**, not
-  the growth engine. It reliably doesn't lose and pays ~lending-plus in cold, ~20%+ in
-  hot — but you don't pick the regime. This is consistent with the whole strategic thread:
-  the delta (excess over lending) lives in *directional* strategies, not in delta-neutral
-  carry.
-- **Before scaling deployment:** add walk-forward validation, and instrument live
-  liquidation frequency against the parametric 0.6/path/yr prediction.
+  the growth engine. With idle stacked in lending it pays ~lending-plus in cold and ~12%
+  on budget in hot — but you don't pick the regime. Consistent with the whole thread:
+  the delta (excess over lending) lives in *directional* strategies, not delta-neutral carry.
+- **Before scaling deployment:** add walk-forward validation; instrument live liquidation
+  frequency against the parametric 0.6/path/yr prediction; and confirm the live deployment
+  fraction matches the model's regime-dependent 16%→73%.
 
 ## Bottom line
 
 `two_phase` is a sound, low-risk funding harvester whose backtested headline numbers were
-**not overfit but were flattered by (a) a near-zero-drawdown Calmar and (b) the budget
-denominator**. Stripped to occupied capital and run across regimes, it is ~8% in cold and
-~25% in a full cycle, never negative on the year in 1000 paths — a dependable preservation
+**not overfit but were flattered by (a) a near-zero-drawdown Calmar, (b) the budget
+denominator, and (c) research sizing that ignored the prod buffer + cold-regime idle**.
+Corrected to prod sizing across regimes, it is ~1.3% (cold, mostly idle) to ~12% (hot) on
+the strategy budget — ~8%→17% on deployed capital — never negative on the year in 1000
+paths. A dependable preservation
 sleeve, not the source of alpha.

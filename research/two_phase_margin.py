@@ -321,6 +321,7 @@ class Position:
     gross_funding_so_far: float = 0.0
     total_fees_paid: float = 0.0
     consec_negative: int = 0
+    notional: float = 0.0  # per-position notional (spot leg size in USDC at open)
     # Attribution
     n_opens: int = 0
     n_closes: int = 0
@@ -346,6 +347,7 @@ def simulate(
     restrict_end: pd.Timestamp | None = None,
     neg_overrides_min_hold: bool = False,
     _dfs_override: "dict | None" = None,
+    sizing: str = "flat",
 ) -> dict:
     """
     Full two-phase + cross-margin portfolio simulation.
@@ -362,9 +364,25 @@ def simulate(
                       already present) to guarantee consistency.
                       (Additive parameter for MC adapter — default None preserves the
                       original load-from-csv behaviour; prod path is unaffected.)
+    sizing:           "flat" (default) — psize = fixed notional for every coin (original
+                      behaviour, all existing callers/tests/report unaffected).
+                      "prod_slot" — prod-accurate sizing: per-coin notional is derived
+                      from a fixed slot = budget_cap_usdc / concurrency_cap so that
+                      footprint (notional + margin) = slot exactly for each open
+                      position, matching src/frab/strategy/two_phase/params.py:
+                          slot      = budget / K
+                          notional  = slot / (1 + mbuf / lev_c)   # per coin
+                          margin    = (notional / lev_c) * mbuf   # per coin
+                          footprint = notional + margin = slot
+                      In this mode psize is IGNORED; notional differs per coin
+                      (higher leverage → less margin buffer → larger notional).
     """
     mbuf = margin_buffer_x if margin_buffer_x is not None else params.margin_buffer_factor
     psize = position_size if position_size is not None else params.position_size_usdc
+
+    # prod_slot: slot = budget / K is fixed; per-coin notional = slot / (1 + mbuf/lev_c)
+    _prod_slot_mode = sizing == "prod_slot"
+    _slot = params.budget_cap_usdc / params.concurrency_cap  # used only in prod_slot mode
 
     TOP_UP_TRIGGER = 2.0
     HEALTHY_RATIO = 3.0
@@ -471,8 +489,10 @@ def simulate(
             pos.consec_negative = update_consec_negative(pos.consec_negative, sig)
 
             # Current hourly income for this position
+            # In prod_slot mode: use pos.notional (set at open); in flat mode: psize.
+            _pos_notional = pos.notional if _prod_slot_mode else psize
             if sig is not None and sig > 0:
-                current_hourly_income = psize * sig / HOURS_PER_YEAR
+                current_hourly_income = _pos_notional * sig / HOURS_PER_YEAR
             else:
                 current_hourly_income = 0.0
 
@@ -530,6 +550,7 @@ def simulate(
             pos.short_size = 0.0
             pos.entry_price = 0.0
             pos.required_margin = 0.0
+            pos.notional = 0.0
             pos.hours_in = 0
             pos.position_min_hold = 0
             pos.gross_funding_so_far = 0.0
@@ -555,10 +576,18 @@ def simulate(
 
                 close = dfs[c].loc[t, "close"]
                 lev = lev_map[c]
-                req_margin = psize / lev * mbuf
-                spot_fee_open = psize * SPOT_TAKER
-                perp_fee_open = psize * PERP_TAKER
-                total_needed = psize + req_margin + spot_fee_open + perp_fee_open
+
+                # Sizing mode: flat uses fixed psize as notional;
+                # prod_slot derives notional from slot so footprint = slot exactly.
+                if _prod_slot_mode:
+                    notional_c = _slot / (1.0 + mbuf / lev)
+                else:
+                    notional_c = psize
+
+                req_margin = notional_c / lev * mbuf
+                spot_fee_open = notional_c * SPOT_TAKER
+                perp_fee_open = notional_c * PERP_TAKER
+                total_needed = notional_c + req_margin + spot_fee_open + perp_fee_open
 
                 # Budget check
                 committed = sum(
@@ -569,13 +598,13 @@ def simulate(
                 if spot_cash < total_needed:
                     n_skipped_opens += 1
                     continue
-                if committed + psize + req_margin > budget * 1.05:
+                if committed + notional_c + req_margin > budget * 1.05:
                     n_skipped_opens += 1
                     continue
 
                 # Open position
-                units_spot = psize / close
-                spot_cash -= psize + spot_fee_open
+                units_spot = notional_c / close
+                spot_cash -= notional_c + spot_fee_open
                 spot_cash -= req_margin
                 perp_cash += req_margin
                 perp_cash -= perp_fee_open
@@ -586,12 +615,13 @@ def simulate(
                 pos.short_size = units_spot
                 pos.entry_price = close
                 pos.required_margin = req_margin
+                pos.notional = notional_c  # stored for use in exit/income calculations
                 pos.hours_in = 0
                 pos.consec_negative = 0
                 pos.gross_funding_so_far = 0.0
 
                 # Total fees for this position (open + estimated close)
-                total_fees_this_pos = psize * (PERP_TAKER + SPOT_TAKER) * 2
+                total_fees_this_pos = notional_c * (PERP_TAKER + SPOT_TAKER) * 2
                 pos.total_fees_paid = total_fees_this_pos
 
                 # Dynamic min_hold based on entry signal
@@ -648,6 +678,7 @@ def simulate(
                         pos.short_size = 0.0
                         pos.entry_price = 0.0
                         pos.required_margin = 0.0
+                        pos.notional = 0.0
                         pos.hours_in = 0
                         pos.gross_funding_so_far = 0.0
                         pos.total_fees_paid = 0.0
@@ -684,6 +715,7 @@ def simulate(
                             pos.short_size = 0.0
                             pos.entry_price = 0.0
                             pos.required_margin = 0.0
+                            pos.notional = 0.0
                             pos.hours_in = 0
                             pos.gross_funding_so_far = 0.0
                             pos.total_fees_paid = 0.0

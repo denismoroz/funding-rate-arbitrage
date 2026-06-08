@@ -1,6 +1,6 @@
 # Monte-Carlo Validation Report: two_phase_margin
 
-_Generated: 2026-06-08 14:27 UTC_
+_Generated: 2026-06-08 17:45 UTC_
 
 ## Run parameters
 
@@ -43,28 +43,28 @@ Both generators available — **side-by-side comparison** follows.  Divergence b
 
 | Metric | p05 | p25 | median | p75 | p95 | min | max |
 |--------|-----|-----|--------|-----|-----|-----|-----|
-| annual (CAGR, full-budget) | 4.4760% | 6.1650% | 8.0380% | 9.9265% | 13.3128% | 2.2271% | 20.7925% |
-| max_dd (fraction, full-budget) | 0.0254% | 0.0437% | 0.0777% | 0.0948% | 0.1260% | 0.0135% | 0.1607% |
-| Calmar | 57.9223 | 83.2771 | 112.5737 | 169.7465 | 279.8858 | 28.8854 | 511.6709 |
-| Sharpe | 33.2336 | 40.3754 | 46.5374 | 51.7531 | 60.2732 | 9.9102 | 69.6655 |
+| annual (CAGR, full-budget) | 6.5770% | 9.6371% | 12.0748% | 14.4548% | 18.1463% | 3.3063% | 24.9068% |
+| max_dd (fraction, full-budget) | 0.0337% | 0.0666% | 0.1381% | 0.1594% | 0.1765% | 0.0075% | 0.2021% |
+| Calmar | 57.6578 | 79.9852 | 100.5924 | 162.7584 | 283.2064 | 35.9752 | 1061.5994 |
+| Sharpe | 32.7209 | 39.6848 | 44.7086 | 49.5229 | 57.9274 | 24.5030 | 69.8174 |
 
 **Risk probabilities:**
 
 - P(annual < 0) = **0.0%** (0/500 paths)
 - P(max_dd > 1%) = **0.0%** (0/500 paths)
 - P(max_dd > 5%) = **0.0%** (0/500 paths)
-- CVaR annual (worst-5% mean) = **3.7503%** (full-budget basis)
+- CVaR annual (worst-5% mean) = **5.6127%** (full-budget basis)
 
 **Exit-mix (averages per path):**
 
 | Exit type | Avg / path |
 |-----------|------------|
 | Phase-1 neg exits | 0.00 |
-| Phase-1 cap exits | 0.04 |
+| Phase-1 cap exits | 0.07 |
 | Phase-1 **NEGSTOP** exits | **0.00** |
 | Phase-2 exits | 0.00 |
-| Liquidations | 0.60 |
-| Forced closes | 0.52 |
+| Liquidations | 0.61 |
+| Forced closes | 1.43 |
 
 ### Bootstrap
 
@@ -75,46 +75,46 @@ Both generators available — **side-by-side comparison** follows.  Divergence b
 
 | Metric | p05 | p25 | median | p75 | p95 | min | max |
 |--------|-----|-----|--------|-----|-----|-----|-----|
-| annual (CAGR, full-budget) | 0.7436% | 1.1558% | 1.4998% | 1.8040% | 2.3352% | 0.2792% | 3.2155% |
-| max_dd (fraction, full-budget) | 0.0393% | 0.0527% | 0.0639% | 0.0786% | 0.1106% | 0.0252% | 0.1500% |
-| Calmar | 8.6118 | 15.6273 | 23.4700 | 32.1380 | 47.1095 | 2.2324 | 77.7422 |
-| Sharpe | 7.8323 | 11.9001 | 14.8211 | 17.5673 | 21.3331 | 2.9980 | 26.3859 |
+| annual (CAGR, full-budget) | 0.5188% | 0.9271% | 1.3100% | 1.8584% | 2.6390% | 0.2689% | 3.8501% |
+| max_dd (fraction, full-budget) | 0.0500% | 0.0646% | 0.0832% | 0.1012% | 0.1580% | 0.0232% | 0.2928% |
+| Calmar | 5.1844 | 10.0672 | 15.9521 | 23.9967 | 38.5957 | 2.6713 | 86.9082 |
+| Sharpe | 4.7905 | 7.8716 | 10.8764 | 13.7841 | 18.2691 | 2.5367 | 31.7143 |
 
 **Risk probabilities:**
 
 - P(annual < 0) = **0.0%** (0/500 paths)
 - P(max_dd > 1%) = **0.0%** (0/500 paths)
 - P(max_dd > 5%) = **0.0%** (0/500 paths)
-- CVaR annual (worst-5% mean) = **0.6000%** (full-budget basis)
+- CVaR annual (worst-5% mean) = **0.4130%** (full-budget basis)
 
 **Exit-mix (averages per path):**
 
 | Exit type | Avg / path |
 |-----------|------------|
-| Phase-1 neg exits | 0.01 |
-| Phase-1 cap exits | 0.05 |
-| Phase-1 **NEGSTOP** exits | **10.79** |
-| Phase-2 exits | 11.99 |
-| Liquidations | 0.01 |
+| Phase-1 neg exits | 0.00 |
+| Phase-1 cap exits | 0.02 |
+| Phase-1 **NEGSTOP** exits | **2.28** |
+| Phase-2 exits | 4.22 |
+| Liquidations | 0.02 |
 | Forced closes | 0.00 |
 
 ### Quick comparison: median metrics
 
 | Metric | parametric | bootstrap | note |
 |--------|-----------|-----------|------|
-| annual median | 8.0380% | 1.4998% | full-budget |
-| max_dd median | 0.0777% | 0.0639% | full-budget |
-| Calmar median | 112.5737 | 23.4700 | |
-| Sharpe median | 46.5374 | 14.8211 | |
+| annual median | 12.0748% | 1.3100% | full-budget |
+| max_dd median | 0.1381% | 0.0832% | full-budget |
+| Calmar median | 100.5924 | 15.9521 | |
+| Sharpe median | 44.7086 | 10.8764 | |
 | P(annual < 0) | 0.0% | 0.0% | |
-| CVaR annual worst-5% | 3.7503% | 0.6000% | full-budget |
+| CVaR annual worst-5% | 5.6127% | 0.4130% | full-budget |
 
 ### Single-path vs MC median contrast
 
 | Metric | Single-path | Para median | Boot median |
 |--------|-------------|-------------|-------------|
-| annual (CAGR approx) | 2.5026% | 8.0380% | 1.4998% |
-| max_dd | 0.0782% | 0.0777% | 0.0639% |
+| annual (CAGR approx) | 2.5026% | 12.0748% | 1.3100% |
+| max_dd | 0.0782% | 0.1381% | 0.0832% |
 
 > Interpretation: if single-path annual >> MC median, the historical backtest was a favorable-path draw. If single-path Calmar >> MC Calmar distribution, it may be a right-tail artifact. Full verdict deferred to T7 (Opus).
 

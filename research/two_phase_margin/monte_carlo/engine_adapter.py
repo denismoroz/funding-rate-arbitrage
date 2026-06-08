@@ -152,6 +152,7 @@ def run_on_dfs(
     mbuf: float,
     coins: list[str],
     position_size: float = 100.0,
+    sizing: str = "prod_slot",
 ) -> RunResult:
     """Run the two_phase engine on the provided dfs (real or synthetic).
 
@@ -162,7 +163,13 @@ def run_on_dfs(
         params:        TwoPhaseParams instance (or duck-typed equivalent with same attrs).
         mbuf:          margin buffer multiplier (e.g. 3.0 for U-prod config).
         coins:         list of coin symbols to trade (must be keys in dfs).
-        position_size: per-position size in USDC (default 100 to match research sweep).
+        position_size: per-position size in USDC (used only when sizing="flat").
+        sizing:        "prod_slot" (default for MC) — prod-accurate sizing: per-coin
+                       notional = slot / (1 + mbuf / lev_c) so footprint = slot = budget/K
+                       exactly for every open position.
+                       "flat" — legacy behaviour: fixed notional = position_size for every
+                       coin (original research-sweep mode).  Pass sizing="flat" for
+                       regression anchor tests that must reproduce TWOPHASE_MARGIN_aggregate.csv.
 
     Returns:
         RunResult(equity, metrics, raw).
@@ -191,6 +198,7 @@ def run_on_dfs(
         margin_buffer_x=mbuf,
         position_size=position_size,
         _dfs_override=dfs_with_signals,
+        sizing=sizing,
     )
 
     # Extract the equity curve (already in the return dict since engine always computes it).

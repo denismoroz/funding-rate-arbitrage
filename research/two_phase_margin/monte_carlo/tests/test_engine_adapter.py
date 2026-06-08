@@ -145,7 +145,9 @@ class TestEngineAdapterAnchor:
         params = _make_research_params(prod_params, coins, mbuf=3.0)
 
         dfs = _load_real_dfs(coins)
-        return run_on_dfs(dfs, params, mbuf=3.0, coins=coins, position_size=100.0)
+        # sizing="flat" pins the original research-sweep sizing that produced
+        # TWOPHASE_MARGIN_aggregate.csv (the adapter now defaults to prod_slot).
+        return run_on_dfs(dfs, params, mbuf=3.0, coins=coins, position_size=100.0, sizing="flat")
 
     def test_returns_run_result(self, result):
         assert isinstance(result, RunResult)
