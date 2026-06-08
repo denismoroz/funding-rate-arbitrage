@@ -27,6 +27,9 @@ class TwoPhaseParams:
     # Two-phase exit params
     phase1_negative_patience: int = 72      # hours of consecutive negative before phase1 exit
     phase1_breakeven_cap_hours: int = 720   # if hours-to-breakeven > this → exit phase1
+    # Phase-1 negative hard-stop (bypasses min_hold; see research/two_phase_negstop.py)
+    neg_stop_threshold_apr: float = -0.15   # in Phase 1, cut if smoothed signal < this
+    neg_stop_patience_hours: int = 6        # ... and consec negative hours >= this
 
     @classmethod
     def from_dict(cls, d: dict) -> "TwoPhaseParams":

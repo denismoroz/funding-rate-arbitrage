@@ -8,9 +8,10 @@ PERIODS_PER_YEAR = 8760
 class TwoPhaseDecision(StrEnum):
     NONE = "NONE"
     OPEN = "OPEN"
-    CLOSE_PHASE1_NEG = "CLOSE_PHASE1_NEG"      # sustained negative rate
-    CLOSE_PHASE1_CAP = "CLOSE_PHASE1_CAP"      # current rate too low to break-even
-    CLOSE_PHASE2 = "CLOSE_PHASE2"              # in profit, rate dropped below threshold
+    CLOSE_PHASE1_NEG = "CLOSE_PHASE1_NEG"        # sustained negative rate
+    CLOSE_PHASE1_CAP = "CLOSE_PHASE1_CAP"        # current rate too low to break-even
+    CLOSE_PHASE1_NEGSTOP = "CLOSE_PHASE1_NEGSTOP"  # decisively negative — cut, bypassing min_hold
+    CLOSE_PHASE2 = "CLOSE_PHASE2"                # in profit, rate dropped below threshold
 
 
 def compute_position_min_hold(
@@ -57,10 +58,14 @@ def decide_two_phase(
     phase1_negative_patience: int,
     phase1_breakeven_cap_hours: int,
     phase2_exit_threshold: float,
+    # Phase-1 negative hard-stop (bypasses min_hold). Defaults match prod config.
+    neg_stop_threshold: float = -0.15,
+    neg_stop_patience: int = 6,
 ) -> TwoPhaseDecision:
     """Return decision based on position state + signal.
 
-    Logic mirrors research/two_phase_dynamic.py simulate_two_phase_dynamic (138-202).
+    Logic mirrors research/two_phase_dynamic.py simulate_two_phase_dynamic (138-202),
+    plus the Phase-1 negative hard-stop validated in research/two_phase_negstop.py.
 
     Entry (not in_position):
         smoothed_signal_annual is None → NONE
@@ -68,8 +73,11 @@ def decide_two_phase(
         else → NONE
 
     Exit (in_position):
-        hours_in_position < position_min_hold_hours → NONE (locked by dynamic min_hold)
         Phase determination: in_profit = gross_funding_so_far >= total_fees_paid
+        Phase-1 negative hard-stop (checked BEFORE min_hold lock — it bypasses it):
+            not in_profit and smoothed_signal_annual < neg_stop_threshold
+            and consec_negative_hours >= neg_stop_patience → CLOSE_PHASE1_NEGSTOP
+        hours_in_position < position_min_hold_hours → NONE (locked by dynamic min_hold)
         Phase 1 (not in_profit):
             consec_negative_hours > phase1_negative_patience → CLOSE_PHASE1_NEG
             current_hourly_income > 0 and hours_to_breakeven > phase1_breakeven_cap_hours → CLOSE_PHASE1_CAP
@@ -85,11 +93,24 @@ def decide_two_phase(
             return TwoPhaseDecision.OPEN
         return TwoPhaseDecision.NONE
 
+    in_profit = gross_funding_so_far >= total_fees_paid
+
+    # Phase-1 negative hard-stop — BYPASSES min_hold. Only while still trying to
+    # recoup fees (Phase 1): if the smoothed signal is decisively negative and has
+    # been negative for >= neg_stop_patience hours, cut now rather than sit under
+    # the min_hold lock bleeding funding. min_hold protects against fee churn on
+    # mild/transient negativity, NOT against a decisive funding flip.
+    if (
+        not in_profit
+        and smoothed_signal_annual is not None
+        and smoothed_signal_annual < neg_stop_threshold
+        and consec_negative_hours >= neg_stop_patience
+    ):
+        return TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP
+
     # in_position — check dynamic min_hold lock
     if hours_in_position < position_min_hold_hours:
         return TwoPhaseDecision.NONE
-
-    in_profit = gross_funding_so_far >= total_fees_paid
 
     if not in_profit:
         # Phase 1 — trying to recoup fees

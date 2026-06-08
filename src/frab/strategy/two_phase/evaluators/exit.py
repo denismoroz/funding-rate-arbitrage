@@ -78,6 +78,8 @@ class ExitEvaluator:
             phase1_negative_patience=self._params.phase1_negative_patience,
             phase1_breakeven_cap_hours=self._params.phase1_breakeven_cap_hours,
             phase2_exit_threshold=self._params.phase2_exit_threshold,
+            neg_stop_threshold=self._params.neg_stop_threshold_apr,
+            neg_stop_patience=self._params.neg_stop_patience_hours,
         )
 
         # Always persist updated counters

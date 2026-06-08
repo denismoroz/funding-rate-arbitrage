@@ -323,11 +323,12 @@ def test_decide_phase2(
 
 def test_decide_phase1_priority_over_phase2() -> None:
     """Not in profit → must stay in Phase 1, even if signal would trigger Phase 2."""
-    # smoothed=-1.0 would trigger CLOSE_PHASE2 if in_profit, but gross < fees
+    # smoothed=-0.12 would trigger CLOSE_PHASE2 if in_profit (< -0.10), but gross < fees.
+    # Kept above neg_stop_threshold (-0.15) so the hard-stop does not pre-empt this case.
     result = _decide(
         gross_funding_so_far=2.0,
         total_fees_paid=4.2,        # not in profit
-        smoothed_signal_annual=-1.0,
+        smoothed_signal_annual=-0.12,
         consec_negative_hours=20,   # within patience → no CLOSE_PHASE1_NEG
         phase1_negative_patience=72,
         current_hourly_income_quote=0.001,
@@ -340,10 +341,11 @@ def test_decide_phase1_priority_over_phase2() -> None:
 
 def test_decide_phase1_priority_neg_trigger() -> None:
     """Not in profit + consec > patience → CLOSE_PHASE1_NEG, not CLOSE_PHASE2."""
+    # smoothed=-0.12 kept above neg_stop_threshold (-0.15) to isolate CLOSE_PHASE1_NEG.
     result = _decide(
         gross_funding_so_far=2.0,
         total_fees_paid=4.2,        # not in profit
-        smoothed_signal_annual=-1.0,
+        smoothed_signal_annual=-0.12,
         consec_negative_hours=80,   # > patience=72
         phase1_negative_patience=72,
         current_hourly_income_quote=0.001,
@@ -351,3 +353,92 @@ def test_decide_phase1_priority_neg_trigger() -> None:
         phase2_exit_threshold=-0.10,
     )
     assert result == TwoPhaseDecision.CLOSE_PHASE1_NEG
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 8: Phase-1 negative hard-stop (bypasses min_hold)
+# ---------------------------------------------------------------------------
+
+
+def test_negstop_fires_while_locked_by_min_hold() -> None:
+    """The whole point: a decisively-negative Phase-1 position is cut even though
+    hours_in_position < position_min_hold_hours (the min_hold lock is bypassed).
+
+    Mirrors the live SOL #26 case: locked at 150/720h, signal ≈ -0.22, consec 27."""
+    result = _decide(
+        gross_funding_so_far=-0.02,
+        total_fees_paid=0.037,            # not in profit (Phase 1)
+        smoothed_signal_annual=-0.22,     # < neg_stop_threshold (-0.15)
+        consec_negative_hours=27,         # >= neg_stop_patience (6)
+        hours_in_position=150,
+        position_min_hold_hours=720,      # still locked — must be bypassed
+        neg_stop_threshold=-0.15,
+        neg_stop_patience=6,
+    )
+    assert result == TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP
+
+
+@pytest.mark.parametrize(
+    "smoothed, consec, expected",
+    [
+        # deep enough + patient enough → fire (bypasses lock)
+        (-0.16, 6,  TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP),
+        (-1.00, 6,  TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP),
+        # boundary: == threshold is NOT < threshold → no fire (locked → NONE)
+        (-0.15, 50, TwoPhaseDecision.NONE),
+        # not deep enough (the live ETH case: -0.04, consec 12) → no fire (locked)
+        (-0.04, 12, TwoPhaseDecision.NONE),
+        # deep but patience not met (consec < 6) → no fire (locked)
+        (-0.50, 5,  TwoPhaseDecision.NONE),
+        # boundary: consec == patience (6) counts (>=) → fire
+        (-0.50, 6,  TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP),
+    ],
+)
+def test_negstop_threshold_and_patience(
+    smoothed: float,
+    consec: int,
+    expected: TwoPhaseDecision,
+) -> None:
+    result = _decide(
+        gross_funding_so_far=-0.02,
+        total_fees_paid=0.037,            # Phase 1
+        smoothed_signal_annual=smoothed,
+        consec_negative_hours=consec,
+        hours_in_position=150,            # < min_hold → locked unless negstop bypasses
+        position_min_hold_hours=720,
+        neg_stop_threshold=-0.15,
+        neg_stop_patience=6,
+    )
+    assert result == expected
+
+
+def test_negstop_does_not_fire_in_phase2() -> None:
+    """In profit (Phase 2): a deep-negative signal exits via CLOSE_PHASE2, never
+    via the hard-stop (which is Phase-1 only)."""
+    result = _decide(
+        gross_funding_so_far=5.0,
+        total_fees_paid=4.2,              # in profit (Phase 2)
+        smoothed_signal_annual=-0.50,     # well below both thresholds
+        consec_negative_hours=30,
+        hours_in_position=750,
+        position_min_hold_hours=720,
+        phase2_exit_threshold=-0.10,
+        neg_stop_threshold=-0.15,
+        neg_stop_patience=6,
+    )
+    assert result == TwoPhaseDecision.CLOSE_PHASE2
+
+
+def test_negstop_none_signal_does_not_fire() -> None:
+    """No signal data → hard-stop must not fire; falls through to min_hold lock."""
+    result = _decide(
+        gross_funding_so_far=-0.02,
+        total_fees_paid=0.037,
+        smoothed_signal_annual=None,
+        consec_negative_hours=30,
+        hours_in_position=150,
+        position_min_hold_hours=720,
+        neg_stop_threshold=-0.15,
+        neg_stop_patience=6,
+    )
+    assert result == TwoPhaseDecision.NONE
