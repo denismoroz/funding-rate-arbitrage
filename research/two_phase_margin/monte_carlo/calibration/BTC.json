@@ -1,0 +1,21 @@
+{
+  "log_return_mean_h": 3.696603364361878e-05,
+  "log_return_std_h": 0.004935434692288342,
+  "excess_kurtosis": 11.124084616612924,
+  "jump_freq": 0.0034575781754625935,
+  "price_history_start": "2023-06-01",
+  "price_history_end": "2026-06-01",
+  "price_history_note": "",
+  "funding_mean_h": 1.730137680638875e-05,
+  "funding_std_h": 2.7522229115798208e-05,
+  "funding_ar1_phi": 0.8790877814643141,
+  "negative_hours_share": 0.13033510374078178,
+  "funding_mean_annual_pct": 15.156006082396544,
+  "regime_criterion": "rolling_720h_mean > median(rolling_mean)  \u2192  hot; else cold",
+  "regime_hot_funding_annual_pct": 23.79765029917381,
+  "regime_cold_funding_annual_pct": 6.532174247774641,
+  "regime_transition_freq": 0.0009170806266717616,
+  "regime_note": "",
+  "cold_window_funding_annual_pct": 8.632568090729105,
+  "corr_price_funding": 0.0062219944278529855
+}

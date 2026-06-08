@@ -98,7 +98,8 @@ T3 parametric gen   T4 bootstrap gen
 - [x] **T1** — engine adapter ✅ (run_on_dfs via _dfs_override; anchor U-prod buf=3
       annual 2.50/max_dd 0.078/negstop 2 воспроизведён; 42 теста; см. GAP в правиле 5)
 - [ ] **T2** — calibration / stylized facts
-- [ ] **T2** — calibration / stylized facts
+- [x] **T2** — calibration / stylized facts ✅ (5 coins + cross-corr json; anchors
+      SOL cold 2.52% / BTC 8.63% pass; neg-hours SOL 24%/PURR 2%; 58 tests green)
 - [ ] **T3** — parametric generator (+ round-trip gate)
 - [ ] **T4** — bootstrap generator
 - [ ] **T5** — MC runner

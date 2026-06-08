@@ -1,0 +1,21 @@
+{
+  "log_return_mean_h": 3.1287901883565314e-05,
+  "log_return_std_h": 0.015628290075921605,
+  "excess_kurtosis": 16.689030919518522,
+  "jump_freq": 0.003998400639744102,
+  "price_history_start": "2025-11-06",
+  "price_history_end": "2026-06-02",
+  "price_history_note": "Short price history (2025-11-06 \u2192 2026-06-02, ~208 days). Log-return stats have wide confidence intervals.",
+  "funding_mean_h": 4.461962619894072e-05,
+  "funding_std_h": 0.00012581895411017624,
+  "funding_ar1_phi": 0.5005603571014355,
+  "negative_hours_share": 0.01973445548864543,
+  "funding_mean_annual_pct": 39.08679255027207,
+  "regime_criterion": "rolling_720h_mean > median(rolling_mean)  \u2192  hot; else cold",
+  "regime_hot_funding_annual_pct": 57.941538163699825,
+  "regime_cold_funding_annual_pct": 20.316670813203995,
+  "regime_transition_freq": 0.0015962850094325932,
+  "regime_note": "",
+  "cold_window_funding_annual_pct": 26.93439293290867,
+  "corr_price_funding": -0.03631515902156136
+}
