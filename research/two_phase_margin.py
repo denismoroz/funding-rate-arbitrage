@@ -96,8 +96,9 @@ BREAKEVEN_CONST = (PERP_TAKER + SPOT_TAKER) * 2 * HOURS_PER_YEAR
 class TwoPhaseParams:
     """Mirror of src/frab/strategy/two_phase/params.py — NO src import."""
     coins: list[str] = field(default_factory=lambda: [
-        "BTC", "ETH", "SOL", "HYPE", "ZEC", "PURR", "XPL"
-    ])
+        "BTC", "ETH", "SOL", "HYPE", "PURR"
+    ])  # ZEC/XPL excluded — out of scope. NB: the window cap is HYPE/PURR OHLCV
+    # (price) starting 2025-11-06, NOT these coins; backfill HYPE/PURR price to widen.
     entry_threshold_apr: float = 0.10
     phase2_exit_threshold: float = -0.10
     base_min_hold_hours: int = 24
@@ -1091,7 +1092,8 @@ def main() -> None:
     U_PROD_COINS = prod_params.coins  # from DB
     U3_COINS = ["BTC", "ETH", "SOL"]
 
-    # Common time window for U-prod (limited by newest coins: HYPE/PURR/XPL ~Nov 2025)
+    # Common window for U-prod — capped by HYPE/PURR OHLCV (price) starting 2025-11-06.
+    # Their funding goes back to late-2024 but price history doesn't → window is cold-only.
     # Load data to find actual common window
     dfs_prod = {}
     for c in U_PROD_COINS:
