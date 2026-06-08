@@ -100,7 +100,8 @@ T3 parametric gen   T4 bootstrap gen
 - [x] **T2** — calibration / stylized facts ✅ (5 coins + cross-corr json; anchors
       SOL cold 2.52% / BTC 8.63% pass; neg-hours SOL 24%/PURR 2%; 58 tests green)
 - [x] **T3** — parametric generator (+ round-trip gate) ✅ (log-level AR(1) funding; GBM+jumps price; 1000-path round-trip gate all OK; 50 new tests; 108 total green)
-- [ ] **T4** — bootstrap generator
+- [x] **T4** — bootstrap generator ✅ (synchronous circular block bootstrap; preserves
+      marginals/ACF/cross-corr; cold-only 5-coin window by construction; 59 tests, 167 total)
 - [ ] **T5** — MC runner
 - [ ] **T6** — aggregation + report
 - [ ] **T7** — verdict (Opus)
