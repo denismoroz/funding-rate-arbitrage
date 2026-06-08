@@ -110,6 +110,10 @@ class TwoPhaseParams:
     margin_buffer_factor: float = 3.0
     phase1_negative_patience: int = 72
     phase1_breakeven_cap_hours: int = 720
+    # Phase-1 negative hard-stop (bypasses min_hold) — mirrors prod
+    # src/frab/strategy/two_phase/params.py (added 2026-06-08, commit 9e17c8a).
+    neg_stop_threshold_apr: float = -0.15   # in Phase 1, cut if smoothed signal < this
+    neg_stop_patience_hours: int = 6        # ... and consec negative hours >= this
 
     @classmethod
     def from_dict(cls, d: dict) -> "TwoPhaseParams":
@@ -196,11 +200,18 @@ def decide_two_phase(
     phase1_negative_patience: int,
     phase1_breakeven_cap_hours: int,
     phase2_exit_threshold: float,
+    neg_stop_threshold: float = -0.15,
+    neg_stop_patience: int = 6,
     neg_overrides_min_hold: bool = False,
 ) -> str:
     """
-    Pure port from src/frab/engine/two_phase_signals.py:decide_two_phase.
-    Returns: "NONE" | "OPEN" | "CLOSE_PHASE1_NEG" | "CLOSE_PHASE1_CAP" | "CLOSE_PHASE2"
+    Pure port from src/frab/engine/two_phase_signals.py:decide_two_phase
+    (in sync with commit 9e17c8a, 2026-06-08 — Phase-1 negative hard-stop).
+    Returns: "NONE" | "OPEN" | "CLOSE_PHASE1_NEG" | "CLOSE_PHASE1_CAP"
+             | "CLOSE_PHASE1_NEGSTOP" | "CLOSE_PHASE2"
+
+    neg_overrides_min_hold is a legacy RESEARCH-ONLY knob (variant A, default off);
+    it is NOT part of prod. The prod-canonical bypass is CLOSE_PHASE1_NEGSTOP below.
     """
     if not in_position:
         if smoothed_signal_annual is None:
@@ -211,7 +222,21 @@ def decide_two_phase(
 
     in_profit = gross_funding_so_far >= total_fees_paid
 
-    # Emergency phase-1 exit: sustained-negative funding overrides the min_hold lock.
+    # Phase-1 negative hard-stop — BYPASSES min_hold (checked BEFORE the lock).
+    # Only while still trying to recoup fees (Phase 1): if the smoothed signal is
+    # decisively negative and has been negative for >= neg_stop_patience hours, cut
+    # now rather than sit under the min_hold lock bleeding funding. min_hold protects
+    # against fee churn on mild/transient negativity, NOT a decisive funding flip.
+    # Mirrors prod two_phase_signals.py (commit 9e17c8a).
+    if (
+        not in_profit
+        and smoothed_signal_annual is not None
+        and smoothed_signal_annual < neg_stop_threshold
+        and consec_negative_hours >= neg_stop_patience
+    ):
+        return "CLOSE_PHASE1_NEGSTOP"
+
+    # Legacy research-only emergency exit (variant A; not in prod, default off).
     if (
         neg_overrides_min_hold
         and not in_profit
@@ -370,6 +395,7 @@ def simulate(
     n_skipped_opens = 0
     n_phase1_neg_exits = 0
     n_phase1_cap_exits = 0
+    n_phase1_negstop_exits = 0
     n_phase2_exits = 0
     n_minhold_guard = 0
 
@@ -438,6 +464,8 @@ def simulate(
                 phase1_negative_patience=params.phase1_negative_patience,
                 phase1_breakeven_cap_hours=params.phase1_breakeven_cap_hours,
                 phase2_exit_threshold=params.phase2_exit_threshold,
+                neg_stop_threshold=params.neg_stop_threshold_apr,
+                neg_stop_patience=params.neg_stop_patience_hours,
                 neg_overrides_min_hold=neg_overrides_min_hold,
             )
 
@@ -464,6 +492,9 @@ def simulate(
             elif decision == "CLOSE_PHASE1_CAP":
                 pos.n_phase1_exits += 1
                 n_phase1_cap_exits += 1
+            elif decision == "CLOSE_PHASE1_NEGSTOP":
+                pos.n_phase1_exits += 1
+                n_phase1_negstop_exits += 1
             elif decision == "CLOSE_PHASE2":
                 pos.n_phase2_exits += 1
                 n_phase2_exits += 1
@@ -716,6 +747,7 @@ def simulate(
         "n_skipped_opens": n_skipped_opens,
         "n_phase1_neg_exits": n_phase1_neg_exits,
         "n_phase1_cap_exits": n_phase1_cap_exits,
+        "n_phase1_negstop_exits": n_phase1_negstop_exits,
         "n_phase2_exits": n_phase2_exits,
         "n_minhold_guard": n_minhold_guard,
         "period_start": str(timeline[0].date()),
@@ -1164,6 +1196,7 @@ def main() -> None:
             "n_forced_closes": res["n_forced_closes"],
             "n_phase1_neg_exits": res["n_phase1_neg_exits"],
             "n_phase1_cap_exits": res["n_phase1_cap_exits"],
+            "n_phase1_negstop_exits": res["n_phase1_negstop_exits"],
             "n_phase2_exits": res["n_phase2_exits"],
             "n_minhold_guard": res["n_minhold_guard"],
         })
@@ -1264,6 +1297,7 @@ def _write_report(
         r = r_prod3
         total_exits = (
             r["n_phase1_neg_exits"] + r["n_phase1_cap_exits"]
+            + r["n_phase1_negstop_exits"]
             + r["n_phase2_exits"] + r["n_minhold_guard"]
         )
         exit_breakdown = f"""
@@ -1273,6 +1307,7 @@ def _write_report(
 |-----------|-------|
 | phase1_consec_neg (≥72h neg) | {r['n_phase1_neg_exits']} |
 | phase1_cap_exceeded (breakeven > 720h) | {r['n_phase1_cap_exits']} |
+| phase1_negstop (signal < −0.15, ≥6h neg, bypass min_hold) | {r['n_phase1_negstop_exits']} |
 | phase2_signal_degraded (signal < −0.10) | {r['n_phase2_exits']} |
 | end-of-backtest force-close | {r['n_minhold_guard']} |
 | **Total exits** | **{total_exits}** |
