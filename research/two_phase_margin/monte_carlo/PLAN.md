@@ -107,7 +107,10 @@ T3 parametric gen   T4 bootstrap gen
 - [x] **T6** — aggregation + report ✅ (distribution_stats + write_report; percentiles/
       P(loss)/CVaR/exit-mix; parametric vs bootstrap side-by-side; single-path anchor;
       occupied-capital reframe deferred to T7; matplotlib best-effort; 39 tests, 237 total)
-- [ ] **T7** — verdict (Opus)
+- [x] **T7** — verdict (Opus) ✅ → VERDICT.md. Edge REAL but thin/regime-conditional;
+      occupied APR ~8.6% cold / ~25.6% full-cycle, P(loss)=0% in 1000 paths; low DD is
+      structural (delta-neutral), Calmar misleading; MC surfaced hot-regime liquidations
+      (0.6/path) + cold churn (NEGSTOP 10.8/path). Preservation sleeve, not alpha.
 
 ---
 
