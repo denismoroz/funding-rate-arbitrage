@@ -52,6 +52,14 @@ Calmar 114 при max_dd 0.11% — это одна реализация одно
 
 5. **Метрики — на занятый капитал, не на budget** (memory
    `feedback_apr_denominator`). max_dd — на equity-кривой занятого капитала.
+   **⚠️ ИЗВЕСТНЫЙ GAP (выявлено в T1):** `RunResult.equity` от адаптера — это
+   equity ВСЕГО портфеля (budget ~$1000 + позиции, включая праздно лежащий кэш),
+   т.е. движковый `eq`. Поэтому `metrics.summarize` сейчас даёт APR на ПОЛНЫЙ
+   бюджет (те самые ~2.5%), а не на занятый капитал. max_dd на этой кривой
+   корректен (просадка всего счёта). Для честного APR в отчёте (T5/T6/T7) нужно
+   отдельно вывести occupied-capital знаменатель — либо трекать развёрнутый
+   ноционал по часам, либо нормировать на средний занятый капитал. НЕ хоронить
+   этот множитель: ~2.5% на бюджет ≠ ~6-8% на занятый.
 
 ---
 
@@ -86,8 +94,10 @@ T3 parametric gen   T4 bootstrap gen
 
 Прогресс отмечать здесь же галочками.
 
-- [ ] **T0** — scaffolding
-- [ ] **T1** — engine adapter
+- [x] **T0** — scaffolding ✅ (metrics + stubs, 29 tests green, commit d3405c7)
+- [x] **T1** — engine adapter ✅ (run_on_dfs via _dfs_override; anchor U-prod buf=3
+      annual 2.50/max_dd 0.078/negstop 2 воспроизведён; 42 теста; см. GAP в правиле 5)
+- [ ] **T2** — calibration / stylized facts
 - [ ] **T2** — calibration / stylized facts
 - [ ] **T3** — parametric generator (+ round-trip gate)
 - [ ] **T4** — bootstrap generator

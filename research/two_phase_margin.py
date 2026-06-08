@@ -345,14 +345,23 @@ def simulate(
     restrict_start: pd.Timestamp | None = None,
     restrict_end: pd.Timestamp | None = None,
     neg_overrides_min_hold: bool = False,
+    _dfs_override: "dict | None" = None,
 ) -> dict:
     """
     Full two-phase + cross-margin portfolio simulation.
 
-    margin_buffer_x: overrides params.margin_buffer_factor if given
-    position_size:   overrides params.position_size_usdc if given
-    restrict_start:  clip all data to >= this timestamp (for apples-to-apples comparison)
-    restrict_end:    clip all data to <= this timestamp
+    margin_buffer_x:  overrides params.margin_buffer_factor if given
+    position_size:    overrides params.position_size_usdc if given
+    restrict_start:   clip all data to >= this timestamp (for apples-to-apples comparison)
+    restrict_end:     clip all data to <= this timestamp
+    _dfs_override:    if not None, use these pre-loaded DataFrames instead of calling
+                      load_coin_df; keys must match coins, each df must have columns
+                      [close, fundingRate] with a hourly DatetimeIndex.
+                      restrict_start/restrict_end are still applied when provided.
+                      add_signals is always applied (regardless of whether signals are
+                      already present) to guarantee consistency.
+                      (Additive parameter for MC adapter — default None preserves the
+                      original load-from-csv behaviour; prod path is unaffected.)
     """
     mbuf = margin_buffer_x if margin_buffer_x is not None else params.margin_buffer_factor
     psize = position_size if position_size is not None else params.position_size_usdc
@@ -361,18 +370,33 @@ def simulate(
     HEALTHY_RATIO = 3.0
 
     # Load data
-    dfs: dict[str, pd.DataFrame] = {}
-    for c in coins:
-        try:
-            df = load_coin_df(c)
+    if _dfs_override is not None:
+        # MC adapter path: use caller-supplied DataFrames (no file I/O).
+        dfs: dict[str, pd.DataFrame] = {}
+        for c in coins:
+            if c not in _dfs_override:
+                print(f"[WARN] No data for {c} in _dfs_override, skipping")
+                continue
+            df = _dfs_override[c].copy()
             if restrict_start is not None:
                 df = df[df.index >= restrict_start]
             if restrict_end is not None:
                 df = df[df.index <= restrict_end]
             if not df.empty:
                 dfs[c] = df
-        except FileNotFoundError:
-            print(f"[WARN] No data for {c}, skipping")
+    else:
+        dfs = {}
+        for c in coins:
+            try:
+                df = load_coin_df(c)
+                if restrict_start is not None:
+                    df = df[df.index >= restrict_start]
+                if restrict_end is not None:
+                    df = df[df.index <= restrict_end]
+                if not df.empty:
+                    dfs[c] = df
+            except FileNotFoundError:
+                print(f"[WARN] No data for {c}, skipping")
     if not dfs:
         raise RuntimeError("No data loaded")
 
