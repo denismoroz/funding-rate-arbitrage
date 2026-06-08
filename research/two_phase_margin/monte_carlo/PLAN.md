@@ -341,7 +341,8 @@ neg_stop, min_hold) под историю. Метод: тюним на in-sample
 
 Делегируется Sonnet (как T0–T6), ревью+коммит — Opus. НЕ ЗАПУСКАТЬ git в агенте.
 
-- [ ] **T8** — walk-forward
+- [x] **T8** — walk-forward (done 2026-06-08; WALK_FORWARD_REPORT.md + Opus verdict:
+      tuning over-fits, static wins OOS — keep prod on static params)
 
 **Goal.** Прогнать rolling walk-forward на РЕАЛЬНЫХ данных и показать IS vs OOS.
 
