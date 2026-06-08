@@ -97,10 +97,9 @@ T3 parametric gen   T4 bootstrap gen
 - [x] **T0** — scaffolding ✅ (metrics + stubs, 29 tests green, commit d3405c7)
 - [x] **T1** — engine adapter ✅ (run_on_dfs via _dfs_override; anchor U-prod buf=3
       annual 2.50/max_dd 0.078/negstop 2 воспроизведён; 42 теста; см. GAP в правиле 5)
-- [ ] **T2** — calibration / stylized facts
 - [x] **T2** — calibration / stylized facts ✅ (5 coins + cross-corr json; anchors
       SOL cold 2.52% / BTC 8.63% pass; neg-hours SOL 24%/PURR 2%; 58 tests green)
-- [ ] **T3** — parametric generator (+ round-trip gate)
+- [x] **T3** — parametric generator (+ round-trip gate) ✅ (log-level AR(1) funding; GBM+jumps price; 1000-path round-trip gate all OK; 50 new tests; 108 total green)
 - [ ] **T4** — bootstrap generator
 - [ ] **T5** — MC runner
 - [ ] **T6** — aggregation + report
@@ -210,6 +209,13 @@ T3 parametric gen   T4 bootstrap gen
 ---
 
 ## T3 — Parametric generator (+ round-trip gate)
+
+> **РЕШЕНИЕ ПОЛЬЗОВАТЕЛЯ (garbage-in развилка):** у HYPE/PURR нет горячей
+> истории ЦЕНЫ (price с 2025-11, cold-only). Горячую vol для них генерим
+> ЗАИМСТВОВАНИЕМ у майоров: hot_σ(HYPE) = cold_σ(HYPE) × mean(hot_σ/cold_σ по
+> BTC/ETH/SOL). НЕ держать их на плоской cold-vol (занижает hot-риск) и НЕ
+> выкидывать из книги.
+
 
 **Goal.** По калибровке (T2) + горизонт + seed эмитить синтетический `dfs` В ТОЙ
 ЖЕ ФОРМЕ, что потребляет адаптер (T1).
