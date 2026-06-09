@@ -318,6 +318,48 @@ async def test_user_funding_parses_deltas(make_client):
 
 
 # ---------------------------------------------------------------------------
+# 11b. test_user_funding_paginates
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_user_funding_paginates(mocker, make_client):
+    """user_funding paginates: 500-record page 1 → smaller page 2; second call uses last_time+1."""
+    mocker.patch.object(hl_client_mod, "_WAIT", wait_none())
+    client = make_client()
+
+    def _make_record(ts_ms: int) -> dict:
+        return {"time": ts_ms, "delta": {"coin": "BTC", "usdc": "0.01", "type": "funding"}}
+
+    page1 = [_make_record(i) for i in range(500)]
+    page2 = [_make_record(500 + i) for i in range(50)]
+    call_count = 0
+    captured_bodies: list[dict] = []
+
+    async def side_effect(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        import json as _json
+        captured_bodies.append(_json.loads(request.content))
+        if call_count == 1:
+            return httpx.Response(200, json=page1)
+        elif call_count == 2:
+            return httpx.Response(200, json=page2)
+        else:
+            pytest.fail("unexpected third call")
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").mock(side_effect=side_effect)
+        deltas = await client.user_funding("0xabc", since_ms=0)
+
+    assert len(deltas) == 550
+    assert call_count == 2
+    # Second call must advance startTime to last_time_of_first_batch + 1
+    assert captured_bodies[1]["startTime"] == 499 + 1
+    assert all(isinstance(d, HLFundingDelta) for d in deltas)
+    await client.aclose()
+
+
+# ---------------------------------------------------------------------------
 # 12. test_user_state_parses_perp_state
 # ---------------------------------------------------------------------------
 

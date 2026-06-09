@@ -226,23 +226,31 @@ class HLClient:
         return records
 
     async def user_funding(self, address: str, since_ms: int) -> list[HLFundingDelta]:
-        """Return user funding settlement deltas since since_ms."""
-        data: list[dict] = await self._post({
-            "type": "userFunding",
-            "user": address,
-            "startTime": since_ms,
-        })
+        """Return user funding settlement deltas since since_ms.
+
+        Paginates until batch size < 500, mirroring funding_history.
+        """
         deltas: list[HLFundingDelta] = []
-        for record in data or []:
-            delta = record.get("delta", {})
-            coin = delta.get("coin")
-            if not coin:
-                continue
-            deltas.append(HLFundingDelta(
-                coin=coin,
-                ts_ms=int(record["time"]),
-                amount_usdc=float(delta["usdc"]),
-            ))
+        start = since_ms
+        while True:
+            batch: list[dict] = await self._post({
+                "type": "userFunding",
+                "user": address,
+                "startTime": start,
+            })
+            for record in batch or []:
+                delta = record.get("delta", {})
+                coin = delta.get("coin")
+                if not coin:
+                    continue
+                deltas.append(HLFundingDelta(
+                    coin=coin,
+                    ts_ms=int(record["time"]),
+                    amount_usdc=float(delta["usdc"]),
+                ))
+            if len(batch) < 500:
+                break
+            start = int(batch[-1]["time"]) + 1
         return deltas
 
     # ------------------------------------------------------------------
