@@ -18,18 +18,11 @@ class LoadAccruedFundingAction(HLAction):
         self._sf = ctx.session_factory
         self._address = ctx.address
 
-    async def execute(self, pos: Position) -> float:
+    async def execute(self, pos: Position, *, full: bool = False) -> float:
         if self._address is None:
             raise RuntimeError("account_address required")
         if pos.id is None:
             raise ValueError("Position must have a DB id to fetch accrued funding")
-
-        since_ms = int(pos.opened_at.timestamp() * 1000)
-        deltas = await self._client.user_funding(self._address, since_ms)
-
-        new_accruals: list[tuple[int, float]] = [
-            (d.ts_ms, d.amount_usdc) for d in deltas if d.coin == pos.coin
-        ]
 
         async with session_scope(self._sf) as s:
             existing_ts = {
@@ -39,6 +32,21 @@ class LoadAccruedFundingAction(HLAction):
                     )
                 )).all()
             }
+
+        last_ts = max(existing_ts) if existing_ts else None
+
+        if full or last_ts is None:
+            since_ms = int(pos.opened_at.timestamp() * 1000)
+        else:
+            since_ms = last_ts
+
+        deltas = await self._client.user_funding(self._address, since_ms)
+
+        new_accruals: list[tuple[int, float]] = [
+            (d.ts_ms, d.amount_usdc) for d in deltas if d.coin == pos.coin
+        ]
+
+        async with session_scope(self._sf) as s:
             for ts_ms, amount in new_accruals:
                 if ts_ms not in existing_ts:
                     s.add(DBFundingAccrual(

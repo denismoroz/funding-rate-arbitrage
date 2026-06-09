@@ -292,3 +292,92 @@ async def test_uses_correct_position_id_in_query(session_factory, mock_client):
     total = await action.execute(pos2)
 
     assert total == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Incremental / full-sweep behaviour
+# ---------------------------------------------------------------------------
+
+async def test_incremental_uses_last_ts_when_existing_accruals(session_factory, mock_client):
+    """full=False with existing accruals → since_ms is the max existing ts_ms."""
+    pos_id = await _seed_db_position(session_factory)
+
+    async with session_factory() as s:
+        s.add(DBFundingAccrual(position_id=pos_id, ts_ms=1000, amount=0.1))
+        s.add(DBFundingAccrual(position_id=pos_id, ts_ms=3000, amount=0.2))
+        s.add(DBFundingAccrual(position_id=pos_id, ts_ms=2000, amount=0.3))
+        await s.commit()
+
+    mock_client.user_funding.return_value = []
+
+    action = make_action(session_factory, mock_client)
+    pos = _make_position(pos_id)
+    await action.execute(pos, full=False)
+
+    # last max ts is 3000; incremental should start there
+    mock_client.user_funding.assert_called_once_with("0xabc", 3000)
+
+
+async def test_full_sweep_uses_opened_at_when_existing_accruals(session_factory, mock_client):
+    """full=True always uses opened_at regardless of existing accruals."""
+    pos_id = await _seed_db_position(session_factory)
+
+    async with session_factory() as s:
+        s.add(DBFundingAccrual(position_id=pos_id, ts_ms=1000, amount=0.1))
+        s.add(DBFundingAccrual(position_id=pos_id, ts_ms=3000, amount=0.2))
+        await s.commit()
+
+    mock_client.user_funding.return_value = []
+
+    action = make_action(session_factory, mock_client)
+    pos = _make_position(pos_id)
+    await action.execute(pos, full=True)
+
+    mock_client.user_funding.assert_called_once_with("0xabc", _OPENED_AT_MS)
+
+
+async def test_no_existing_accruals_uses_opened_at_regardless_of_full(session_factory, mock_client):
+    """When there are no existing accruals, both full=True and full=False use opened_at."""
+    for full_flag in (False, True):
+        pos_id = await _seed_db_position(session_factory)
+        mock_client.user_funding.return_value = []
+
+        action = make_action(session_factory, mock_client)
+        pos = _make_position(pos_id)
+        await action.execute(pos, full=full_flag)
+
+        mock_client.user_funding.assert_called_with("0xabc", _OPENED_AT_MS)
+    assert mock_client.user_funding.call_count == 2
+
+
+async def test_incremental_boundary_row_deduped(session_factory, mock_client):
+    """The boundary ts_ms row returned by incremental fetch is dropped by dedup."""
+    pos_id = await _seed_db_position(session_factory)
+    boundary_ts = 5000
+
+    async with session_factory() as s:
+        s.add(DBFundingAccrual(position_id=pos_id, ts_ms=boundary_ts, amount=0.5))
+        await s.commit()
+
+    # HL returns the boundary row again plus one new row
+    mock_client.user_funding.return_value = [
+        HLFundingDelta(coin="BTC", ts_ms=boundary_ts, amount_usdc=0.5),  # duplicate boundary
+        HLFundingDelta(coin="BTC", ts_ms=6000, amount_usdc=0.25),        # new
+    ]
+
+    action = make_action(session_factory, mock_client)
+    pos = _make_position(pos_id)
+    total = await action.execute(pos, full=False)
+
+    # since_ms should be the boundary ts
+    mock_client.user_funding.assert_called_once_with("0xabc", boundary_ts)
+
+    async with session_factory() as s:
+        rows = (await s.execute(
+            select(DBFundingAccrual).where(DBFundingAccrual.position_id == pos_id)
+        )).scalars().all()
+
+    # Only 2 rows: original boundary + new; boundary not double-inserted
+    assert len(rows) == 2
+    assert {r.ts_ms for r in rows} == {boundary_ts, 6000}
+    assert total == pytest.approx(0.75)

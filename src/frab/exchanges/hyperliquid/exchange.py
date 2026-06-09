@@ -247,12 +247,13 @@ class HLExchange:
         """
         return await self._load_positions_action.execute()
 
-    async def get_accrued_funding(self, pos: Position) -> float:
-        """Fetch HL funding history since pos.opened_at, write accruals to DB.
+    async def get_accrued_funding(self, pos: Position, *, full: bool = False) -> float:
+        """Fetch HL funding accruals for pos, write to DB, return cumulative sum.
 
-        Idempotent: skips rows that already exist by (position_id, ts_ms).
+        full=False (default): incremental — fetches only from the last known
+        accrual timestamp; full=True: re-fetches from pos.opened_at to repair gaps.
         """
-        return await self._load_funding_action.execute(pos)
+        return await self._load_funding_action.execute(pos, full=full)
 
     async def get_spot_mids_by_coin(self) -> dict[str, float]:
         """Return {canonical_coin: spot_mid_USDC} for spot pairs we support."""

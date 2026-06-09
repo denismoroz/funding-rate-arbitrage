@@ -94,7 +94,8 @@ async def test_accrues_funding_and_updates_state_data(mocker):
 
     await accrual.accrue(now_ms=_NOW_MS)
 
-    exchange.get_accrued_funding.assert_awaited_once_with(fake_pos)
+    # First call is always a full sweep
+    exchange.get_accrued_funding.assert_awaited_once_with(fake_pos, full=True)
     farb_repo.update_state_data.assert_awaited_once()
 
     sd_arg = farb_repo.update_state_data.call_args.args[1]
@@ -110,7 +111,7 @@ async def test_exception_from_exchange_is_swallowed_and_continues(mocker):
 
     call_count = {"n": 0}
 
-    async def _failing_funding(pos):
+    async def _failing_funding(pos, *, full: bool = False):
         call_count["n"] += 1
         if call_count["n"] == 1:
             raise RuntimeError("exchange error")
@@ -134,3 +135,82 @@ async def test_exception_from_exchange_is_swallowed_and_continues(mocker):
     # Both FPs were attempted; second one succeeded → update_state_data called once
     assert exchange.get_accrued_funding.call_count == 2
     assert farb_repo.update_state_data.call_count == 1
+
+
+# ─── Full-sweep cadence tests ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_first_accrue_is_full_sweep_and_sets_last_full_sweep_ms(mocker):
+    """First accrue call passes full=True and records _last_full_sweep_ms."""
+    fp = _make_fp(perp_position_id=42)
+    accrual, exchange, _, _ = _make_accrual(mocker, open_fps=[fp])
+
+    mocker.patch(
+        "frab.strategy.two_phase.actions.funding_accrual.load_position",
+        new_callable=mocker.AsyncMock,
+        return_value=mocker.MagicMock(),
+    )
+
+    assert accrual._last_full_sweep_ms is None
+
+    await accrual.accrue(now_ms=_NOW_MS)
+
+    _, kwargs = exchange.get_accrued_funding.call_args
+    assert kwargs.get("full") is True
+    assert accrual._last_full_sweep_ms == _NOW_MS
+
+
+@pytest.mark.asyncio
+async def test_second_accrue_within_24h_is_incremental(mocker):
+    """A second accrue call within 24 h passes full=False."""
+    fp = _make_fp(perp_position_id=42)
+    accrual, exchange, _, _ = _make_accrual(mocker, open_fps=[fp])
+
+    mocker.patch(
+        "frab.strategy.two_phase.actions.funding_accrual.load_position",
+        new_callable=mocker.AsyncMock,
+        return_value=mocker.MagicMock(),
+    )
+
+    # First call: full sweep
+    await accrual.accrue(now_ms=_NOW_MS)
+
+    # Second call: 1 hour later (well within 24 h)
+    one_hour_ms = 60 * 60 * 1000
+    await accrual.accrue(now_ms=_NOW_MS + one_hour_ms)
+
+    calls = exchange.get_accrued_funding.call_args_list
+    assert len(calls) == 2
+    _, first_kwargs = calls[0]
+    _, second_kwargs = calls[1]
+    assert first_kwargs.get("full") is True
+    assert second_kwargs.get("full") is False
+    # _last_full_sweep_ms should NOT be updated on the incremental call
+    assert accrual._last_full_sweep_ms == _NOW_MS
+
+
+@pytest.mark.asyncio
+async def test_accrue_after_24h_is_full_sweep_again(mocker):
+    """An accrue call >= 24 h after the last full sweep passes full=True again."""
+    fp = _make_fp(perp_position_id=42)
+    accrual, exchange, _, _ = _make_accrual(mocker, open_fps=[fp])
+
+    mocker.patch(
+        "frab.strategy.two_phase.actions.funding_accrual.load_position",
+        new_callable=mocker.AsyncMock,
+        return_value=mocker.MagicMock(),
+    )
+
+    # First call: full sweep
+    await accrual.accrue(now_ms=_NOW_MS)
+
+    # Second call: exactly 24 h later → triggers another full sweep
+    twenty_four_h_ms = 24 * 60 * 60 * 1000
+    second_now = _NOW_MS + twenty_four_h_ms
+    await accrual.accrue(now_ms=second_now)
+
+    calls = exchange.get_accrued_funding.call_args_list
+    assert len(calls) == 2
+    _, second_kwargs = calls[1]
+    assert second_kwargs.get("full") is True
+    assert accrual._last_full_sweep_ms == second_now
