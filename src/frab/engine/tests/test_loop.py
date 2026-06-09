@@ -116,7 +116,11 @@ async def _run_loop_briefly(loop: EngineLoop, duration_s: float = 0.25) -> None:
 async def test_minute_tick_fetches_quotes_and_calls_strategy_and_ledger(
     mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
 ):
-    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, mock_session_factory, coins=["BTC", "ETH"])
+    wallet_coins = [("USDC", WalletKind.SPOT), ("USDC", WalletKind.PERP)]
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        coins=["BTC", "ETH"], wallet_coins=wallet_coins,
+    )
 
     # Patch exchange_id resolution and _save_prices so no real DB is needed
     loop._exchange_id_cache = 1
@@ -133,6 +137,11 @@ async def test_minute_tick_fetches_quotes_and_calls_strategy_and_ledger(
     # strategy.on_minute_tick called
     mock_strategy.on_minute_tick.assert_awaited_once_with(now_ms=now_ms)
 
+    # wallet snapshots refreshed during minute_tick (cash in sync with spot_value)
+    assert mock_exchange.get_wallet.call_count == 2
+    mock_exchange.get_wallet.assert_any_call("USDC", WalletKind.SPOT)
+    mock_exchange.get_wallet.assert_any_call("USDC", WalletKind.PERP)
+
     # ledger.compute_and_save called with strategy_id and quote dict
     mock_ledger.compute_and_save.assert_awaited_once()
     args, kwargs = mock_ledger.compute_and_save.call_args
@@ -141,16 +150,15 @@ async def test_minute_tick_fetches_quotes_and_calls_strategy_and_ledger(
     assert "ETH" in args[1]
 
 
-# ─── 2. _hour_tick: funding fetched, saved, wallet refreshed, strategy called ─
+# ─── 2. _hour_tick: funding fetched, saved, strategy called (no wallet refresh) ─
 
 @pytest.mark.asyncio
-async def test_hour_tick_fetches_funding_and_refreshes_wallets_and_calls_strategy(
+async def test_hour_tick_fetches_funding_and_calls_strategy(
     mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
 ):
-    wallet_coins = [("USDC", WalletKind.SPOT), ("USDC", WalletKind.PERP)]
     loop = make_loop(
         mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
-        coins=["BTC", "ETH"], wallet_coins=wallet_coins,
+        coins=["BTC", "ETH"],
     )
 
     loop._exchange_id_cache = 1
@@ -164,10 +172,8 @@ async def test_hour_tick_fetches_funding_and_refreshes_wallets_and_calls_strateg
     mock_exchange.get_funding_rate.assert_any_call("BTC")
     mock_exchange.get_funding_rate.assert_any_call("ETH")
 
-    # get_wallet called for each wallet_coin pair
-    assert mock_exchange.get_wallet.call_count == 2
-    mock_exchange.get_wallet.assert_any_call("USDC", WalletKind.SPOT)
-    mock_exchange.get_wallet.assert_any_call("USDC", WalletKind.PERP)
+    # wallet refresh no longer happens in _hour_tick (moved to _minute_tick)
+    mock_exchange.get_wallet.assert_not_awaited()
 
     # strategy.on_hour_tick called
     mock_strategy.on_hour_tick.assert_awaited_once_with(now_ms=now_ms)

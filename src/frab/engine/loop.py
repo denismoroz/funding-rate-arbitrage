@@ -3,12 +3,12 @@
 Every minute:
   1. Fetch quotes per coin → save to prices table
   2. Call strategy.on_minute_tick
-  3. Call ledger.compute_and_save
+  3. Refresh wallet snapshots (cash) so it is in sync with live spot_value
+  4. Call ledger.compute_and_save
 
 On hour boundary (after minute tasks):
   1. Fetch funding rate per coin → save to funding_rates table
-  2. Refresh wallet snapshots
-  3. Call strategy.on_hour_tick
+  2. Call strategy.on_hour_tick
 
 No business logic lives here. The loop is pure plumbing.
 """
@@ -180,7 +180,7 @@ class EngineLoop:
     # ── Minute tick ───────────────────────────────────────────────────────────
 
     async def _minute_tick(self, now_ms: int) -> None:
-        """Fetch quotes → persist prices → strategy.on_minute_tick → ledger.compute_and_save."""
+        """Fetch quotes → persist prices → strategy.on_minute_tick → refresh wallets → ledger.compute_and_save."""
         quotes = await self._fetch_quotes(now_ms)
         if quotes:
             await self._save_prices(quotes, now_ms)
@@ -229,6 +229,7 @@ class EngineLoop:
             )
             return
 
+        await self._refresh_wallet_snapshots(now_ms)
         await self._ledger.compute_and_save(
             self._strategy.strategy_id,
             quote_map,
@@ -239,7 +240,7 @@ class EngineLoop:
     # ── Hour tick ─────────────────────────────────────────────────────────────
 
     async def _hour_tick(self, now_ms: int) -> None:
-        """Fetch funding → persist → refresh wallet snapshots → strategy.on_hour_tick."""
+        """Fetch funding → persist → strategy.on_hour_tick."""
         try:
             await self._reload_strategy_params_from_db()
         except Exception:
@@ -249,7 +250,6 @@ class EngineLoop:
         if funding_ticks:
             await self._save_funding(funding_ticks, now_ms)
 
-        await self._refresh_wallet_snapshots(now_ms)
         await self._strategy.on_hour_tick(now_ms=now_ms)
 
     # ── Data fetching ─────────────────────────────────────────────────────────
