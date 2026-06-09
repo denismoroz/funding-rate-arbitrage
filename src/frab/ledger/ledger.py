@@ -115,10 +115,12 @@ class Ledger:
 
         async with self._sf() as session:
             cash = await self._compute_cash(session)
+            latest_cash_ts = await self._latest_cash_snapshot_ts(session)
             spot_value, perp_unrealized = await self._compute_position_values(
                 session, strategy_id, quotes,
                 perp_unrealized_by_coin=perp_unrealized_by_coin,
                 spot_mids_by_coin=spot_mids_by_coin,
+                latest_cash_ts=latest_cash_ts,
             )
             perp_realized_cum = await self._compute_perp_realized(session, strategy_id)
             funding_cum = await self._compute_funding_cum(session, strategy_id)
@@ -219,6 +221,27 @@ class Ledger:
         result = await session.execute(stmt)
         return float(result.scalar())
 
+    async def _latest_cash_snapshot_ts(
+        self,
+        session: AsyncSession,
+    ) -> int | None:
+        """Return the MAX ts_ms among wallet_snapshot rows for cash coins (USDC/USDT).
+
+        This is the timestamp of the freshest cash snapshot and is used to gate
+        SPOT position values: a spot position whose opened_at is *after* this
+        timestamp was bought with USDC that is still sitting in cash (the wallet
+        snapshot hasn't caught up yet), so counting it would double-count that
+        USDC.
+
+        Returns None when no cash snapshots exist (fresh DB), in which case
+        callers should fall back to counting all spot positions as normal.
+        """
+        ws = WalletSnapshotRow
+        stmt = select(func.max(ws.ts_ms)).where(ws.coin.in_(list(_CASH_COINS)))
+        result = await session.execute(stmt)
+        val = result.scalar()
+        return int(val) if val is not None else None
+
     async def _compute_position_values(
         self,
         session: AsyncSession,
@@ -227,6 +250,7 @@ class Ledger:
         *,
         perp_unrealized_by_coin: dict[str, float] | None = None,
         spot_mids_by_coin: dict[str, float] | None = None,
+        latest_cash_ts: int | None = None,
     ) -> tuple[float, float]:
         """Return (spot_value, perp_unrealized) for all OPEN positions
         linked to this strategy via farb_positions.
@@ -236,6 +260,15 @@ class Ledger:
         which includes the collateral reservation).
 
         For coins missing from quotes, contribution = 0 and a WARN is logged.
+
+        ``latest_cash_ts`` gates SPOT positions: if a spot position's
+        opened_at is strictly after the freshest cash wallet_snapshot timestamp,
+        the spot leg is skipped.  Rationale: while cash is stale-high (still
+        holds the USDC spent on the buy), counting the freshly-bought spot would
+        double-count that USDC; gating the spot leg until cash catches up keeps a
+        delta-neutral open from bumping equity.  When latest_cash_ts is None
+        (fresh DB, no cash snapshots yet) all spot positions are counted as
+        normal — no regression to zero equity.
         """
         # Fetch all OPEN, non-COLLATERAL positions linked to this strategy.
         stmt = (
@@ -277,6 +310,20 @@ class Ledger:
             quote = quotes[coin]
 
             if instrument == Instrument.SPOT:
+                # Gate: skip this spot leg if cash hasn't been re-snapshotted
+                # since the position opened.  pos.opened_at and latest_cash_ts
+                # are both Unix ms ints (see Position model: opened_at Mapped[int]).
+                if (
+                    latest_cash_ts is not None
+                    and pos.opened_at is not None
+                    and pos.opened_at > latest_cash_ts
+                ):
+                    logger.debug(
+                        "compute_equity: skipping SPOT %s opened_at=%d (cash snapshot "
+                        "is stale: latest_cash_ts=%d); USDC still in cash leg",
+                        coin, pos.opened_at, latest_cash_ts,
+                    )
+                    continue
                 # Prefer authoritative HL spot mid, then quote.spot, then mark.
                 if spot_mids_by_coin is not None and coin in spot_mids_by_coin:
                     price = spot_mids_by_coin[coin]

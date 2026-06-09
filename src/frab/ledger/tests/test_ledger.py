@@ -77,6 +77,7 @@ async def _insert_position(
     farb_position_id: int | None,
     status: PositionStatus = PositionStatus.OPEN,
     closed_at: int | None = None,
+    opened_at: int = _NOW_MS,
 ) -> int:
     """Insert a position row, return its id."""
     async with session_scope(session_factory) as s:
@@ -87,7 +88,7 @@ async def _insert_position(
             side=side.value,
             qty=qty,
             entry_price=entry_price,
-            opened_at=_NOW_MS,
+            opened_at=opened_at,
             closed_at=closed_at,
             status=status.value,
             farb_position_id=farb_position_id,
@@ -586,3 +587,121 @@ async def test_missing_quote_warns_once_per_coin(session_factory, strategy_id, e
 
     btc_warns = [r for r in caplog.records if "BTC" in r.message and r.levelno == logging.WARNING]
     assert len(btc_warns) == 1, f"Expected 1 WARN for BTC, got {len(btc_warns)}"
+
+
+# ---------------------------------------------------------------------------
+# Cash-freshness gate — SPOT positions opened after latest_cash_ts are excluded
+# ---------------------------------------------------------------------------
+
+# The timeline used across these tests:
+#   _CASH_TS   = _NOW_MS          = the wallet_snapshot timestamp (cash "caught up" at this point)
+#   _POS_STALE = _NOW_MS - 60_000 = position opened 1 min BEFORE snapshot → cash is fresh → INCLUDE
+#   _POS_FRESH = _NOW_MS + 60_000 = position opened 1 min AFTER  snapshot → cash is stale → EXCLUDE
+
+_CASH_TS = _NOW_MS
+_POS_STALE = _NOW_MS - 60_000   # opened before cash snapshot → should be INCLUDED
+_POS_FRESH = _NOW_MS + 60_000   # opened after  cash snapshot → should be EXCLUDED
+
+
+async def test_spot_excluded_when_opened_after_cash_snapshot(
+    session_factory, strategy_id, exchange_id, caplog
+):
+    """SPOT position opened AFTER the cash snapshot is excluded from spot_value,
+    keeping total_equity stable (no bump) until the wallet snapshot refreshes."""
+    # Cash snapshot at _CASH_TS
+    await _insert_wallet_snapshot(session_factory, exchange_id, "USDC", balance=1000.0, ts_ms=_CASH_TS)
+
+    # SPOT position opened 1 min AFTER the cash snapshot
+    fid = await _insert_farb_position(session_factory, strategy_id, "BTC")
+    await _insert_position(
+        session_factory, exchange_id, "BTC", Instrument.SPOT, Side.LONG,
+        qty=1.0, entry_price=50_000.0, farb_position_id=fid,
+        opened_at=_POS_FRESH,
+    )
+
+    quotes = {"BTC": _quote("BTC", mark=50_000.0, spot=50_000.0)}
+    ledger = Ledger(session_factory)
+    with caplog.at_level(logging.DEBUG, logger="frab.ledger.ledger"):
+        snap = await ledger.compute_equity(strategy_id=strategy_id, quotes=quotes)
+
+    # spot_value must be 0 — the gated position is excluded
+    assert snap.spot_value == pytest.approx(0.0)
+    # cash is still 1000 (no double-count)
+    assert snap.cash == pytest.approx(1000.0)
+    assert snap.total_equity == pytest.approx(1000.0)
+
+    # Debug log should mention the skip
+    skip_logs = [
+        r for r in caplog.records
+        if r.levelno == logging.DEBUG and "skipping SPOT" in r.message and "BTC" in r.message
+    ]
+    assert skip_logs, "Expected a DEBUG log about skipping the stale-cash SPOT position"
+
+
+async def test_spot_included_when_opened_before_cash_snapshot(
+    session_factory, strategy_id, exchange_id,
+):
+    """SPOT position opened BEFORE the cash snapshot is included normally."""
+    # Cash snapshot at _CASH_TS
+    await _insert_wallet_snapshot(session_factory, exchange_id, "USDC", balance=500.0, ts_ms=_CASH_TS)
+
+    # SPOT position opened 1 min BEFORE the cash snapshot
+    fid = await _insert_farb_position(session_factory, strategy_id, "ETH")
+    await _insert_position(
+        session_factory, exchange_id, "ETH", Instrument.SPOT, Side.LONG,
+        qty=2.0, entry_price=3_000.0, farb_position_id=fid,
+        opened_at=_POS_STALE,
+    )
+
+    quotes = {"ETH": _quote("ETH", mark=3_000.0, spot=3_200.0)}
+    ledger = Ledger(session_factory)
+    snap = await ledger.compute_equity(strategy_id=strategy_id, quotes=quotes)
+
+    # spot_value = 2 * 3200 = 6400 (spot price preferred)
+    assert snap.spot_value == pytest.approx(6_400.0)
+    assert snap.total_equity == pytest.approx(500.0 + 6_400.0)
+
+
+async def test_spot_included_when_no_cash_snapshots(session_factory, strategy_id, exchange_id):
+    """When latest_cash_ts is None (fresh DB, no wallet snapshots), SPOT positions
+    are counted as normal — no regression to zero equity."""
+    # No wallet_snapshot rows at all
+
+    fid = await _insert_farb_position(session_factory, strategy_id, "BTC")
+    await _insert_position(
+        session_factory, exchange_id, "BTC", Instrument.SPOT, Side.LONG,
+        qty=0.5, entry_price=50_000.0, farb_position_id=fid,
+        opened_at=_NOW_MS,
+    )
+
+    quotes = {"BTC": _quote("BTC", mark=50_000.0, spot=50_000.0)}
+    ledger = Ledger(session_factory)
+    snap = await ledger.compute_equity(strategy_id=strategy_id, quotes=quotes)
+
+    # Should count the spot leg even though there's no cash snapshot
+    assert snap.spot_value == pytest.approx(0.5 * 50_000.0)
+    assert snap.total_equity == pytest.approx(25_000.0)
+
+
+async def test_perp_unaffected_by_cash_freshness_gate(session_factory, strategy_id, exchange_id):
+    """PERP positions are never gated by latest_cash_ts, regardless of opened_at."""
+    # Cash snapshot at _CASH_TS
+    await _insert_wallet_snapshot(session_factory, exchange_id, "USDC", balance=0.0, ts_ms=_CASH_TS)
+
+    fid = await _insert_farb_position(session_factory, strategy_id, "BTC")
+    # PERP position opened AFTER the cash snapshot
+    await _insert_position(
+        session_factory, exchange_id, "BTC", Instrument.PERP, Side.SHORT,
+        qty=1.0, entry_price=50_000.0, farb_position_id=fid,
+        opened_at=_POS_FRESH,
+    )
+
+    # Mark moves up → perp SHORT loses
+    quotes = {"BTC": _quote("BTC", mark=51_000.0, spot=51_000.0)}
+    ledger = Ledger(session_factory)
+    snap = await ledger.compute_equity(strategy_id=strategy_id, quotes=quotes)
+
+    # PERP unrealized is still computed: (entry - mark)*qty = (50k - 51k)*1 = -1000
+    assert snap.perp_unrealized == pytest.approx(-1_000.0)
+    # spot_value is 0 (no spot position)
+    assert snap.spot_value == pytest.approx(0.0)
