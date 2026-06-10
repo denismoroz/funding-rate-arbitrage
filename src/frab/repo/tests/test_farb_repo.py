@@ -80,27 +80,27 @@ async def test_get_returns_none_for_unknown_id(session_factory):
 
 
 # ---------------------------------------------------------------------------
-# 4. list_active excludes OPEN/CLOSED/FAILED
+# 4. list_non_terminal excludes CLOSED/FAILED; includes PRE/POST/transient
 # ---------------------------------------------------------------------------
 
-async def test_list_active_excludes_terminal_states(session_factory, strategy_id):
+async def test_list_non_terminal_excludes_terminal_states(session_factory, strategy_id):
     repo = _repo(session_factory)
 
-    # Create one in each terminal state and a few active states
+    # Create one in each terminal state and a few non-terminal states
     fp_check = await repo.create(
         strategy_id=strategy_id, coin="BTC", initial_state=FarbState.CHECK_MARGIN
     )
     fp_opening = await repo.create(
         strategy_id=strategy_id, coin="ETH", initial_state=FarbState.OPENING_LONG
     )
-    # Transition one to OPEN (terminal)
-    fp_open_created = await repo.create(
+    # Transition one to PRE_BREAKEVEN (active resting state — non-terminal)
+    fp_pre = await repo.create(
         strategy_id=strategy_id, coin="SOL", initial_state=FarbState.CHECK_MARGIN
     )
     await repo.transition(
-        fp_open_created.id,
+        fp_pre.id,
         from_state=FarbState.CHECK_MARGIN,
-        to_state=FarbState.OPEN,
+        to_state=FarbState.PRE_BREAKEVEN,
     )
     # Mark one as CLOSED
     fp_closed = await repo.create(
@@ -114,52 +114,53 @@ async def test_list_active_excludes_terminal_states(session_factory, strategy_id
     )
     await repo.mark_failed(fp_failed.id, reason="test failure")
 
-    active = await repo.list_active(strategy_id)
-    active_ids = {fp.id for fp in active}
+    non_terminal = await repo.list_non_terminal(strategy_id)
+    non_terminal_ids = {fp.id for fp in non_terminal}
 
-    assert fp_check.id in active_ids
-    assert fp_opening.id in active_ids
-    assert fp_open_created.id not in active_ids   # OPEN is excluded
-    assert fp_closed.id not in active_ids         # CLOSED excluded
-    assert fp_failed.id not in active_ids         # FAILED excluded
+    assert fp_check.id in non_terminal_ids
+    assert fp_opening.id in non_terminal_ids
+    assert fp_pre.id in non_terminal_ids       # PRE_BREAKEVEN is non-terminal
+    assert fp_closed.id not in non_terminal_ids  # CLOSED excluded
+    assert fp_failed.id not in non_terminal_ids  # FAILED excluded
 
 
 # ---------------------------------------------------------------------------
-# 5. list_open only returns OPEN
+# 5. list_active only returns PRE_BREAKEVEN and POST_BREAKEVEN
 # ---------------------------------------------------------------------------
 
-async def test_list_open_only_returns_open(session_factory, strategy_id):
+async def test_list_active_only_returns_active_states(session_factory, strategy_id):
     repo = _repo(session_factory)
 
-    fp_open1 = await repo.create(
+    fp_pre = await repo.create(
         strategy_id=strategy_id, coin="BTC", initial_state=FarbState.CHECK_MARGIN
     )
     await repo.transition(
-        fp_open1.id,
+        fp_pre.id,
         from_state=FarbState.CHECK_MARGIN,
-        to_state=FarbState.OPEN,
+        to_state=FarbState.PRE_BREAKEVEN,
     )
 
-    fp_open2 = await repo.create(
+    fp_post = await repo.create(
         strategy_id=strategy_id, coin="ETH", initial_state=FarbState.CHECK_MARGIN
     )
     await repo.transition(
-        fp_open2.id,
+        fp_post.id,
         from_state=FarbState.CHECK_MARGIN,
-        to_state=FarbState.OPEN,
+        to_state=FarbState.POST_BREAKEVEN,
     )
 
+    # A transient (non-active, non-terminal) position
     fp_other = await repo.create(
         strategy_id=strategy_id, coin="SOL", initial_state=FarbState.OPENING_LONG
     )
 
-    open_list = await repo.list_open(strategy_id)
-    open_ids = {fp.id for fp in open_list}
+    active_list = await repo.list_active(strategy_id)
+    active_ids = {fp.id for fp in active_list}
 
-    assert fp_open1.id in open_ids
-    assert fp_open2.id in open_ids
-    assert fp_other.id not in open_ids
-    assert all(fp.state == FarbState.OPEN for fp in open_list)
+    assert fp_pre.id in active_ids
+    assert fp_post.id in active_ids
+    assert fp_other.id not in active_ids
+    assert all(fp.state in (FarbState.PRE_BREAKEVEN, FarbState.POST_BREAKEVEN) for fp in active_list)
 
 
 # ---------------------------------------------------------------------------
@@ -477,11 +478,11 @@ async def test_state_conflict_error_message(session_factory, strategy_id):
     with pytest.raises(StateConflict) as exc_info:
         await repo.transition(
             fp.id,
-            from_state=FarbState.OPEN,
+            from_state=FarbState.PRE_BREAKEVEN,
             to_state=FarbState.CLOSING_SHORT,
         )
 
     msg = str(exc_info.value)
     assert str(fp.id) in msg
-    assert "open" in msg
+    assert "pre_breakeven" in msg
     assert "check_margin" in msg

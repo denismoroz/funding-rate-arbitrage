@@ -36,7 +36,7 @@ def _make_farb_position(strategy_id: int, **kw) -> FarbPosition:
     defaults = dict(
         strategy_id=strategy_id,
         coin="BTC",
-        state=FarbState.OPEN,
+        state=FarbState.PRE_BREAKEVEN,
         state_data={},
         opened_at=_NOW_MS,
     )

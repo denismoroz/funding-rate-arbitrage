@@ -57,7 +57,7 @@ def _make_fp(fp_id: int, coin: str, state_data: dict | None = None) -> FarbPosit
         id=fp_id,
         strategy_id=STRATEGY_ID,
         coin=coin,
-        state=FarbState.OPEN,
+        state=FarbState.PRE_BREAKEVEN,
         state_data=state_data or {},
         spot_position_id=None,
         perp_position_id=None,
@@ -112,7 +112,7 @@ def _make_watchdog(mocker, *, fps, account_value, coin_spec_maint=_MAINT_RATIO):
 
     # FarbRepo mock
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_farb_repo.get = mocker.AsyncMock(return_value=fps[0] if fps else None)
     mock_farb_repo.transition = mocker.AsyncMock(return_value=None)
 
@@ -178,7 +178,7 @@ async def test_warning_publishes_event_no_close(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_farb_repo.transition = mocker.AsyncMock()
 
     mock_settings = mocker.MagicMock()
@@ -235,7 +235,7 @@ async def test_forced_close_picks_weakest_virtual(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     # get returns fp2 (the weakest, id=2)
     mock_farb_repo.get = mocker.AsyncMock(return_value=fp2)
     mock_farb_repo.transition = mocker.AsyncMock(return_value=None)
@@ -264,7 +264,7 @@ async def test_forced_close_picks_weakest_virtual(mocker):
     mock_farb_repo.transition.assert_awaited_once()
     call_kwargs = mock_farb_repo.transition.call_args
     assert call_kwargs[0][0] == 2  # positional: farb_position_id
-    assert call_kwargs[1]["from_state"] == FarbState.OPEN
+    assert call_kwargs[1]["from_state"] == FarbState.PRE_BREAKEVEN
     assert call_kwargs[1]["to_state"] == FarbState.CLOSING_SHORT
 
     assert f"forced_close:fp=2" in report.actions_taken
@@ -287,7 +287,7 @@ async def test_liquidation_imminent_critical_event_and_close(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_farb_repo.get = mocker.AsyncMock(return_value=fp)
     mock_farb_repo.transition = mocker.AsyncMock(return_value=None)
 
@@ -320,7 +320,7 @@ async def test_liquidation_imminent_critical_event_and_close(mocker):
 
 @pytest.mark.asyncio
 async def test_no_open_fps_no_actions(mocker):
-    """list_open returns [] → HEALTHY (inf ratio), no actions."""
+    """list_active returns [] → HEALTHY (inf ratio), no actions."""
     mgr = _make_mgr()
     mock_exchange = mocker.MagicMock()
     perp_state = mocker.MagicMock()
@@ -331,7 +331,7 @@ async def test_no_open_fps_no_actions(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=[])
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=[])
     mock_farb_repo.transition = mocker.AsyncMock()
 
     mock_settings = mocker.MagicMock()
@@ -374,7 +374,7 @@ async def test_missing_asset_position_excluded(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_farb_repo.transition = mocker.AsyncMock()
 
     mock_settings = mocker.MagicMock()
@@ -419,10 +419,10 @@ async def test_state_conflict_does_not_crash(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_farb_repo.get = mocker.AsyncMock(return_value=fp)
     mock_farb_repo.transition = mocker.AsyncMock(
-        side_effect=StateConflict(1, FarbState.OPEN, FarbState.CLOSING_SHORT)
+        side_effect=StateConflict(1, FarbState.PRE_BREAKEVEN, FarbState.CLOSING_SHORT)
     )
 
     mock_settings = mocker.MagicMock()
@@ -469,7 +469,7 @@ async def test_dry_assess_does_not_emit_or_transition(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_farb_repo.transition = mocker.AsyncMock()
 
     mock_settings = mocker.MagicMock()
@@ -513,7 +513,7 @@ async def test_report_contains_actions_taken(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_farb_repo.transition = mocker.AsyncMock()
 
     mock_settings = mocker.MagicMock()
@@ -557,7 +557,7 @@ async def test_transition_state_data_merges_existing_keys(mocker):
     )
 
     mock_farb_repo = mocker.MagicMock()
-    mock_farb_repo.list_open = mocker.AsyncMock(return_value=fps)
+    mock_farb_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_farb_repo.get = mocker.AsyncMock(return_value=fp)
     mock_farb_repo.transition = mocker.AsyncMock(return_value=None)
 

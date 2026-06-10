@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
 from frab.db.models import EquitySnapshot, FarbPosition as DBFarbPosition
-from frab.domain.enums import FarbState
+from frab.domain.enums import ACTIVE_STATES, FarbState
 from frab.domain.equity import total_equity_usd
 
 router = APIRouter()
@@ -102,9 +102,10 @@ async def get_summary(request: Request) -> dict:
     sf = getattr(request.app.state, "session_factory", None)
     reserved_usdc = 0.0
     if sf is not None:
+        active_values = [s.value for s in ACTIVE_STATES]
         async with sf() as s:
             rows = (await s.execute(
-                select(DBFarbPosition).where(DBFarbPosition.state == FarbState.OPEN.name)
+                select(DBFarbPosition).where(DBFarbPosition.state.in_(active_values))
             )).scalars().all()
         reserved_usdc = sum(
             float((r.state_data or {}).get("required_margin", 0) or 0) for r in rows

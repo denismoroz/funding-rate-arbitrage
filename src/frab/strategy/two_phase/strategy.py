@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import Strategy as StrategyRow
 from frab.db.session import session_scope
-from frab.domain import FarbPosition, FarbState
+from frab.domain import FarbPosition, FarbState, ACTIVE_STATES
 from frab.events.bus import EventBus
 from frab.exchanges.protocol import Exchange
 from frab.repo.farb_repo import FarbRepo, StateConflict
@@ -141,8 +141,8 @@ class TwoPhaseStrategy:
     # ── Public entry points ───────────────────────────────────────────────────
 
     async def advance_all_pending(self) -> None:
-        """For every FarbPosition not in steady state, take ONE state-machine step."""
-        pending = await self.farb_repo.list_active(self.strategy_id)
+        """For every FarbPosition not in a terminal state, take ONE state-machine step."""
+        pending = await self.farb_repo.list_non_terminal(self.strategy_id)
         for fp in pending:
             await self._advance_one(fp)
 
@@ -175,7 +175,9 @@ class TwoPhaseStrategy:
 
     # ── State machine ─────────────────────────────────────────────────────────
 
-    _STEADY_STATES = frozenset({FarbState.OPEN, FarbState.CLOSED, FarbState.FAILED})
+    # States in which _advance_one should stop stepping: either terminal (CLOSED/FAILED)
+    # or resting (PRE_BREAKEVEN/POST_BREAKEVEN) — these are evaluated hourly, not per-tick.
+    _NON_TRANSIENT_STATES = frozenset(ACTIVE_STATES | {FarbState.CLOSED, FarbState.FAILED})
     _ADVANCE_MAX_ITERS = 20
 
     async def _advance_one(self, fp: FarbPosition) -> None:
@@ -191,7 +193,7 @@ class TwoPhaseStrategy:
         """
         current = fp
         for iteration in range(self._ADVANCE_MAX_ITERS):
-            if current.state in self._STEADY_STATES:
+            if current.state in self._NON_TRANSIENT_STATES:
                 break
 
             try:
@@ -279,15 +281,16 @@ class TwoPhaseStrategy:
         if coin not in p.coins:
             raise ManualOpenCoinNotInUniverse(coin)
 
+        # list_by_coin(include_terminal=False) excludes CLOSED/FAILED, so it covers
+        # all transient + resting (PRE/POST) states — sufficient for coin uniqueness check.
         existing = await self.farb_repo.list_by_coin(
             self.strategy_id, coin, include_terminal=False
         )
-        open_fps = await self.farb_repo.list_open(self.strategy_id)
-        if existing or any(fp.coin == coin for fp in open_fps):
+        if existing:
             raise ManualOpenAlreadyExists(coin)
 
-        all_active = await self.farb_repo.list_active(self.strategy_id)
-        non_terminal_count = len(all_active) + len(open_fps)
+        non_terminal = await self.farb_repo.list_non_terminal(self.strategy_id)
+        non_terminal_count = len(non_terminal)
         if non_terminal_count >= p.concurrency_cap:
             raise ManualOpenConcurrencyCapReached(
                 f"{non_terminal_count}/{p.concurrency_cap}"

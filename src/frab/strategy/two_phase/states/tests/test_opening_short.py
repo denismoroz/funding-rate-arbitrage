@@ -89,7 +89,7 @@ async def test_opening_short_happy_path(mocker):
 
     result = await state.execute(fp)
 
-    assert result == FarbState.OPEN
+    assert result == FarbState.PRE_BREAKEVEN
 
     # OpenRequest check
     open_req = exchange.open_position.await_args.args[0]
@@ -104,10 +104,10 @@ async def test_opening_short_happy_path(mocker):
     assert set_leg_kwargs["instrument"] == Instrument.PERP
     assert set_leg_kwargs["position_id"] == 55
 
-    # transition to OPEN with required state_data keys
+    # transition to PRE_BREAKEVEN with required state_data keys
     trans_kwargs = farb_repo.transition.await_args.kwargs
     assert trans_kwargs["from_state"] == FarbState.OPENING_SHORT
-    assert trans_kwargs["to_state"] == FarbState.OPEN
+    assert trans_kwargs["to_state"] == FarbState.PRE_BREAKEVEN
     sd = trans_kwargs["state_data"]
     assert sd["gross_funding_so_far"] == 0.0
     assert sd["consec_negative_hours"] == 0
@@ -172,7 +172,7 @@ async def test_opening_short_no_event_bus(mocker):
     fp = _make_fp(state_data={"spot_qty": 3.0})
 
     result = await state.execute(fp)
-    assert result == FarbState.OPEN
+    assert result == FarbState.PRE_BREAKEVEN
 
 
 @pytest.mark.asyncio
@@ -204,7 +204,7 @@ async def test_opening_short_fallback_recomputes_qty_from_quote(mocker):
 
     result = await state.execute(fp)
 
-    assert result == FarbState.OPEN
+    assert result == FarbState.PRE_BREAKEVEN
     exchange.get_quote.assert_awaited_once_with(fp.coin)
     open_req = exchange.open_position.await_args.args[0]
     expected = size_usdc / mark_price

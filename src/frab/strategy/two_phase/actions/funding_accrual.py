@@ -1,4 +1,4 @@
-"""FundingAccrual — refreshes funding accruals for OPEN FarbPositions."""
+"""FundingAccrual — refreshes funding accruals for active (PRE/POST_BREAKEVEN) FarbPositions."""
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
@@ -15,7 +15,7 @@ _FULL_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 
 class FundingAccrual:
-    """Refreshes funding accruals from the exchange for each OPEN FarbPosition."""
+    """Refreshes funding accruals from the exchange for each active (PRE/POST_BREAKEVEN) FarbPosition."""
 
     def __init__(
         self,
@@ -49,7 +49,7 @@ class FundingAccrual:
             or (now_ms - self._last_full_sweep_ms) >= _FULL_SWEEP_INTERVAL_MS
         )
 
-        open_fps = await self._farb_repo.list_open(self._strategy_id)
+        open_fps = await self._farb_repo.list_active(self._strategy_id)
         for fp in open_fps:
             if fp.perp_position_id is None:
                 continue

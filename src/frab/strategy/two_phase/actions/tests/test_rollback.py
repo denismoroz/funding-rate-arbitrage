@@ -24,7 +24,7 @@ def _make_params(**overrides) -> TwoPhaseParams:
     return TwoPhaseParams(**defaults)
 
 
-def _make_fp(*, id: int = 1, state: FarbState = FarbState.OPEN,
+def _make_fp(*, id: int = 1, state: FarbState = FarbState.PRE_BREAKEVEN,
              spot_position_id: int | None = None,
              perp_position_id: int | None = None,
              state_data: dict | None = None) -> FarbPosition:

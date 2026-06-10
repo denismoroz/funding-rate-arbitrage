@@ -29,10 +29,9 @@ class EntryEvaluator:
         """For each coin: compute signal, check concurrency cap, create new arbs."""
         p = self._params
 
-        # Count non-terminal positions (includes OPEN + in-flight)
-        all_active = await self._farb_repo.list_active(self._strategy_id)
-        open_fps = await self._farb_repo.list_open(self._strategy_id)
-        non_terminal_count = len(all_active) + len(open_fps)
+        # Count non-terminal positions (includes all transient + PRE/POST resting states)
+        all_non_terminal = await self._farb_repo.list_non_terminal(self._strategy_id)
+        non_terminal_count = len(all_non_terminal)
 
         slots = p.concurrency_cap - non_terminal_count
         if slots <= 0:
@@ -57,14 +56,12 @@ class EntryEvaluator:
         candidates: list[tuple[str, float]] = []
         current_hour = now_ms // 3_600_000
         for coin in p.coins:
-            # Skip if already has a non-terminal position
+            # Skip if already has a non-terminal position (includes PRE/POST and all transient states)
+            # list_by_coin(include_terminal=False) excludes only CLOSED/FAILED
             existing = await self._farb_repo.list_by_coin(
                 self._strategy_id, coin, include_terminal=False
             )
-            # list_by_coin with include_terminal=False excludes OPEN/CLOSED/FAILED
-            # but we also want to skip if there's an OPEN position
-            open_for_coin = [fp for fp in open_fps if fp.coin == coin]
-            if existing or open_for_coin:
+            if existing:
                 continue
 
             # Cooldown: if a FP for this coin failed in the current hour, wait

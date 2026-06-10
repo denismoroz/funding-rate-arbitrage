@@ -30,7 +30,7 @@ def _make_params(**overrides) -> TwoPhaseParams:
     return TwoPhaseParams(**defaults)
 
 
-def _make_fp(coin: str = "BTC", state: FarbState = FarbState.CHECK_MARGIN) -> FarbPosition:
+def _make_fp(coin: str = "BTC", state: FarbState = FarbState.PRE_BREAKEVEN) -> FarbPosition:
     return FarbPosition(
         id=1,
         strategy_id=1,
@@ -70,18 +70,18 @@ async def test_manual_open_rejects_coin_not_in_universe(mocker):
 @pytest.mark.asyncio
 async def test_manual_open_rejects_existing_non_terminal_fp(mocker):
     strategy = _make_strategy(mocker)
+    # list_by_coin returns an existing non-terminal position → AlreadyExists
     strategy.farb_repo.list_by_coin.return_value = [_make_fp("BTC")]
-    strategy.farb_repo.list_open.return_value = []
 
     with pytest.raises(ManualOpenAlreadyExists):
         await strategy.manual_open(coin="BTC", now_ms=_NOW_MS)
 
 
 @pytest.mark.asyncio
-async def test_manual_open_rejects_existing_open_fp(mocker):
+async def test_manual_open_rejects_existing_pre_breakeven_fp(mocker):
+    """PRE_BREAKEVEN position for the coin → AlreadyExists (list_by_coin non-terminal)."""
     strategy = _make_strategy(mocker)
-    strategy.farb_repo.list_by_coin.return_value = []
-    strategy.farb_repo.list_open.return_value = [_make_fp("BTC", FarbState.OPEN)]
+    strategy.farb_repo.list_by_coin.return_value = [_make_fp("BTC", FarbState.PRE_BREAKEVEN)]
 
     with pytest.raises(ManualOpenAlreadyExists):
         await strategy.manual_open(coin="BTC", now_ms=_NOW_MS)
@@ -92,11 +92,11 @@ async def test_manual_open_rejects_concurrency_cap_reached(mocker):
     params = _make_params(concurrency_cap=2)
     strategy = _make_strategy(mocker, params=params)
     strategy.farb_repo.list_by_coin.return_value = []
-    strategy.farb_repo.list_open.return_value = [
-        _make_fp("ETH", FarbState.OPEN),
-        _make_fp("SOL", FarbState.OPEN),
+    # list_non_terminal returns 2 positions → cap reached
+    strategy.farb_repo.list_non_terminal.return_value = [
+        _make_fp("ETH", FarbState.PRE_BREAKEVEN),
+        _make_fp("SOL", FarbState.PRE_BREAKEVEN),
     ]
-    strategy.farb_repo.list_active.return_value = []
 
     with pytest.raises(ManualOpenConcurrencyCapReached):
         await strategy.manual_open(coin="BTC", now_ms=_NOW_MS)
@@ -104,18 +104,15 @@ async def test_manual_open_rejects_concurrency_cap_reached(mocker):
 
 @pytest.mark.asyncio
 async def test_manual_open_rejects_budget_cap_reached(mocker):
-    # Patch TwoPhaseParams.compute_footprint on the class so we can return an
-    # inflated footprint value without needing a mutable params instance.
-    # concurrency_cap=5 leaves room for more; two open positions (non_terminal=2).
+    # concurrency_cap=5 leaves room for more; two non-terminal positions.
     # With footprint=300, committed=600; 600+300=900 > budget_cap_usdc=500 → reject.
     params = _make_params(concurrency_cap=5, budget_cap_usdc=500.0)
     strategy = _make_strategy(mocker, params=params)
     strategy.farb_repo.list_by_coin.return_value = []
-    strategy.farb_repo.list_open.return_value = [
-        _make_fp("ETH", FarbState.OPEN),
-        _make_fp("SOL", FarbState.OPEN),
+    strategy.farb_repo.list_non_terminal.return_value = [
+        _make_fp("ETH", FarbState.PRE_BREAKEVEN),
+        _make_fp("SOL", FarbState.PRE_BREAKEVEN),
     ]
-    strategy.farb_repo.list_active.return_value = []
 
     from frab.strategy.two_phase.params import TwoPhaseParams as _Params
     mocker.patch.object(_Params, "compute_footprint", return_value=300.0)
@@ -128,8 +125,7 @@ async def test_manual_open_rejects_budget_cap_reached(mocker):
 async def test_manual_open_rejects_signal_unavailable(mocker):
     strategy = _make_strategy(mocker)
     strategy.farb_repo.list_by_coin.return_value = []
-    strategy.farb_repo.list_open.return_value = []
-    strategy.farb_repo.list_active.return_value = []
+    strategy.farb_repo.list_non_terminal.return_value = []
     strategy._signal_computer.compute.return_value = None
 
     with pytest.raises(ManualOpenSignalUnavailable):
@@ -142,8 +138,7 @@ async def test_manual_open_rejects_signal_unavailable(mocker):
 async def test_manual_open_success(mocker):
     strategy = _make_strategy(mocker)
     strategy.farb_repo.list_by_coin.return_value = []
-    strategy.farb_repo.list_open.return_value = []
-    strategy.farb_repo.list_active.return_value = []
+    strategy.farb_repo.list_non_terminal.return_value = []
     strategy._signal_computer.compute.return_value = 0.07
 
     created_fp = _make_fp("BTC", FarbState.CHECK_MARGIN)

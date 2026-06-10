@@ -45,7 +45,7 @@ async def _insert_farb_position(
     session_factory,
     strategy_id: int,
     coin: str,
-    state: FarbState = FarbState.OPEN,
+    state: FarbState = FarbState.PRE_BREAKEVEN,
 ) -> int:
     """Insert a farb_position row, return its id."""
     async with session_scope(session_factory) as s:

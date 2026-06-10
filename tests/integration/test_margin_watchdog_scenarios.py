@@ -150,19 +150,21 @@ def _make_watchdog(strategy_id, exchange, farb_repo, mgr, settings, bus):
 
 
 async def _seed_open_fp(farb_repo: FarbRepo, strategy_id: int, coin: str, state_data: dict) -> int:
-    """Create FP in CHECK_MARGIN then transition to OPEN. Returns fp.id."""
+    """Create FP in CHECK_MARGIN then transition to PRE_BREAKEVEN. Returns fp.id."""
     fp = await farb_repo.create(
         strategy_id=strategy_id,
         coin=coin,
         initial_state=FarbState.CHECK_MARGIN,
         state_data=state_data,
     )
-    fp = await farb_repo.transition(
-        fp.id,
-        from_state=FarbState.CHECK_MARGIN,
-        to_state=FarbState.OPEN,
-        state_data=state_data,
-    )
+    # Walk through intermediate states to reach PRE_BREAKEVEN
+    for from_s, to_s in [
+        (FarbState.CHECK_MARGIN, FarbState.OPENING_MARGIN),
+        (FarbState.OPENING_MARGIN, FarbState.OPENING_LONG),
+        (FarbState.OPENING_LONG, FarbState.OPENING_SHORT),
+        (FarbState.OPENING_SHORT, FarbState.PRE_BREAKEVEN),
+    ]:
+        fp = await farb_repo.transition(fp.id, from_state=from_s, to_state=to_s, state_data=state_data)
     return fp.id
 
 
@@ -199,10 +201,10 @@ async def test_e2e_healthy_no_action(session_factory, strategy_id, mocker):
     assert report.actions_taken == []
     bus.publish.assert_not_called()
 
-    # All 3 FPs still OPEN
+    # All 3 FPs still PRE_BREAKEVEN
     for fp_id in [btc_id, eth_id, sol_id]:
         fp = await farb_repo.get(fp_id)
-        assert fp.state == FarbState.OPEN, f"FP {fp_id} ({fp.coin}) should be OPEN"
+        assert fp.state == FarbState.PRE_BREAKEVEN, f"FP {fp_id} ({fp.coin}) should be PRE_BREAKEVEN"
 
 
 async def test_e2e_warning_publishes_event_no_close(session_factory, strategy_id, mocker):
@@ -237,11 +239,11 @@ async def test_e2e_warning_publishes_event_no_close(session_factory, strategy_id
     assert any("event:margin" in a for a in report.actions_taken)
     assert not any("forced_close" in a for a in report.actions_taken)
 
-    # Both FPs still OPEN
+    # Both FPs still PRE_BREAKEVEN
     fp1 = await farb_repo.get(fp1_id)
     fp2 = await farb_repo.get(fp2_id)
-    assert fp1.state == FarbState.OPEN
-    assert fp2.state == FarbState.OPEN
+    assert fp1.state == FarbState.PRE_BREAKEVEN
+    assert fp2.state == FarbState.PRE_BREAKEVEN
 
 
 async def test_e2e_forced_close_weakest_by_virtual_ratio(session_factory, strategy_id, mocker):
@@ -285,11 +287,11 @@ async def test_e2e_forced_close_weakest_by_virtual_ratio(session_factory, strate
     assert eth_fp.state_data.get("exit_requested_at_ms") == NOW_MS
     assert eth_fp.state_data.get("required_margin") == 5.0
 
-    # BTC and SOL still OPEN
+    # BTC and SOL still PRE_BREAKEVEN
     btc_fp = await farb_repo.get(btc_id)
     sol_fp = await farb_repo.get(sol_id)
-    assert btc_fp.state == FarbState.OPEN
-    assert sol_fp.state == FarbState.OPEN
+    assert btc_fp.state == FarbState.PRE_BREAKEVEN
+    assert sol_fp.state == FarbState.PRE_BREAKEVEN
 
     # One event + one forced_close action
     assert any("forced_close" in a for a in report.actions_taken)
@@ -333,7 +335,7 @@ async def test_e2e_watchdog_idempotent_when_fp_already_closing(session_factory, 
     farb_repo = FarbRepo(session_factory)
 
     # Only one FP to keep it simple: after first run it goes CLOSING_SHORT.
-    # On second run list_open returns empty → no snapshots → account_ratio=inf → HEALTHY.
+    # On second run list_active returns empty (FP no longer active) → no snapshots → account_ratio=inf → HEALTHY.
     fp_id = await _seed_open_fp(farb_repo, strategy_id, "BTC", {"required_margin": 7.5})
 
     # account_ratio = 2.0 / 2.5 = 0.8 → LIQUIDATION_IMMINENT
@@ -353,7 +355,7 @@ async def test_e2e_watchdog_idempotent_when_fp_already_closing(session_factory, 
     fp = await farb_repo.get(fp_id)
     assert fp.state == FarbState.CLOSING_SHORT
 
-    # Second run: same bad account_value, but list_open() returns [] (FP no longer OPEN)
+    # Second run: same bad account_value, but list_active() returns [] (FP no longer active)
     # → no snapshots → total_maint=0 → account_ratio=inf → HEALTHY
     report2 = await watchdog.run_check(now_ms=NOW_MS + 1000)
     # No exception raised — idempotent
@@ -401,6 +403,6 @@ async def test_e2e_per_fp_includes_funding_and_fees_in_equity(session_factory, s
     # No events published (healthy + dry_assess)
     bus.publish.assert_not_called()
 
-    # DB state unchanged: still OPEN
+    # DB state unchanged: still PRE_BREAKEVEN
     fp = await farb_repo.get(fp_id)
-    assert fp.state == FarbState.OPEN
+    assert fp.state == FarbState.PRE_BREAKEVEN

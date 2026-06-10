@@ -72,7 +72,7 @@ async def _seed_farb_position(
     *,
     strategy_id: int,
     coin: str = "BTC",
-    state: str = FarbState.OPEN.value,
+    state: str = FarbState.PRE_BREAKEVEN.value,
     state_data: dict | None = None,
     opened_at: int | None = None,
     closed_at: int | None = None,
@@ -101,12 +101,11 @@ async def _seed_farb_position(
 
 
 async def test_list_farb_positions_filters_by_status_active(api_client, session_factory):
-    """Seed OPEN + CHECK_MARGIN + CLOSED; query status=active → get only CHECK_MARGIN."""
+    """Seed PRE_BREAKEVEN + CHECK_MARGIN + CLOSED; query status=active → get non-terminal (all but CLOSED/FAILED)."""
     exc_id = await _seed_exchange(session_factory)
     strat_id = await _seed_strategy(session_factory)
 
-    # OPEN is terminal (steady-state), so active = non-terminal
-    await _seed_farb_position(session_factory, strategy_id=strat_id, state=FarbState.OPEN.value)
+    pre_id = await _seed_farb_position(session_factory, strategy_id=strat_id, state=FarbState.PRE_BREAKEVEN.value)
     cm_id = await _seed_farb_position(
         session_factory, strategy_id=strat_id, state=FarbState.CHECK_MARGIN.value
     )
@@ -118,10 +117,14 @@ async def test_list_farb_positions_filters_by_status_active(api_client, session_
     resp = await api_client.get(f"/api/farb-positions?strategy_id={strat_id}&status=active")
     assert resp.status_code == 200
     data = resp.json()
-    # Only CHECK_MARGIN is non-terminal (OPEN and CLOSED are terminal)
-    assert len(data) == 1
-    assert data[0]["id"] == cm_id
-    assert data[0]["state"] == "CHECK_MARGIN"
+    # Both PRE_BREAKEVEN and CHECK_MARGIN are non-terminal; CLOSED is excluded
+    ids = {item["id"] for item in data}
+    assert pre_id in ids
+    assert cm_id in ids
+    assert len(data) == 2
+    states = {item["state"] for item in data}
+    assert "PRE_BREAKEVEN" in states
+    assert "CHECK_MARGIN" in states
 
 
 # ── test_list_farb_positions_includes_legs ────────────────────────────────────
@@ -153,7 +156,7 @@ async def test_list_farb_positions_includes_legs(api_client, session_factory):
         session_factory,
         strategy_id=strat_id,
         coin="BTC",
-        state=FarbState.OPEN.value,
+        state=FarbState.PRE_BREAKEVEN.value,
         spot_position_id=spot_id,
         perp_position_id=perp_id,
         margin_position_id=margin_id,
@@ -188,7 +191,7 @@ async def test_list_farb_positions_computes_hours_held(api_client, session_facto
     await _seed_farb_position(
         session_factory,
         strategy_id=strat_id,
-        state=FarbState.OPEN.value,
+        state=FarbState.PRE_BREAKEVEN.value,
         opened_at=opened_at,
     )
 
@@ -226,7 +229,7 @@ async def test_list_farb_positions_computes_unrealized_pnl(api_client, session_f
         session_factory,
         strategy_id=strat_id,
         coin="BTC",
-        state=FarbState.OPEN.value,
+        state=FarbState.PRE_BREAKEVEN.value,
         spot_position_id=spot_id,
         perp_position_id=perp_id,
     )
@@ -278,7 +281,7 @@ async def test_get_farb_position_by_id_returns_correct_shape(api_client, session
         session_factory,
         strategy_id=strat_id,
         coin="ETH",
-        state=FarbState.OPEN.value,
+        state=FarbState.PRE_BREAKEVEN.value,
         state_data={"target_signal_apr": 0.25, "consec_negative_hours": 3},
     )
 
@@ -288,7 +291,7 @@ async def test_get_farb_position_by_id_returns_correct_shape(api_client, session
 
     assert item["id"] == fp_id
     assert item["coin"] == "ETH"
-    assert item["state"] == "OPEN"
+    assert item["state"] == "PRE_BREAKEVEN"
     assert item["target_signal_apr"] == pytest.approx(0.25)
     assert item["consec_negative_hours"] == 3
     assert "legs" in item
@@ -302,12 +305,15 @@ async def test_get_farb_position_by_id_returns_correct_shape(api_client, session
 
 
 async def test_list_farb_positions_status_open(api_client, session_factory):
-    """status=open returns only OPEN positions."""
+    """status=open returns only ACTIVE_STATES positions (PRE_BREAKEVEN, POST_BREAKEVEN)."""
     exc_id = await _seed_exchange(session_factory)
     strat_id = await _seed_strategy(session_factory)
 
-    open_id = await _seed_farb_position(
-        session_factory, strategy_id=strat_id, state=FarbState.OPEN.value
+    pre_id = await _seed_farb_position(
+        session_factory, strategy_id=strat_id, state=FarbState.PRE_BREAKEVEN.value
+    )
+    post_id = await _seed_farb_position(
+        session_factory, strategy_id=strat_id, state=FarbState.POST_BREAKEVEN.value
     )
     await _seed_farb_position(
         session_factory, strategy_id=strat_id, state=FarbState.CHECK_MARGIN.value
@@ -316,8 +322,10 @@ async def test_list_farb_positions_status_open(api_client, session_factory):
     resp = await api_client.get(f"/api/farb-positions?strategy_id={strat_id}&status=open")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 1
-    assert data[0]["id"] == open_id
+    assert len(data) == 2
+    ids = {item["id"] for item in data}
+    assert pre_id in ids
+    assert post_id in ids
 
 
 # ── test_list_farb_positions_unknown_status_422 ───────────────────────────────
@@ -334,13 +342,13 @@ async def test_list_farb_positions_unknown_status_422(api_client, session_factor
 
 
 async def test_close_open_fp_returns_closing_short(api_client, session_factory, farb_repo):
-    """POST /api/farb-positions/{id}/close on OPEN FP → 200, new_state=CLOSING_SHORT."""
+    """POST /api/farb-positions/{id}/close on PRE_BREAKEVEN FP → 200, new_state=CLOSING_SHORT."""
     strat_id = await _seed_strategy(session_factory)
     fp_id = await _seed_farb_position(
         session_factory,
         strategy_id=strat_id,
         coin="SOL",
-        state=FarbState.OPEN.value,
+        state=FarbState.PRE_BREAKEVEN.value,
         state_data={"gross_funding_so_far": 10.0},
     )
 
@@ -389,21 +397,20 @@ async def test_close_nonexistent_fp_returns_404(api_client):
 
 
 async def test_close_all_closes_open_and_skips_non_open(api_client, session_factory, farb_repo):
-    """POST /api/farb-positions/close-all with 2 OPEN + 1 CHECK_MARGIN.
+    """POST /api/farb-positions/close-all with 2 active (PRE/POST_BREAKEVEN) + 1 CHECK_MARGIN.
 
-    Behaviour: the two OPEN positions are transitioned; the CHECK_MARGIN one is
-    not touched (list_open only returns OPEN rows) so it appears in neither
-    closed_ids nor failed — it is simply not returned by list_open.
+    Behaviour: the two active positions are transitioned; the CHECK_MARGIN one is
+    not touched (list_active only returns PRE_BREAKEVEN/POST_BREAKEVEN rows).
     """
     strat_id = await _seed_strategy(session_factory)
 
     open_id1 = await _seed_farb_position(
-        session_factory, strategy_id=strat_id, coin="BTC", state=FarbState.OPEN.value
+        session_factory, strategy_id=strat_id, coin="BTC", state=FarbState.PRE_BREAKEVEN.value
     )
     open_id2 = await _seed_farb_position(
-        session_factory, strategy_id=strat_id, coin="ETH", state=FarbState.OPEN.value
+        session_factory, strategy_id=strat_id, coin="ETH", state=FarbState.POST_BREAKEVEN.value
     )
-    # CHECK_MARGIN — not returned by list_open, so not attempted
+    # CHECK_MARGIN — not returned by list_active, so not attempted
     await _seed_farb_position(
         session_factory, strategy_id=strat_id, coin="SOL", state=FarbState.CHECK_MARGIN.value
     )
@@ -417,7 +424,7 @@ async def test_close_all_closes_open_and_skips_non_open(api_client, session_fact
     assert data["failed"] == []
     assert "ts_ms" in data
 
-    # Both OPEN FPs are now CLOSING_SHORT in the DB
+    # Both active FPs are now CLOSING_SHORT in the DB
     for fp_id in (open_id1, open_id2):
         updated = await farb_repo.get(fp_id)
         assert updated.state == FarbState.CLOSING_SHORT

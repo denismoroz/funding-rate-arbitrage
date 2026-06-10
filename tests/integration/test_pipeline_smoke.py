@@ -6,7 +6,7 @@ real FarbRepo + Ledger + TwoPhaseStrategy + in-memory SQLite DB.
 Scenario:
   1. minute tick saves price rows
   2. on_hour_tick after seeding funding history → new FarbPosition(state=CHECK_MARGIN)
-  3. advance_all_pending repeatedly → walks CHECK_MARGIN → OPEN
+  3. advance_all_pending repeatedly → walks CHECK_MARGIN → PRE_BREAKEVEN
   4. inject low funding + force hours_held ≥ min_hold → CLOSING_SHORT
   5. advance_all_pending again → walks to CLOSED
   6. final assertions: FarbPosition CLOSED, all linked positions CLOSED,
@@ -251,13 +251,13 @@ async def test_pipeline_smoke(session_factory, seeded):
     assert fps[0].coin == "BTC"
     fp_id = fps[0].id
 
-    # ── Advance CHECK_MARGIN → OPEN (single burst call) ──────────────────────
+    # ── Advance CHECK_MARGIN → PRE_BREAKEVEN (single burst call) ─────────────
     fp = await farb_repo.get(fp_id)
     await strategy._advance_one(fp)
 
     fp = await farb_repo.get(fp_id)
     assert fp is not None
-    assert fp.state == FarbState.OPEN, f"Expected OPEN, got {fp.state}"
+    assert fp.state == FarbState.PRE_BREAKEVEN, f"Expected PRE_BREAKEVEN, got {fp.state}"
     assert fp.spot_position_id is not None
     assert fp.perp_position_id is not None
     assert fp.margin_position_id is not None
@@ -277,14 +277,17 @@ async def test_pipeline_smoke(session_factory, seeded):
             ))
 
     # Force opened_at_ms far in the past so hours_held >> min_hold
+    # gross_funding < total_fees → PRE_BREAKEVEN (phase 1 logic)
+    # consec_negative_hours=10 >= neg_stop_patience=6; signal -0.175 < -0.15 threshold
+    # → CLOSE_PRE_BE_NEGSTOP fires, bypassing min_hold
     fp = await farb_repo.get(fp_id)
     new_sd = {
         **fp.state_data,
         "opened_at_ms": _NOW_MS - 200 * 3_600_000,
         "position_min_hold_hours": 24,
-        "gross_funding_so_far": 50.0,
+        "gross_funding_so_far": 0.5,   # below total_fees → PRE_BREAKEVEN
         "total_fees_paid": 4.2,
-        "consec_negative_hours": 0,
+        "consec_negative_hours": 10,   # >= neg_stop_patience=6
     }
     await farb_repo.update_state_data(fp_id, new_sd)
 

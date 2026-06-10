@@ -270,7 +270,7 @@ async def test_farb_position_crud(session, make_exchange, make_strategy):
     fp = FarbPosition(
         strategy_id=strat.id,
         coin="BTC",
-        state=FarbState.OPEN,
+        state=FarbState.PRE_BREAKEVEN,
         state_data={"min_hold_hours": 12},
         spot_position_id=spot_pos.id,
         perp_position_id=perp_pos.id,
@@ -291,7 +291,7 @@ async def test_farb_position_crud(session, make_exchange, make_strategy):
     )
     row = result.scalar_one()
     assert row.coin == "BTC"
-    assert row.state == FarbState.OPEN
+    assert row.state == FarbState.PRE_BREAKEVEN
     assert row.state_data["min_hold_hours"] == 12
     assert row.spot_position_id == spot_pos.id
     assert row.perp_position_id == perp_pos.id

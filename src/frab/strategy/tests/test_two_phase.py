@@ -173,8 +173,8 @@ async def test_01_check_margin_happy(session_factory, farb_repo, strategy_id, ex
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    # Burst walks all the way to OPEN in one call
-    assert updated.state == FarbState.OPEN
+    # Burst walks all the way to PRE_BREAKEVEN in one call
+    assert updated.state == FarbState.PRE_BREAKEVEN
     # required_margin should be carried through state_data
     assert "required_margin" in updated.state_data
 
@@ -199,7 +199,7 @@ async def test_02_check_margin_insufficient(session_factory, farb_repo, strategy
 
 @pytest.mark.asyncio
 async def test_03_opening_margin(session_factory, farb_repo, strategy_id, exchange_id):
-    """OPENING_MARGIN: open_position(COLLATERAL) called, set_leg recorded; bursts to OPEN."""
+    """OPENING_MARGIN: open_position(COLLATERAL) called, set_leg recorded; bursts to PRE_BREAKEVEN."""
     exchange = _make_exchange(session_factory=session_factory, exchange_id=exchange_id)
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.strategy_id = strategy_id
@@ -214,8 +214,8 @@ async def test_03_opening_margin(session_factory, farb_repo, strategy_id, exchan
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    # Burst walks from OPENING_MARGIN all the way to OPEN
-    assert updated.state == FarbState.OPEN
+    # Burst walks from OPENING_MARGIN all the way to PRE_BREAKEVEN
+    assert updated.state == FarbState.PRE_BREAKEVEN
     assert updated.margin_position_id is not None
 
     # Verify exchange was called with COLLATERAL as first open_position call
@@ -226,7 +226,7 @@ async def test_03_opening_margin(session_factory, farb_repo, strategy_id, exchan
 
 @pytest.mark.asyncio
 async def test_04_opening_long(session_factory, farb_repo, strategy_id, exchange_id):
-    """OPENING_LONG: exchange called with SPOT/LONG, spot_qty correct; bursts to OPEN."""
+    """OPENING_LONG: exchange called with SPOT/LONG, spot_qty correct; bursts to PRE_BREAKEVEN."""
     exchange = _make_exchange(session_factory=session_factory, exchange_id=exchange_id)
     price = 50000.0
     strat = _make_strategy(exchange, farb_repo, session_factory)
@@ -241,8 +241,8 @@ async def test_04_opening_long(session_factory, farb_repo, strategy_id, exchange
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    # Burst walks from OPENING_LONG → OPENING_SHORT → OPEN
-    assert updated.state == FarbState.OPEN
+    # Burst walks from OPENING_LONG → OPENING_SHORT → PRE_BREAKEVEN
+    assert updated.state == FarbState.PRE_BREAKEVEN
     assert updated.spot_position_id is not None
 
     # Verify SPOT/LONG was the first open_position call from OPENING_LONG
@@ -255,7 +255,7 @@ async def test_04_opening_long(session_factory, farb_repo, strategy_id, exchange
 
 @pytest.mark.asyncio
 async def test_05_opening_short(session_factory, farb_repo, strategy_id, exchange_id):
-    """OPENING_SHORT → OPEN: exchange called with PERP/SHORT; perp_qty equals spot_qty."""
+    """OPENING_SHORT → PRE_BREAKEVEN: exchange called with PERP/SHORT; perp_qty equals spot_qty."""
     exchange = _make_exchange(session_factory=session_factory, exchange_id=exchange_id)
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.strategy_id = strategy_id
@@ -274,7 +274,7 @@ async def test_05_opening_short(session_factory, farb_repo, strategy_id, exchang
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.OPEN
+    assert updated.state == FarbState.PRE_BREAKEVEN
 
     req = exchange.open_position.call_args[0][0]
     assert req.instrument == Instrument.PERP
@@ -283,8 +283,8 @@ async def test_05_opening_short(session_factory, farb_repo, strategy_id, exchang
 
 
 @pytest.mark.asyncio
-async def test_06_open_is_noop(session_factory, farb_repo, strategy_id):
-    """OPEN state: advance is a no-op — no exchange calls, state unchanged."""
+async def test_06_pre_breakeven_is_noop(session_factory, farb_repo, strategy_id):
+    """PRE_BREAKEVEN state: advance is a no-op — no exchange calls, state unchanged."""
     exchange = _make_exchange()
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.strategy_id = strategy_id
@@ -292,12 +292,12 @@ async def test_06_open_is_noop(session_factory, farb_repo, strategy_id):
     fp = await farb_repo.create(
         strategy_id=strategy_id,
         coin="BTC",
-        initial_state=FarbState.OPEN,
+        initial_state=FarbState.PRE_BREAKEVEN,
     )
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.OPEN
+    assert updated.state == FarbState.PRE_BREAKEVEN
     exchange.open_position.assert_not_called()
     exchange.close_position.assert_not_called()
 
@@ -667,7 +667,7 @@ async def test_17_blacklist_coins_not_used(session_factory, farb_repo, strategy_
 async def test_18_exit_signal_below_threshold_after_min_hold(
     session_factory, farb_repo, strategy_id, exchange_id
 ):
-    """OPEN position with signal < exit_threshold AND held >= min_hold → CLOSING_SHORT."""
+    """POST_BREAKEVEN position with signal < exit_threshold AND held >= min_hold → CLOSING_SHORT."""
     exchange = _make_exchange()
     strat = _make_strategy(exchange, farb_repo, session_factory,
                            coins=["BTC"], signal_window_hours=3)
@@ -677,10 +677,10 @@ async def test_18_exit_signal_below_threshold_after_min_hold(
     rate_per_hour = -0.15 / 8760  # -0.15 APR annualized
     await _seed_funding_rates(session_factory, exchange_id, "BTC", [rate_per_hour] * 3)
 
-    # Opened 200 hours ago (well past min_hold=24)
+    # Opened 200 hours ago (well past min_hold=24); gross > fees so POST_BREAKEVEN
     opened_ms = _NOW_MS - 200 * 3_600_000
     fp = await farb_repo.create(
-        strategy_id=strategy_id, coin="BTC", initial_state=FarbState.OPEN,
+        strategy_id=strategy_id, coin="BTC", initial_state=FarbState.POST_BREAKEVEN,
         state_data={
             "opened_at_ms": opened_ms,
             "position_min_hold_hours": 24,
@@ -699,7 +699,7 @@ async def test_18_exit_signal_below_threshold_after_min_hold(
 async def test_19_exit_not_triggered_before_min_hold(
     session_factory, farb_repo, strategy_id, exchange_id
 ):
-    """OPEN position with bad signal BUT held < min_hold → NOT transitioned."""
+    """POST_BREAKEVEN position with bad signal BUT held < min_hold → NOT transitioned."""
     exchange = _make_exchange()
     strat = _make_strategy(exchange, farb_repo, session_factory,
                            coins=["BTC"], signal_window_hours=3)
@@ -708,10 +708,10 @@ async def test_19_exit_not_triggered_before_min_hold(
     rate_per_hour = -0.15 / 8760
     await _seed_funding_rates(session_factory, exchange_id, "BTC", [rate_per_hour] * 3)
 
-    # Opened only 5 hours ago, min_hold=24
+    # Opened only 5 hours ago, min_hold=24; gross > fees so POST_BREAKEVEN
     opened_ms = _NOW_MS - 5 * 3_600_000
     fp = await farb_repo.create(
-        strategy_id=strategy_id, coin="BTC", initial_state=FarbState.OPEN,
+        strategy_id=strategy_id, coin="BTC", initial_state=FarbState.POST_BREAKEVEN,
         state_data={
             "opened_at_ms": opened_ms,
             "position_min_hold_hours": 24,
@@ -723,14 +723,14 @@ async def test_19_exit_not_triggered_before_min_hold(
     await strat._evaluate_exits(now_ms=_NOW_MS)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.OPEN
+    assert updated.state == FarbState.POST_BREAKEVEN
 
 
 @pytest.mark.asyncio
 async def test_20_exit_not_triggered_signal_above_threshold(
     session_factory, farb_repo, strategy_id, exchange_id
 ):
-    """OPEN position with signal > exit_threshold → NOT transitioned."""
+    """POST_BREAKEVEN position with signal > exit_threshold → NOT transitioned."""
     exchange = _make_exchange()
     strat = _make_strategy(exchange, farb_repo, session_factory,
                            coins=["BTC"], signal_window_hours=3)
@@ -739,9 +739,10 @@ async def test_20_exit_not_triggered_signal_above_threshold(
     rate_per_hour = 0.20 / 8760  # well above exit_threshold=-0.10
     await _seed_funding_rates(session_factory, exchange_id, "BTC", [rate_per_hour] * 3)
 
+    # gross > fees so POST_BREAKEVEN
     opened_ms = _NOW_MS - 200 * 3_600_000
     fp = await farb_repo.create(
-        strategy_id=strategy_id, coin="BTC", initial_state=FarbState.OPEN,
+        strategy_id=strategy_id, coin="BTC", initial_state=FarbState.POST_BREAKEVEN,
         state_data={
             "opened_at_ms": opened_ms,
             "position_min_hold_hours": 24,
@@ -753,7 +754,7 @@ async def test_20_exit_not_triggered_signal_above_threshold(
     await strat._evaluate_exits(now_ms=_NOW_MS)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.OPEN
+    assert updated.state == FarbState.POST_BREAKEVEN
 
 
 @pytest.mark.asyncio
@@ -769,9 +770,10 @@ async def test_21_exit_state_conflict_silent_skip(
     rate_per_hour = -0.15 / 8760
     await _seed_funding_rates(session_factory, exchange_id, "BTC", [rate_per_hour] * 3)
 
+    # gross > fees so POST_BREAKEVEN
     opened_ms = _NOW_MS - 200 * 3_600_000
     fp = await farb_repo.create(
-        strategy_id=strategy_id, coin="BTC", initial_state=FarbState.OPEN,
+        strategy_id=strategy_id, coin="BTC", initial_state=FarbState.POST_BREAKEVEN,
         state_data={
             "opened_at_ms": opened_ms,
             "position_min_hold_hours": 24,
@@ -786,7 +788,7 @@ async def test_21_exit_state_conflict_silent_skip(
 
     async def _conflict_transition(*args, **kwargs):
         if kwargs.get("to_state") == FarbState.CLOSING_SHORT:
-            raise StateConflict(fp.id, FarbState.OPEN, FarbState.CLOSING_SHORT)
+            raise StateConflict(fp.id, FarbState.POST_BREAKEVEN, FarbState.CLOSING_SHORT)
         return await original_transition(*args, **kwargs)
 
     strat.farb_repo.transition = _conflict_transition
@@ -795,8 +797,8 @@ async def test_21_exit_state_conflict_silent_skip(
     await strat._evaluate_exits(now_ms=_NOW_MS)
 
     updated = await farb_repo.get(fp.id)
-    # State should remain OPEN (conflict was caught silently)
-    assert updated.state == FarbState.OPEN
+    # State should remain POST_BREAKEVEN (conflict was caught silently)
+    assert updated.state == FarbState.POST_BREAKEVEN
 
 
 # ─── Integration: full lifecycle ─────────────────────────────────────────────
@@ -836,12 +838,12 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
     assert fp_row.state == FarbState.CHECK_MARGIN.value
     fp_id = fp_row.id
 
-    # Single _advance_one call bursts CHECK_MARGIN → OPEN in one shot
+    # Single _advance_one call bursts CHECK_MARGIN → PRE_BREAKEVEN in one shot
     fp = await farb_repo.get(fp_id)
     await strat._advance_one(fp)
 
     fp = await farb_repo.get(fp_id)
-    assert fp.state == FarbState.OPEN
+    assert fp.state == FarbState.PRE_BREAKEVEN
 
     # exchange.open_position should have been called 3x
     assert exchange.open_position.call_count == 3
@@ -854,7 +856,7 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
 
     # ── Transition to exit ───────────────────────────────────────────────────
 
-    # Seed negative rate to trigger exit in phase2 (fp is in profit)
+    # Seed negative rate to trigger exit in phase2 (fp is in profit → POST_BREAKEVEN)
     # Use timestamps that are distinct from the positive-rate ones seeded above.
     # Entry rates used ts_ms = _NOW_MS - 2h, -1h, 0h.  Exit rates start at _NOW_MS + 10h.
     exit_base_ms = _NOW_MS + 10 * 3_600_000
@@ -863,7 +865,7 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
                                base_ts_ms=exit_base_ms)
 
     fp = await farb_repo.get(fp_id)
-    # Manually set state_data to simulate being past min_hold and in profit
+    # Manually set state_data to simulate being past min_hold and in profit (→ POST_BREAKEVEN)
     new_sd = {
         **fp.state_data,
         "opened_at_ms": _NOW_MS - 200 * 3_600_000,
@@ -873,6 +875,8 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
         "consec_negative_hours": 0,
     }
     await farb_repo.update_state_data(fp_id, new_sd)
+    # Transition to POST_BREAKEVEN so the exit evaluator uses the post handler
+    await farb_repo.transition(fp_id, from_state=FarbState.PRE_BREAKEVEN, to_state=FarbState.POST_BREAKEVEN)
 
     await strat._evaluate_exits(now_ms=exit_base_ms)
 
@@ -906,7 +910,7 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
 
 @pytest.mark.asyncio
 async def test_advance_one_bursts_full_open(session_factory, farb_repo, strategy_id, exchange_id):
-    """Single _advance_one from CHECK_MARGIN bursts to OPEN; all 3 leg positions created in DB."""
+    """Single _advance_one from CHECK_MARGIN bursts to PRE_BREAKEVEN; all 3 leg positions created in DB."""
     exchange = _make_exchange(session_factory=session_factory, exchange_id=exchange_id)
     exchange.get_wallet.return_value = 10000.0
 
@@ -921,7 +925,7 @@ async def test_advance_one_bursts_full_open(session_factory, farb_repo, strategy
     await strat._advance_one(fp)
 
     updated = await farb_repo.get(fp.id)
-    assert updated.state == FarbState.OPEN
+    assert updated.state == FarbState.PRE_BREAKEVEN
 
     # All 3 leg position IDs must be set
     assert updated.margin_position_id is not None
@@ -1051,9 +1055,9 @@ async def test_evaluate_entries_blocks_when_budget_cap_reached(
     )
     strat.strategy_id = strategy_id
 
-    # Pre-create an OPEN position to consume the cap entirely
+    # Pre-create a PRE_BREAKEVEN position to consume the cap entirely
     await farb_repo.create(strategy_id=strategy_id, coin="SOL",
-                           initial_state=FarbState.OPEN)
+                           initial_state=FarbState.PRE_BREAKEVEN)
 
     # Seed qualifying signals for BTC and ETH
     rate_per_hour = 0.20 / 8760
@@ -1070,7 +1074,7 @@ async def test_evaluate_entries_blocks_when_budget_cap_reached(
         )
         fps = result.scalars().all()
 
-    # Only the pre-existing SOL OPEN position; no new BTC/ETH ones created
+    # Only the pre-existing SOL PRE_BREAKEVEN position; no new BTC/ETH ones created
     assert len(fps) == 1
     assert fps[0].coin == "SOL"
 
@@ -1232,9 +1236,9 @@ async def test_evaluate_entries_respects_partial_budget(
     )
     strat.strategy_id = strategy_id
 
-    # Pre-create 1 OPEN position for a different coin
+    # Pre-create 1 PRE_BREAKEVEN position for a different coin
     await farb_repo.create(strategy_id=strategy_id, coin="SOL",
-                           initial_state=FarbState.OPEN)
+                           initial_state=FarbState.PRE_BREAKEVEN)
 
     # Both BTC and ETH qualify; BTC has stronger signal so it should be picked
     rate_btc = 0.50 / 8760

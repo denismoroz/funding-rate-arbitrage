@@ -1,4 +1,4 @@
-"""OpeningShortState — opens the perp short leg and advances to OPEN."""
+"""OpeningShortState — opens the perp short leg and advances to PRE_BREAKEVEN."""
 from __future__ import annotations
 
 import logging
@@ -60,7 +60,7 @@ class OpeningShortState(State):
         await self._farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_SHORT,
-            to_state=FarbState.OPEN,
+            to_state=FarbState.PRE_BREAKEVEN,
             state_data={
                 **fp.state_data,
                 "position_min_hold_hours": pos_min_hold,
@@ -76,7 +76,7 @@ class OpeningShortState(State):
             level="INFO",
             kind="farb.opened",
             message=(
-                f"{fp.coin} OPEN: spot={spot_qty:.6f} @ "
+                f"{fp.coin} PRE_BREAKEVEN: spot={spot_qty:.6f} @ "
                 f"{fp.state_data.get('spot_entry_price', 0):.2f}, "
                 f"perp_short={pos.qty:.6f} @ {pos.entry_price:.2f}"
             ),
@@ -91,4 +91,4 @@ class OpeningShortState(State):
                 "position_min_hold_hours": pos_min_hold,
             },
         )
-        return FarbState.OPEN
+        return FarbState.PRE_BREAKEVEN

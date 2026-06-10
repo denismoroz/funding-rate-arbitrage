@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
 from frab.db.models import FarbPosition as FarbPositionRow, Position, Price
-from frab.domain.enums import FarbState
+from frab.domain.enums import ACTIVE_STATES, FarbState
 from frab.events.bus import Event
 from frab.repo.farb_repo import StateConflict
 from frab.strategy.two_phase.strategy import (
@@ -26,12 +26,14 @@ from frab.strategy.two_phase.strategy import (
 
 router = APIRouter()
 
-# Terminal states — FarbPosition in one of these is not "active"
-_TERMINAL_STATES = {FarbState.OPEN.value, FarbState.CLOSED.value, FarbState.FAILED.value}
+# Terminal states — FarbPosition in one of these has fully exited
+_TERMINAL_STATES = {FarbState.CLOSED.value, FarbState.FAILED.value}
 _NON_TERMINAL_STATES = [
     s.value for s in FarbState
-    if s not in (FarbState.OPEN, FarbState.CLOSED, FarbState.FAILED)
+    if s not in (FarbState.CLOSED, FarbState.FAILED)
 ]
+# Active (holding) states for "status=open" API filter
+_ACTIVE_STATE_VALUES = [s.value for s in ACTIVE_STATES]
 
 
 def _now_ms() -> int:
@@ -138,9 +140,11 @@ def _fp_to_dict(
             remaining = max(fees_usdc - funding_usdc, 0.0)
             breakeven_hours = remaining / hourly_income
 
-    # locked_margin_usdc: only meaningful for OPEN positions still tracked by HL
+    # locked_margin_usdc / live leverage: only meaningful for actively-held positions
     state_str = fp.state.upper() if isinstance(fp.state, str) else fp.state
-    is_open = (state_str == "OPEN")
+    # A position is "open" (holding legs on HL) when its state is in ACTIVE_STATES
+    _active_upper = {s.value.upper() for s in ACTIVE_STATES}
+    is_open = state_str in _active_upper
     locked_margin = 0.0
     if is_open and margin_used_by_coin is not None:
         locked_margin = margin_used_by_coin.get(fp.coin, 0.0)
@@ -289,8 +293,8 @@ async def list_farb_positions(
     List FarbPositions for a strategy, optionally filtered by status.
 
     status values:
-      - "active"  — all non-terminal states (NOT OPEN, CLOSED, FAILED)
-      - "open"    — state = OPEN
+      - "active"  — all non-terminal states (NOT CLOSED, FAILED)
+      - "open"    — state IN ACTIVE_STATES (PRE_BREAKEVEN or POST_BREAKEVEN)
       - "closed"  — state = CLOSED
       - "failed"  — state = FAILED
       - None      — all states
@@ -307,7 +311,7 @@ async def list_farb_positions(
         if s == "active":
             stmt = stmt.where(FarbPositionRow.state.in_(_NON_TERMINAL_STATES))
         elif s == "open":
-            stmt = stmt.where(FarbPositionRow.state == FarbState.OPEN.value)
+            stmt = stmt.where(FarbPositionRow.state.in_(_ACTIVE_STATE_VALUES))
         elif s == "closed":
             stmt = stmt.where(FarbPositionRow.state == FarbState.CLOSED.value)
         elif s == "failed":
@@ -348,16 +352,16 @@ async def close_all_farb_positions(
     event_bus = getattr(request.app.state, "event_bus", None)
     now_ms = _now_ms()
 
-    open_fps = await farb_repo.list_open(strategy_id)
+    active_fps = await farb_repo.list_active(strategy_id)
     closed_ids: list[dict] = []
     failed: list[dict] = []
 
-    for fp in open_fps:
+    for fp in active_fps:
         new_state_data = {**(fp.state_data or {}), "exit_decision": "forced", "exit_requested_at_ms": now_ms}
         try:
             await farb_repo.transition(
                 fp.id,
-                from_state=FarbState.OPEN,
+                from_state=fp.state,
                 to_state=FarbState.CLOSING_SHORT,
                 state_data=new_state_data,
             )
@@ -402,10 +406,10 @@ async def close_farb_position(
     if fp is None:
         raise HTTPException(status_code=404, detail="FarbPosition not found")
 
-    if fp.state != FarbState.OPEN:
+    if not fp.is_active:
         raise HTTPException(
             status_code=409,
-            detail=f"FarbPosition {farb_position_id} is in state {fp.state.value!r}, not OPEN; force-close requires OPEN state",
+            detail=f"FarbPosition {farb_position_id} is in state {fp.state.value!r}, not an active holding state; force-close requires PRE_BREAKEVEN or POST_BREAKEVEN state",
         )
 
     now_ms = _now_ms()
@@ -414,7 +418,7 @@ async def close_farb_position(
     try:
         await farb_repo.transition(
             fp.id,
-            from_state=FarbState.OPEN,
+            from_state=fp.state,
             to_state=FarbState.CLOSING_SHORT,
             state_data=new_state_data,
         )

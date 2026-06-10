@@ -20,7 +20,7 @@ def _make_fp(*, id: int = 1, coin: str = "BTC", perp_position_id: int | None = 4
         id=id,
         strategy_id=1,
         coin=coin,
-        state=FarbState.OPEN,
+        state=FarbState.PRE_BREAKEVEN,
         state_data=state_data or {},
         spot_position_id=None,
         perp_position_id=perp_position_id,
@@ -39,7 +39,7 @@ def _make_accrual(mocker, *, open_fps=None, accrued_funding=100.0,
         exchange.get_accrued_funding.return_value = accrued_funding
 
     farb_repo = mocker.AsyncMock()
-    farb_repo.list_open.return_value = open_fps or []
+    farb_repo.list_active.return_value = open_fps or []
 
     sf = mocker.MagicMock()
 

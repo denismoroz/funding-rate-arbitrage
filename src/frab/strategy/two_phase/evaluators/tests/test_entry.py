@@ -36,7 +36,7 @@ def _make_params(**overrides) -> TwoPhaseParams:
     return TwoPhaseParams(**defaults)
 
 
-def _make_fp(*, coin: str = "BTC", state: FarbState = FarbState.OPEN,
+def _make_fp(*, coin: str = "BTC", state: FarbState = FarbState.PRE_BREAKEVEN,
              closed_at=None, id: int = 1) -> FarbPosition:
     return FarbPosition(
         id=id,
@@ -53,15 +53,14 @@ def _make_fp(*, coin: str = "BTC", state: FarbState = FarbState.OPEN,
 
 
 def _make_evaluator(mocker, *, params=None, signal_side_effect=None,
-                    active=None, open_fps=None, by_coin_terminal=None,
+                    non_terminal=None, by_coin_terminal=None,
                     by_coin_nonterminal=None):
     """Return (evaluator, farb_repo_mock, signal_computer_mock)."""
     if params is None:
         params = _make_params()
 
     farb_repo = mocker.AsyncMock()
-    farb_repo.list_active.return_value = active or []
-    farb_repo.list_open.return_value = open_fps or []
+    farb_repo.list_non_terminal.return_value = non_terminal or []
 
     def _by_coin(strategy_id, coin, include_terminal=False):
         if include_terminal:
@@ -91,12 +90,14 @@ def _make_evaluator(mocker, *, params=None, signal_side_effect=None,
 async def test_skips_when_no_slots_available(mocker):
     """When non_terminal_count >= concurrency_cap, returns without creating FPs."""
     params = _make_params(concurrency_cap=2)
-    # 1 active + 1 open = 2, slots = 2 - 2 = 0
-    active = [_make_fp(coin="BTC", state=FarbState.CHECK_MARGIN, id=1)]
-    open_fps = [_make_fp(coin="ETH", state=FarbState.OPEN, id=2)]
+    # 2 non-terminal = 2, slots = 2 - 2 = 0
+    non_terminal = [
+        _make_fp(coin="BTC", state=FarbState.CHECK_MARGIN, id=1),
+        _make_fp(coin="ETH", state=FarbState.PRE_BREAKEVEN, id=2),
+    ]
 
     evaluator, farb_repo, _ = _make_evaluator(
-        mocker, params=params, active=active, open_fps=open_fps
+        mocker, params=params, non_terminal=non_terminal
     )
     await evaluator.evaluate(now_ms=_NOW_MS, force_cooldown_bypass=False)
     farb_repo.create.assert_not_called()
@@ -104,21 +105,21 @@ async def test_skips_when_no_slots_available(mocker):
 
 @pytest.mark.asyncio
 async def test_skips_coin_with_existing_nonterminal_position(mocker):
-    """Coin already has a non-terminal or OPEN position → skipped."""
+    """Coin already has a non-terminal position → skipped."""
     params = _make_params(coins=["BTC"], concurrency_cap=3)
-    btc_open = _make_fp(coin="BTC", state=FarbState.OPEN, id=1)
+    btc_pre = _make_fp(coin="BTC", state=FarbState.PRE_BREAKEVEN, id=1)
 
     evaluator, farb_repo, signal_computer = _make_evaluator(
         mocker,
         params=params,
-        active=[],
-        open_fps=[btc_open],  # BTC is already OPEN
-        by_coin_nonterminal={"BTC": []},  # list_by_coin non-terminal
+        non_terminal=[],
+        # list_by_coin non-terminal returns existing BTC position → skip
+        by_coin_nonterminal={"BTC": [btc_pre]},
         by_coin_terminal={"BTC": []},
         signal_side_effect=[0.50],
     )
     await evaluator.evaluate(now_ms=_NOW_MS, force_cooldown_bypass=False)
-    # open_for_coin check catches BTC → no create
+    # existing non-terminal for BTC → no create
     farb_repo.create.assert_not_called()
 
 
@@ -139,8 +140,7 @@ async def test_cooldown_blocks_and_bypass_overrides(mocker):
     evaluator, farb_repo, signal_computer = _make_evaluator(
         mocker,
         params=params,
-        active=[],
-        open_fps=[],
+        non_terminal=[],
         by_coin_nonterminal={"BTC": []},
         by_coin_terminal={"BTC": [failed_fp]},
         signal_side_effect=[signal_value, signal_value],  # called twice (bypass test)
@@ -151,8 +151,7 @@ async def test_cooldown_blocks_and_bypass_overrides(mocker):
     farb_repo.create.assert_not_called()
 
     # Second call: bypass=True should allow the entry
-    farb_repo.list_active.return_value = []
-    farb_repo.list_open.return_value = []
+    farb_repo.list_non_terminal.return_value = []
     await evaluator.evaluate(now_ms=_NOW_MS, force_cooldown_bypass=True)
     farb_repo.create.assert_called_once()
 
@@ -175,8 +174,7 @@ async def test_top_k_selection_picks_strongest_signals(mocker):
     evaluator, farb_repo, signal_computer = _make_evaluator(
         mocker,
         params=params,
-        active=[],
-        open_fps=[],
+        non_terminal=[],
         by_coin_nonterminal={"BTC": [], "ETH": [], "SOL": []},
         by_coin_terminal={"BTC": [], "ETH": [], "SOL": []},
     )
@@ -203,14 +201,13 @@ async def test_budget_cap_blocks_all_entries(mocker):
         position_size_usdc=1000.0,
         margin_buffer_factor=3.0,
     )
-    # 1 OPEN position already consuming the entire budget
-    existing_open = _make_fp(coin="SOL", state=FarbState.OPEN, id=10)
+    # 1 PRE_BREAKEVEN position already consuming the entire budget
+    existing_pre = _make_fp(coin="SOL", state=FarbState.PRE_BREAKEVEN, id=10)
 
     evaluator, farb_repo, signal_computer = _make_evaluator(
         mocker,
         params=params,
-        active=[],
-        open_fps=[existing_open],
+        non_terminal=[existing_pre],
         by_coin_nonterminal={"BTC": [], "ETH": []},
         by_coin_terminal={"BTC": [], "ETH": []},
         signal_side_effect=[0.50, 0.50],

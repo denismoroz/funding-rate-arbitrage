@@ -167,6 +167,12 @@ class TestForceHourTick:
         mock_strategy.params = None
         mock_strategy.force_entry_cooldown_bypass = False
 
+        # Simulate reload_params actually updating mock_strategy.params
+        def _reload_side_effect(new_params):
+            mock_strategy.params = new_params
+
+        mock_strategy.reload_params.side_effect = _reload_side_effect
+
         mock_exchange = type("MockExchange", (), {"name": "test_exchange"})()
         mock_ledger = object()
 
@@ -188,7 +194,7 @@ class TestForceHourTick:
         # _hour_tick called with correct timestamp
         mock_hour_tick.assert_called_once_with(now_ms)
 
-        # params was reloaded (set on mock_strategy)
+        # params was reloaded via reload_params(new_params)
         assert mock_strategy.params is not None
 
         # bypass flag was reset to False after the call

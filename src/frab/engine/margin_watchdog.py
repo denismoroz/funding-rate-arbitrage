@@ -85,7 +85,7 @@ class MarginWatchdog:
                     }
                     await self._farb_repo.transition(
                         weakest_fp_id,
-                        from_state=FarbState.OPEN,
+                        from_state=fp.state,
                         to_state=FarbState.CLOSING_SHORT,
                         state_data=merged_state_data,
                     )
@@ -125,7 +125,7 @@ class MarginWatchdog:
         perp_state, _ = await self._exchange.get_account_snapshot()
         account_value = perp_state.account_value
 
-        open_fps = await self._farb_repo.list_open(self._strategy_id)
+        open_fps = await self._farb_repo.list_active(self._strategy_id)
         snapshots: list[FpMarginSnapshot] = []
         maint_by_coin: dict[str, float] = {}
 

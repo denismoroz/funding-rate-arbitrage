@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.domain import FarbPosition, FarbState, Instrument
+from frab.domain import ACTIVE_STATES
 from frab.db.models import FarbPosition as FarbPositionRow
 from frab.db.session import session_scope
 
@@ -67,7 +68,7 @@ def _to_domain(row: FarbPositionRow) -> FarbPosition:
 
 # ── Terminal states ───────────────────────────────────────────────────────────
 
-_TERMINAL_STATES = {FarbState.OPEN, FarbState.CLOSED, FarbState.FAILED}
+_TERMINAL_STATES = {FarbState.CLOSED, FarbState.FAILED}
 
 
 # ── FarbRepo ──────────────────────────────────────────────────────────────────
@@ -120,10 +121,11 @@ class FarbRepo:
                 return None
             return _to_domain(row)
 
-    async def list_active(self, strategy_id: int) -> list[FarbPosition]:
-        """All farb_positions for strategy where state NOT IN (OPEN, CLOSED, FAILED).
+    async def list_non_terminal(self, strategy_id: int) -> list[FarbPosition]:
+        """All farb_positions for strategy where state NOT IN (CLOSED, FAILED).
 
-        Used at startup for recovery of in-progress positions.
+        Returns all transient (opening/closing) and resting (PRE/POST_BREAKEVEN) positions.
+        Used at startup for recovery of in-progress positions and by the minute-tick advance loop.
         """
         terminal_values = [s.value for s in _TERMINAL_STATES]
         async with session_scope(self._sf) as session:
@@ -136,13 +138,18 @@ class FarbRepo:
             rows = result.scalars().all()
             return [_to_domain(r) for r in rows]
 
-    async def list_open(self, strategy_id: int) -> list[FarbPosition]:
-        """Return all farb_positions in state OPEN for the given strategy."""
+    async def list_active(self, strategy_id: int) -> list[FarbPosition]:
+        """Return all farb_positions in an actively-holding state (PRE_BREAKEVEN or POST_BREAKEVEN).
+
+        Used by the hourly ExitEvaluator to find positions to evaluate for exit,
+        and by funding accrual and margin watchdog.
+        """
+        active_values = [s.value for s in ACTIVE_STATES]
         async with session_scope(self._sf) as session:
             result = await session.execute(
                 select(FarbPositionRow).where(
                     FarbPositionRow.strategy_id == strategy_id,
-                    FarbPositionRow.state == FarbState.OPEN.value,
+                    FarbPositionRow.state.in_(active_values),
                 )
             )
             rows = result.scalars().all()
@@ -170,7 +177,7 @@ class FarbRepo:
     ) -> list[FarbPosition]:
         """Return farb_positions for a specific coin.
 
-        By default excludes terminal states (OPEN, CLOSED, FAILED).
+        By default excludes terminal states (CLOSED, FAILED).
         Pass include_terminal=True to include all rows.
         """
         async with session_scope(self._sf) as session:
