@@ -61,11 +61,15 @@ def decide_two_phase(
     # Phase-1 negative hard-stop (bypasses min_hold). Defaults match prod config.
     neg_stop_threshold: float = -0.15,
     neg_stop_patience: int = 6,
-    # Phase supplied by caller from fp.state (PRE_BREAKEVEN → in_profit=False,
-    # POST_BREAKEVEN → in_profit=True).  When None the phase is reconstructed from
-    # gross_funding_so_far >= total_fees_paid for backwards compatibility, but callers
-    # SHOULD supply it explicitly so the persisted latch is respected.
-    in_profit: bool | None = None,
+    # Phase supplied by caller from the persisted fp.state (PRE_BREAKEVEN →
+    # in_profit=False, POST_BREAKEVEN → in_profit=True).  Defaults to False
+    # (pre-breakeven): the entry path (in_position=False) ignores it, and the
+    # two in_position=True callers — PreBreakevenHandler / PostBreakevenHandler —
+    # ALWAYS pass it explicitly.  The phase is NEVER reconstructed from
+    # gross_funding_so_far vs total_fees_paid here; that recompute would defeat
+    # the one-way persisted latch (a position that dipped back below break-even
+    # must stay POST).
+    in_profit: bool = False,
 ) -> TwoPhaseDecision:
     """Return decision based on position state + signal.
 
@@ -94,8 +98,9 @@ def decide_two_phase(
         else → NONE
 
     Exit (in_position):
-        Phase is taken from the supplied ``in_profit`` parameter (or falls back to
-        gross_funding_so_far >= total_fees_paid when in_profit is None).
+        Phase is taken from the supplied ``in_profit`` parameter (the persisted
+        FarbState — PRE_BREAKEVEN→False, POST_BREAKEVEN→True). It is never
+        recomputed from gross/fees here.
         Phase-1 negative hard-stop (checked BEFORE min_hold lock — it bypasses it):
             not in_profit and smoothed_signal_annual < neg_stop_threshold
             and consec_negative_hours >= neg_stop_patience → CLOSE_PRE_BE_NEGSTOP
@@ -115,10 +120,8 @@ def decide_two_phase(
             return TwoPhaseDecision.OPEN
         return TwoPhaseDecision.NONE
 
-    # Resolve phase: use caller-supplied value when available (persisted latch);
-    # fall back to recomputation only when in_profit is not provided.
-    if in_profit is None:
-        in_profit = gross_funding_so_far >= total_fees_paid
+    # Phase comes from the caller's persisted in_profit (one-way latch); it is
+    # NOT reconstructed from gross_funding_so_far vs total_fees_paid.
 
     # Phase-1 negative hard-stop — BYPASSES min_hold. Only while still trying to
     # recoup fees (Phase 1): if the smoothed signal is decisively negative and has
