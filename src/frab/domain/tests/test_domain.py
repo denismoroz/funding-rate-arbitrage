@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from frab.domain import FarbPosition, FarbState, Instrument, Position, PositionStatus, Side
+from frab.domain import ACTIVE_STATES, FarbPosition, FarbState, Instrument, Position, PositionStatus, Side
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,8 @@ def test_farb_state_values():
     assert FarbState.OPENING_MARGIN == "opening_margin"
     assert FarbState.OPENING_LONG == "opening_long"
     assert FarbState.OPENING_SHORT == "opening_short"
-    assert FarbState.OPEN == "open"
+    assert FarbState.PRE_BREAKEVEN == "pre_breakeven"
+    assert FarbState.POST_BREAKEVEN == "post_breakeven"
     assert FarbState.CLOSING_SHORT == "closing_short"
     assert FarbState.CLOSING_LONG == "closing_long"
     assert FarbState.RELEASING_MARGIN == "releasing_margin"
@@ -40,11 +41,61 @@ def test_farb_state_values():
     assert FarbState.FAILED == "failed"
 
 
+def test_farb_state_open_removed():
+    """FarbState.OPEN must no longer exist — it has been split into PRE_BREAKEVEN/POST_BREAKEVEN."""
+    assert not hasattr(FarbState, "OPEN") or "OPEN" not in FarbState.__members__
+
+
 def test_enums_are_str_subclass():
     assert isinstance(Instrument.SPOT, str)
     assert isinstance(Side.LONG, str)
     assert isinstance(PositionStatus.OPEN, str)
-    assert isinstance(FarbState.OPEN, str)
+    assert isinstance(FarbState.PRE_BREAKEVEN, str)
+    assert isinstance(FarbState.POST_BREAKEVEN, str)
+
+
+# ---------------------------------------------------------------------------
+# FarbState.is_terminal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "state, expected",
+    [
+        (FarbState.CLOSED, True),
+        (FarbState.FAILED, True),
+        (FarbState.CHECK_MARGIN, False),
+        (FarbState.OPENING_MARGIN, False),
+        (FarbState.OPENING_LONG, False),
+        (FarbState.OPENING_SHORT, False),
+        (FarbState.PRE_BREAKEVEN, False),
+        (FarbState.POST_BREAKEVEN, False),
+        (FarbState.CLOSING_SHORT, False),
+        (FarbState.CLOSING_LONG, False),
+        (FarbState.RELEASING_MARGIN, False),
+    ],
+)
+def test_farb_state_is_terminal(state: FarbState, expected: bool) -> None:
+    assert state.is_terminal is expected
+
+
+# ---------------------------------------------------------------------------
+# ACTIVE_STATES
+# ---------------------------------------------------------------------------
+
+
+def test_active_states_contents() -> None:
+    assert ACTIVE_STATES == frozenset({FarbState.PRE_BREAKEVEN, FarbState.POST_BREAKEVEN})
+
+
+def test_active_states_is_frozenset() -> None:
+    assert isinstance(ACTIVE_STATES, frozenset)
+
+
+def test_active_states_not_terminal() -> None:
+    """No active state should also be terminal."""
+    for state in ACTIVE_STATES:
+        assert not state.is_terminal
 
 
 # ---------------------------------------------------------------------------
@@ -123,8 +174,8 @@ def test_farb_position_construction():
         id=10,
         strategy_id=1,
         coin="BTC",
-        state=FarbState.OPEN,
-        state_data={"min_hold_hours": 12, "phase": "hold"},
+        state=FarbState.PRE_BREAKEVEN,
+        state_data={"min_hold_hours": 12, "phase": "pre_breakeven"},
         spot_position_id=100,
         perp_position_id=101,
         margin_position_id=102,
@@ -134,7 +185,7 @@ def test_farb_position_construction():
     assert fp.id == 10
     assert fp.strategy_id == 1
     assert fp.coin == "BTC"
-    assert fp.state == FarbState.OPEN
+    assert fp.state == FarbState.PRE_BREAKEVEN
     assert fp.state_data["min_hold_hours"] == 12
     assert fp.spot_position_id == 100
     assert fp.perp_position_id == 101
@@ -157,7 +208,7 @@ def test_farb_position_is_frozen():
         closed_at=None,
     )
     with pytest.raises(Exception):
-        fp.state = FarbState.OPEN  # type: ignore[misc]
+        fp.state = FarbState.PRE_BREAKEVEN  # type: ignore[misc]
 
 
 def test_farb_position_nullable_ids():
@@ -178,3 +229,40 @@ def test_farb_position_nullable_ids():
     assert fp.perp_position_id is None
     assert fp.margin_position_id is None
     assert fp.closed_at == _NOW
+
+
+# ---------------------------------------------------------------------------
+# FarbPosition.is_active
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "state, expected",
+    [
+        (FarbState.PRE_BREAKEVEN, True),
+        (FarbState.POST_BREAKEVEN, True),
+        (FarbState.CHECK_MARGIN, False),
+        (FarbState.OPENING_MARGIN, False),
+        (FarbState.OPENING_LONG, False),
+        (FarbState.OPENING_SHORT, False),
+        (FarbState.CLOSING_SHORT, False),
+        (FarbState.CLOSING_LONG, False),
+        (FarbState.RELEASING_MARGIN, False),
+        (FarbState.CLOSED, False),
+        (FarbState.FAILED, False),
+    ],
+)
+def test_farb_position_is_active(state: FarbState, expected: bool) -> None:
+    fp = FarbPosition(
+        id=1,
+        strategy_id=1,
+        coin="BTC",
+        state=state,
+        state_data={},
+        spot_position_id=None,
+        perp_position_id=None,
+        margin_position_id=None,
+        opened_at=_NOW,
+        closed_at=None,
+    )
+    assert fp.is_active is expected

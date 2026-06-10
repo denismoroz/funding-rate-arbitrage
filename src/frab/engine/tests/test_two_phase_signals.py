@@ -170,7 +170,7 @@ def test_decide_entry_branch(
     [
         # not in profit, consec would trigger phase1_neg if unlocked
         (2.0, 4.2, 100, 0.001, 0.05),
-        # in profit, smoothed below phase2 threshold — would be CLOSE_PHASE2 if unlocked
+        # in profit, smoothed below phase2 threshold — would be CLOSE_POST_BE if unlocked
         (5.0, 4.2,   0, 0.001, -1.0),
         # not in profit, income would trigger phase1_cap if unlocked
         (2.0, 4.2,   0, 0.0001, 0.05),
@@ -221,14 +221,14 @@ def test_decide_phase1_no_exit() -> None:
 
 
 # ---------------------------------------------------------------------------
-# decide_two_phase — Group 4: Phase 1, CLOSE_PHASE1_NEG
+# decide_two_phase — Group 4: Phase 1, CLOSE_PRE_BE_NEG
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "consec_neg, patience, expected",
     [
-        (73, 72, TwoPhaseDecision.CLOSE_PHASE1_NEG),  # strict > patience
+        (73, 72, TwoPhaseDecision.CLOSE_PRE_BE_NEG),  # strict > patience
         (72, 72, TwoPhaseDecision.NONE),              # boundary — equality NOT trigger
     ],
 )
@@ -250,15 +250,15 @@ def test_decide_phase1_neg(
 
 
 # ---------------------------------------------------------------------------
-# decide_two_phase — Group 5: Phase 1, CLOSE_PHASE1_CAP
+# decide_two_phase — Group 5: Phase 1, CLOSE_PRE_BE_CAP
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "income, gross, fees, expected",
     [
-        # remaining=2.0, htb=2000 > cap=720 → CLOSE_PHASE1_CAP
-        (0.001, 2.2, 4.2, TwoPhaseDecision.CLOSE_PHASE1_CAP),
+        # remaining=2.0, htb=2000 > cap=720 → CLOSE_PRE_BE_CAP
+        (0.001, 2.2, 4.2, TwoPhaseDecision.CLOSE_PRE_BE_CAP),
         # remaining=2.0, htb=400 < cap=720 → NONE
         (0.005, 2.2, 4.2, TwoPhaseDecision.NONE),
         # income=0 (or negative), consec within patience → NONE (cap branch needs income>0)
@@ -295,9 +295,9 @@ def test_decide_phase1_cap(
         # boundary — equality NOT trigger (strict <)
         (-0.10, -0.10, TwoPhaseDecision.NONE),
         # below threshold → close
-        (-0.15, -0.10, TwoPhaseDecision.CLOSE_PHASE2),
+        (-0.15, -0.10, TwoPhaseDecision.CLOSE_POST_BE),
         # well below → close
-        (-1.00, -0.10, TwoPhaseDecision.CLOSE_PHASE2),
+        (-1.00, -0.10, TwoPhaseDecision.CLOSE_POST_BE),
     ],
 )
 def test_decide_phase2(
@@ -323,25 +323,25 @@ def test_decide_phase2(
 
 def test_decide_phase1_priority_over_phase2() -> None:
     """Not in profit → must stay in Phase 1, even if signal would trigger Phase 2."""
-    # smoothed=-0.12 would trigger CLOSE_PHASE2 if in_profit (< -0.10), but gross < fees.
+    # smoothed=-0.12 would trigger CLOSE_POST_BE if in_profit (< -0.10), but gross < fees.
     # Kept above neg_stop_threshold (-0.15) so the hard-stop does not pre-empt this case.
     result = _decide(
         gross_funding_so_far=2.0,
         total_fees_paid=4.2,        # not in profit
         smoothed_signal_annual=-0.12,
-        consec_negative_hours=20,   # within patience → no CLOSE_PHASE1_NEG
+        consec_negative_hours=20,   # within patience → no CLOSE_PRE_BE_NEG
         phase1_negative_patience=72,
         current_hourly_income_quote=0.001,
         phase1_breakeven_cap_hours=720,
         phase2_exit_threshold=-0.10,
     )
-    # remaining=2.2, htb=2200 > 720 → CLOSE_PHASE1_CAP (NOT CLOSE_PHASE2)
-    assert result == TwoPhaseDecision.CLOSE_PHASE1_CAP
+    # remaining=2.2, htb=2200 > 720 → CLOSE_PRE_BE_CAP (NOT CLOSE_POST_BE)
+    assert result == TwoPhaseDecision.CLOSE_PRE_BE_CAP
 
 
 def test_decide_phase1_priority_neg_trigger() -> None:
-    """Not in profit + consec > patience → CLOSE_PHASE1_NEG, not CLOSE_PHASE2."""
-    # smoothed=-0.12 kept above neg_stop_threshold (-0.15) to isolate CLOSE_PHASE1_NEG.
+    """Not in profit + consec > patience → CLOSE_PRE_BE_NEG, not CLOSE_POST_BE."""
+    # smoothed=-0.12 kept above neg_stop_threshold (-0.15) to isolate CLOSE_PRE_BE_NEG.
     result = _decide(
         gross_funding_so_far=2.0,
         total_fees_paid=4.2,        # not in profit
@@ -352,7 +352,7 @@ def test_decide_phase1_priority_neg_trigger() -> None:
         phase1_breakeven_cap_hours=720,
         phase2_exit_threshold=-0.10,
     )
-    assert result == TwoPhaseDecision.CLOSE_PHASE1_NEG
+    assert result == TwoPhaseDecision.CLOSE_PRE_BE_NEG
 
 
 # ---------------------------------------------------------------------------
@@ -375,15 +375,15 @@ def test_negstop_fires_while_locked_by_min_hold() -> None:
         neg_stop_threshold=-0.15,
         neg_stop_patience=6,
     )
-    assert result == TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP
+    assert result == TwoPhaseDecision.CLOSE_PRE_BE_NEGSTOP
 
 
 @pytest.mark.parametrize(
     "smoothed, consec, expected",
     [
         # deep enough + patient enough → fire (bypasses lock)
-        (-0.16, 6,  TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP),
-        (-1.00, 6,  TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP),
+        (-0.16, 6,  TwoPhaseDecision.CLOSE_PRE_BE_NEGSTOP),
+        (-1.00, 6,  TwoPhaseDecision.CLOSE_PRE_BE_NEGSTOP),
         # boundary: == threshold is NOT < threshold → no fire (locked → NONE)
         (-0.15, 50, TwoPhaseDecision.NONE),
         # not deep enough (the live ETH case: -0.04, consec 12) → no fire (locked)
@@ -391,7 +391,7 @@ def test_negstop_fires_while_locked_by_min_hold() -> None:
         # deep but patience not met (consec < 6) → no fire (locked)
         (-0.50, 5,  TwoPhaseDecision.NONE),
         # boundary: consec == patience (6) counts (>=) → fire
-        (-0.50, 6,  TwoPhaseDecision.CLOSE_PHASE1_NEGSTOP),
+        (-0.50, 6,  TwoPhaseDecision.CLOSE_PRE_BE_NEGSTOP),
     ],
 )
 def test_negstop_threshold_and_patience(
@@ -413,7 +413,7 @@ def test_negstop_threshold_and_patience(
 
 
 def test_negstop_does_not_fire_in_phase2() -> None:
-    """In profit (Phase 2): a deep-negative signal exits via CLOSE_PHASE2, never
+    """In profit (Phase 2): a deep-negative signal exits via CLOSE_POST_BE, never
     via the hard-stop (which is Phase-1 only)."""
     result = _decide(
         gross_funding_so_far=5.0,
@@ -426,7 +426,7 @@ def test_negstop_does_not_fire_in_phase2() -> None:
         neg_stop_threshold=-0.15,
         neg_stop_patience=6,
     )
-    assert result == TwoPhaseDecision.CLOSE_PHASE2
+    assert result == TwoPhaseDecision.CLOSE_POST_BE
 
 
 def test_negstop_none_signal_does_not_fire() -> None:
@@ -442,3 +442,120 @@ def test_negstop_none_signal_does_not_fire() -> None:
         neg_stop_patience=6,
     )
     assert result == TwoPhaseDecision.NONE
+
+
+# ---------------------------------------------------------------------------
+# decide_two_phase — Group 9: Explicit in_profit param (persisted phase latch)
+# ---------------------------------------------------------------------------
+
+
+def test_decide_explicit_in_profit_false_overrides_gross() -> None:
+    """Caller passes in_profit=False (PRE_BREAKEVEN state) even though gross >= fees.
+    The persisted phase must be respected — not recomputed from gross/fees."""
+    # gross > fees would normally imply in_profit=True → CLOSE_POST_BE at -0.12 signal.
+    # But caller supplies in_profit=False (position latched as PRE), so Phase-1 logic
+    # applies: consec=80 > patience=72 → CLOSE_PRE_BE_NEG (not CLOSE_POST_BE).
+    result = decide_two_phase(
+        in_position=True,
+        smoothed_signal_annual=-0.12,
+        entry_threshold=0.10,
+        hours_in_position=750,
+        position_min_hold_hours=720,
+        gross_funding_so_far=5.0,   # would imply in_profit if recomputed
+        total_fees_paid=4.2,        # gross > fees — latch overrides this
+        consec_negative_hours=80,
+        current_hourly_income_quote=0.001,
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+        in_profit=False,            # explicit: caller says still pre-breakeven
+    )
+    assert result == TwoPhaseDecision.CLOSE_PRE_BE_NEG
+
+
+def test_decide_explicit_in_profit_true_overrides_gross() -> None:
+    """Caller passes in_profit=True (POST_BREAKEVEN state) even though gross < fees.
+    The persisted latch keeps Phase-2 logic active."""
+    # gross < fees would normally imply Phase 1.  But latch says POST_BREAKEVEN.
+    # Signal -0.15 < phase2_exit_threshold -0.10 → CLOSE_POST_BE.
+    result = decide_two_phase(
+        in_position=True,
+        smoothed_signal_annual=-0.15,
+        entry_threshold=0.10,
+        hours_in_position=750,
+        position_min_hold_hours=720,
+        gross_funding_so_far=2.0,   # would imply Phase 1 if recomputed
+        total_fees_paid=4.2,        # gross < fees — latch overrides this
+        consec_negative_hours=0,
+        current_hourly_income_quote=0.001,
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+        in_profit=True,             # explicit: caller says post-breakeven (latched)
+    )
+    assert result == TwoPhaseDecision.CLOSE_POST_BE
+
+
+def test_decide_no_in_profit_falls_back_to_gross() -> None:
+    """When in_profit is not supplied (None), falls back to gross >= fees."""
+    # gross=5.0, fees=4.2 → in_profit=True via fallback → CLOSE_POST_BE at -0.15 signal.
+    result = decide_two_phase(
+        in_position=True,
+        smoothed_signal_annual=-0.15,
+        entry_threshold=0.10,
+        hours_in_position=750,
+        position_min_hold_hours=720,
+        gross_funding_so_far=5.0,
+        total_fees_paid=4.2,
+        consec_negative_hours=0,
+        current_hourly_income_quote=0.001,
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+        # in_profit not supplied → None → recomputed from gross/fees
+    )
+    assert result == TwoPhaseDecision.CLOSE_POST_BE
+
+
+def test_decide_explicit_pre_with_negstop() -> None:
+    """PRE_BREAKEVEN + decisively negative → CLOSE_PRE_BE_NEGSTOP, bypassing min_hold."""
+    result = decide_two_phase(
+        in_position=True,
+        smoothed_signal_annual=-0.22,
+        entry_threshold=0.10,
+        hours_in_position=150,
+        position_min_hold_hours=720,
+        gross_funding_so_far=5.0,   # would be in_profit without explicit override
+        total_fees_paid=4.2,
+        consec_negative_hours=27,
+        current_hourly_income_quote=0.001,
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+        neg_stop_threshold=-0.15,
+        neg_stop_patience=6,
+        in_profit=False,            # explicit: PRE_BREAKEVEN
+    )
+    assert result == TwoPhaseDecision.CLOSE_PRE_BE_NEGSTOP
+
+
+def test_decide_explicit_post_with_negative_signal_does_not_negstop() -> None:
+    """POST_BREAKEVEN position: negstop is Phase-1 only, so deep signal → CLOSE_POST_BE."""
+    result = decide_two_phase(
+        in_position=True,
+        smoothed_signal_annual=-0.50,
+        entry_threshold=0.10,
+        hours_in_position=750,
+        position_min_hold_hours=720,
+        gross_funding_so_far=2.0,   # would be Phase 1 without explicit override
+        total_fees_paid=4.2,
+        consec_negative_hours=30,
+        current_hourly_income_quote=0.001,
+        phase1_negative_patience=72,
+        phase1_breakeven_cap_hours=720,
+        phase2_exit_threshold=-0.10,
+        neg_stop_threshold=-0.15,
+        neg_stop_patience=6,
+        in_profit=True,             # explicit: POST_BREAKEVEN
+    )
+    assert result == TwoPhaseDecision.CLOSE_POST_BE

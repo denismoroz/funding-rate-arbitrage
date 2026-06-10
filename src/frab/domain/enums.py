@@ -23,9 +23,21 @@ class FarbState(str, Enum):
     OPENING_MARGIN = "opening_margin"
     OPENING_LONG = "opening_long"
     OPENING_SHORT = "opening_short"
-    OPEN = "open"
+    PRE_BREAKEVEN = "pre_breakeven"
+    POST_BREAKEVEN = "post_breakeven"
     CLOSING_SHORT = "closing_short"
     CLOSING_LONG = "closing_long"
     RELEASING_MARGIN = "releasing_margin"
     CLOSED = "closed"
     FAILED = "failed"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in (FarbState.CLOSED, FarbState.FAILED)
+
+
+# States in which a FarbPosition is actively holding an open arb leg.
+ACTIVE_STATES: frozenset[FarbState] = frozenset({
+    FarbState.PRE_BREAKEVEN,
+    FarbState.POST_BREAKEVEN,
+})

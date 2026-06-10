@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from .enums import FarbState
+from .enums import ACTIVE_STATES, FarbState
 
 
 @dataclass(frozen=True)
@@ -16,3 +16,8 @@ class FarbPosition:
     margin_position_id: int | None
     opened_at: datetime
     closed_at: datetime | None
+
+    @property
+    def is_active(self) -> bool:
+        """True iff the position is in an actively-holding state (PRE_BREAKEVEN or POST_BREAKEVEN)."""
+        return self.state in ACTIVE_STATES
