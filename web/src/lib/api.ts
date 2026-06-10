@@ -51,6 +51,47 @@ export function tsMsToDate(ms: number): Date {
   return new Date(ms);
 }
 
+// ── State helpers ─────────────────────────────────────────────────────────────
+
+/** FarbState values as returned by the API (UPPERCASE enum names). */
+export const FARB_STATE = {
+  PRE_BREAKEVEN: "PRE_BREAKEVEN",
+  POST_BREAKEVEN: "POST_BREAKEVEN",
+  CLOSED: "CLOSED",
+  FAILED: "FAILED",
+  // Transient (mid open/close)
+  CHECK_MARGIN: "CHECK_MARGIN",
+  OPENING_MARGIN: "OPENING_MARGIN",
+  OPENING_LONG: "OPENING_LONG",
+  OPENING_SHORT: "OPENING_SHORT",
+  CLOSING_SHORT: "CLOSING_SHORT",
+  CLOSING_LONG: "CLOSING_LONG",
+  RELEASING_MARGIN: "RELEASING_MARGIN",
+} as const;
+
+/** A position is "active" (holding legs on HL) when in one of these two states. */
+export function isActiveState(state: string): boolean {
+  return state === FARB_STATE.PRE_BREAKEVEN || state === FARB_STATE.POST_BREAKEVEN;
+}
+
+/** Map a raw FarbState string to a human-readable label. */
+export function farbStateLabel(state: string): string {
+  switch (state) {
+    case "PRE_BREAKEVEN": return "pre-break-even";
+    case "POST_BREAKEVEN": return "post-break-even";
+    case "CLOSED": return "closed";
+    case "FAILED": return "failed";
+    case "CHECK_MARGIN": return "check margin";
+    case "OPENING_MARGIN": return "opening margin";
+    case "OPENING_LONG": return "opening long";
+    case "OPENING_SHORT": return "opening short";
+    case "CLOSING_SHORT": return "closing short";
+    case "CLOSING_LONG": return "closing long";
+    case "RELEASING_MARGIN": return "releasing margin";
+    default: return state.toLowerCase().replace(/_/g, " ");
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type Strategy = {

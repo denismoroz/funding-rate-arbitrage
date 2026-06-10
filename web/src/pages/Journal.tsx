@@ -7,7 +7,8 @@ import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Header } from "./Dashboard";
 
 const STATE_COLOR: Record<string, string> = {
-  OPEN: "text-green-700",
+  PRE_BREAKEVEN: "text-amber-600",
+  POST_BREAKEVEN: "text-green-700",
   CLOSED: "text-gray-500",
   FAILED: "text-red-600",
   CHECK_MARGIN: "text-yellow-600",

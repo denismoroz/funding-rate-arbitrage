@@ -17,6 +17,8 @@ import {
   closeFarbPosition,
   closeAllFarbPositions,
   tsMsToDate,
+  isActiveState,
+  farbStateLabel,
   type FarbPosition,
   type MarginFpAssessment,
   type MarginStatus,
@@ -179,6 +181,21 @@ function MarginRatioBadge({ fp }: { fp: MarginFpAssessment }) {
   );
 }
 
+/** Badge colors keyed by FarbState string (UPPERCASE as returned by API). */
+const STATE_BADGE_CLASS: Record<string, string> = {
+  PRE_BREAKEVEN: "bg-amber-100 text-amber-700",
+  POST_BREAKEVEN: "bg-green-100 text-green-700",
+};
+
+function StateBadge({ state }: { state: string }) {
+  const cls = STATE_BADGE_CLASS[state] ?? "bg-indigo-100 text-indigo-700";
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-mono font-semibold ${cls}`}>
+      {farbStateLabel(state)}
+    </span>
+  );
+}
+
 function FarbPositionCard({
   p,
   now,
@@ -257,9 +274,7 @@ function FarbPositionCard({
 
         {/* coin + state + held + leverage */}
         <span className="font-semibold text-gray-900 text-sm">{p.coin}</span>
-        <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-indigo-700">
-          {p.state}
-        </span>
+        <StateBadge state={p.state} />
         <span className="text-xs text-gray-500">
           {p.hours_held != null ? `${formatNumber(p.hours_held, 1)}h` : "—"}
           <span className="ml-1 text-gray-400 text-[10px]">
@@ -317,8 +332,8 @@ function FarbPositionCard({
           </span>
         )}
 
-        {/* close button — only for OPEN positions */}
-        {p.state === "OPEN" && (
+        {/* close button — only for active positions (PRE_BREAKEVEN or POST_BREAKEVEN) */}
+        {isActiveState(p.state) && (
           <button
             type="button"
             className="rounded border border-rose-300 bg-rose-50 px-2 py-0.5 text-xs text-rose-700 hover:bg-rose-100 disabled:opacity-50"
