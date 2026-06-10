@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchFarbPositions } from "../lib/api";
+import { fetchFarbPositions, isActiveState, farbStateLabel } from "../lib/api";
 import { formatRelative } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
@@ -45,19 +45,23 @@ export function ActiveFarbPositions() {
       </div>
     );
   }
-  if (!data || data.length === 0) return null;
+  // "In-Flight" = positions mid open/close (transient states only).
+  // The "active" filter returns ALL non-terminal incl. resting PRE/POST —
+  // those belong in Open Positions, so exclude them here.
+  const inflight = (data ?? []).filter((p) => !isActiveState(p.state));
+  if (inflight.length === 0) return null;
 
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
       <h2 className="mb-2 text-sm font-semibold text-amber-800">
-        In-Flight ({data.length})
+        In-Flight ({inflight.length})
       </h2>
       <div className="space-y-1">
-        {data.map((p) => (
+        {inflight.map((p) => (
           <div key={p.id} className="flex items-center gap-3 text-xs">
             <span className="font-medium text-gray-800 w-12">{p.coin}</span>
             <span className={`font-mono font-semibold ${STATE_COLOR[p.state] ?? "text-gray-600"}`}>
-              {p.state}
+              {farbStateLabel(p.state)}
             </span>
             <span className="text-gray-500">
               {formatRelative(p.opened_at_ms, now)}
