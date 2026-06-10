@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from frab.domain import FarbPosition, FarbState
-from frab.engine.two_phase_signals import TwoPhaseDecision, decide_two_phase, update_consec_negative
+from frab.engine.two_phase_signals import TwoPhaseDecision, decide_pre_breakeven, update_consec_negative
 from frab.repo.farb_repo import FarbRepo, StateConflict
 from frab.settings import Settings
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
@@ -22,7 +22,7 @@ class PreBreakevenHandler:
     On each evaluation:
     1. LATCH CHECK: if gross_funding_so_far >= total_fees_paid → transition
        PRE_BREAKEVEN → POST_BREAKEVEN atomically and return (POST evaluates next hour).
-    2. Otherwise call decide_two_phase(in_profit=False). If a close decision fires →
+    2. Otherwise call decide_pre_breakeven(). If a close decision fires →
        transition PRE_BREAKEVEN → CLOSING_SHORT with exit markers written.
     3. If decision is NONE → checkpoint updated counters via update_state_data.
 
@@ -101,10 +101,8 @@ class PreBreakevenHandler:
             return
 
         # ── EXIT EVALUATION (Phase 1 only) ───────────────────────────────────
-        decision = decide_two_phase(
-            in_position=True,
+        decision = decide_pre_breakeven(
             smoothed_signal_annual=signal,
-            entry_threshold=self._params.entry_threshold_apr,
             hours_in_position=int(hours_held),
             position_min_hold_hours=pos_min_hold,
             gross_funding_so_far=gross_funding,
@@ -113,10 +111,8 @@ class PreBreakevenHandler:
             current_hourly_income_quote=current_hourly_income,
             phase1_negative_patience=self._params.phase1_negative_patience,
             phase1_breakeven_cap_hours=self._params.phase1_breakeven_cap_hours,
-            phase2_exit_threshold=self._params.phase2_exit_threshold,
             neg_stop_threshold=self._params.neg_stop_threshold_apr,
             neg_stop_patience=self._params.neg_stop_patience_hours,
-            in_profit=False,  # explicitly Phase 1
         )
 
         if decision != TwoPhaseDecision.NONE:

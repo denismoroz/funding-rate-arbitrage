@@ -41,120 +41,86 @@ def compute_position_min_hold(
         return cap_min_hold_hours
 
 
-def decide_two_phase(
+def decide_entry(
     *,
-    in_position: bool,
-    # entry signal
     smoothed_signal_annual: float | None,
     entry_threshold: float,
-    # position state (only meaningful if in_position)
+) -> TwoPhaseDecision:
+    """Entry decision (not in a position). OPEN iff signal strictly above threshold, else NONE."""
+    if smoothed_signal_annual is None:
+        return TwoPhaseDecision.NONE
+    if smoothed_signal_annual > entry_threshold:
+        return TwoPhaseDecision.OPEN
+    return TwoPhaseDecision.NONE
+
+
+def decide_pre_breakeven(
+    *,
+    smoothed_signal_annual: float | None,
     hours_in_position: int,
     position_min_hold_hours: int,
     gross_funding_so_far: float,
     total_fees_paid: float,
     consec_negative_hours: int,
-    current_hourly_income_quote: float,    # POSITION_SIZE × smoothed_signal × P / 8760 (this hour)
-    # exit params
+    current_hourly_income_quote: float,
     phase1_negative_patience: int,
     phase1_breakeven_cap_hours: int,
-    phase2_exit_threshold: float,
-    # Phase-1 negative hard-stop (bypasses min_hold). Defaults match prod config.
     neg_stop_threshold: float = -0.15,
     neg_stop_patience: int = 6,
-    # Phase supplied by caller from the persisted fp.state (PRE_BREAKEVEN →
-    # in_profit=False, POST_BREAKEVEN → in_profit=True).  Defaults to False
-    # (pre-breakeven): the entry path (in_position=False) ignores it, and the
-    # two in_position=True callers — PreBreakevenHandler / PostBreakevenHandler —
-    # ALWAYS pass it explicitly.  The phase is NEVER reconstructed from
-    # gross_funding_so_far vs total_fees_paid here; that recompute would defeat
-    # the one-way persisted latch (a position that dipped back below break-even
-    # must stay POST).
-    in_profit: bool = False,
 ) -> TwoPhaseDecision:
-    """Return decision based on position state + signal.
+    """PRE_BREAKEVEN (Phase 1) exit. Returns NONE / CLOSE_PRE_BE_NEGSTOP / CLOSE_PRE_BE_NEG / CLOSE_PRE_BE_CAP.
 
-    Design choice — ``in_profit: bool`` (not ``phase: FarbState``):
-    The function already had an ``in_profit`` boolean branch; keeping the same
-    type avoids importing FarbState here and keeps the pure-signal module free
-    of domain-model coupling.  The caller converts FarbState → bool before
-    calling: PRE_BREAKEVEN → False, POST_BREAKEVEN → True.
-
-    The phase MUST be supplied by the caller from the persisted FarbState
-    (fp.state), not recomputed here, so that a position latched into
-    POST_BREAKEVEN stays there even if gross_funding_so_far dips below
-    total_fees_paid again (hysteresis).
-
-    gross_funding_so_far / total_fees_paid are still accepted because callers
-    (W2 handler) need them for the LATCH check (deciding when to transition
-    PRE_BREAKEVEN → POST_BREAKEVEN).  decide_two_phase no longer uses them to
-    derive in_profit when in_profit is supplied.
-
-    Logic mirrors research/two_phase_dynamic.py simulate_two_phase_dynamic (138-202),
-    plus the Phase-1 negative hard-stop validated in research/two_phase_negstop.py.
-
-    Entry (not in_position):
-        smoothed_signal_annual is None → NONE
-        smoothed_signal_annual > entry_threshold → OPEN
-        else → NONE
-
-    Exit (in_position):
-        Phase is taken from the supplied ``in_profit`` parameter (the persisted
-        FarbState — PRE_BREAKEVEN→False, POST_BREAKEVEN→True). It is never
-        recomputed from gross/fees here.
-        Phase-1 negative hard-stop (checked BEFORE min_hold lock — it bypasses it):
-            not in_profit and smoothed_signal_annual < neg_stop_threshold
-            and consec_negative_hours >= neg_stop_patience → CLOSE_PRE_BE_NEGSTOP
-        hours_in_position < position_min_hold_hours → NONE (locked by dynamic min_hold)
-        Phase 1 (not in_profit):
-            consec_negative_hours > phase1_negative_patience → CLOSE_PRE_BE_NEG
-            current_hourly_income > 0 and hours_to_breakeven > phase1_breakeven_cap_hours → CLOSE_PRE_BE_CAP
-            otherwise → NONE
-        Phase 2 (in_profit):
-            smoothed_signal_annual < phase2_exit_threshold → CLOSE_POST_BE
-            otherwise → NONE
+    Order (identical to the old in_profit=False path):
+      1. negative hard-stop (BYPASSES min_hold): signal is not None and signal < neg_stop_threshold
+         and consec_negative_hours >= neg_stop_patience  -> CLOSE_PRE_BE_NEGSTOP
+      2. min_hold lock: hours_in_position < position_min_hold_hours -> NONE
+      3. consec_negative_hours > phase1_negative_patience -> CLOSE_PRE_BE_NEG
+      4. current_hourly_income_quote > 0 and (total_fees_paid - gross_funding_so_far)/current_hourly_income_quote
+         > phase1_breakeven_cap_hours -> CLOSE_PRE_BE_CAP
+      5. else NONE
     """
-    if not in_position:
-        if smoothed_signal_annual is None:
-            return TwoPhaseDecision.NONE
-        if smoothed_signal_annual > entry_threshold:
-            return TwoPhaseDecision.OPEN
-        return TwoPhaseDecision.NONE
-
-    # Phase comes from the caller's persisted in_profit (one-way latch); it is
-    # NOT reconstructed from gross_funding_so_far vs total_fees_paid.
-
-    # Phase-1 negative hard-stop — BYPASSES min_hold. Only while still trying to
-    # recoup fees (Phase 1): if the smoothed signal is decisively negative and has
-    # been negative for >= neg_stop_patience hours, cut now rather than sit under
-    # the min_hold lock bleeding funding. min_hold protects against fee churn on
-    # mild/transient negativity, NOT against a decisive funding flip.
+    # Phase-1 negative hard-stop — BYPASSES min_hold.
     if (
-        not in_profit
-        and smoothed_signal_annual is not None
+        smoothed_signal_annual is not None
         and smoothed_signal_annual < neg_stop_threshold
         and consec_negative_hours >= neg_stop_patience
     ):
         return TwoPhaseDecision.CLOSE_PRE_BE_NEGSTOP
 
-    # in_position — check dynamic min_hold lock
+    # Check dynamic min_hold lock
     if hours_in_position < position_min_hold_hours:
         return TwoPhaseDecision.NONE
 
-    if not in_profit:
-        # Phase 1 — trying to recoup fees
-        if consec_negative_hours > phase1_negative_patience:
-            return TwoPhaseDecision.CLOSE_PRE_BE_NEG
-        if current_hourly_income_quote > 0:
-            remaining_to_breakeven = total_fees_paid - gross_funding_so_far
-            hours_to_breakeven = remaining_to_breakeven / current_hourly_income_quote
-            if hours_to_breakeven > phase1_breakeven_cap_hours:
-                return TwoPhaseDecision.CLOSE_PRE_BE_CAP
+    # Phase 1 — trying to recoup fees
+    if consec_negative_hours > phase1_negative_patience:
+        return TwoPhaseDecision.CLOSE_PRE_BE_NEG
+    if current_hourly_income_quote > 0:
+        remaining_to_breakeven = total_fees_paid - gross_funding_so_far
+        hours_to_breakeven = remaining_to_breakeven / current_hourly_income_quote
+        if hours_to_breakeven > phase1_breakeven_cap_hours:
+            return TwoPhaseDecision.CLOSE_PRE_BE_CAP
+    return TwoPhaseDecision.NONE
+
+
+def decide_post_breakeven(
+    *,
+    smoothed_signal_annual: float | None,
+    hours_in_position: int,
+    position_min_hold_hours: int,
+    phase2_exit_threshold: float,
+) -> TwoPhaseDecision:
+    """POST_BREAKEVEN (Phase 2) exit. Returns NONE / CLOSE_POST_BE.
+
+    Keep the min_hold lock for behavior parity with the old in_profit=True path:
+      1. hours_in_position < position_min_hold_hours -> NONE
+      2. signal is not None and signal < phase2_exit_threshold -> CLOSE_POST_BE
+      3. else NONE
+    """
+    if hours_in_position < position_min_hold_hours:
         return TwoPhaseDecision.NONE
-    else:
-        # Phase 2 — already in profit, watch exit threshold
-        if smoothed_signal_annual is not None and smoothed_signal_annual < phase2_exit_threshold:
-            return TwoPhaseDecision.CLOSE_POST_BE
-        return TwoPhaseDecision.NONE
+    if smoothed_signal_annual is not None and smoothed_signal_annual < phase2_exit_threshold:
+        return TwoPhaseDecision.CLOSE_POST_BE
+    return TwoPhaseDecision.NONE
 
 
 def update_consec_negative(

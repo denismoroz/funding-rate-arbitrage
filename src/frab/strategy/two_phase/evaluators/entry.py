@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from frab.domain import FarbState
-from frab.engine.two_phase_signals import TwoPhaseDecision, decide_two_phase
+from frab.engine.two_phase_signals import TwoPhaseDecision, decide_entry
 from frab.repo.farb_repo import FarbRepo
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.params import TwoPhaseParams
@@ -90,20 +90,9 @@ class EntryEvaluator:
             if signal is None:
                 continue
 
-            decision = decide_two_phase(
-                in_position=False,
+            decision = decide_entry(
                 smoothed_signal_annual=signal,
                 entry_threshold=p.entry_threshold_apr,
-                # Below fields irrelevant when not in_position:
-                hours_in_position=0,
-                position_min_hold_hours=0,
-                gross_funding_so_far=0.0,
-                total_fees_paid=0.0,
-                consec_negative_hours=0,
-                current_hourly_income_quote=0.0,
-                phase1_negative_patience=p.phase1_negative_patience,
-                phase1_breakeven_cap_hours=p.phase1_breakeven_cap_hours,
-                phase2_exit_threshold=p.phase2_exit_threshold,
             )
             if decision == TwoPhaseDecision.OPEN:
                 candidates.append((coin, signal))

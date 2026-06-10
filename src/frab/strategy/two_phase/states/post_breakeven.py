@@ -4,12 +4,12 @@ from __future__ import annotations
 from datetime import datetime
 
 from frab.domain import FarbPosition, FarbState
-from frab.engine.two_phase_signals import TwoPhaseDecision, decide_two_phase, update_consec_negative
+from frab.engine.two_phase_signals import TwoPhaseDecision, decide_post_breakeven, update_consec_negative
 from frab.repo.farb_repo import FarbRepo, StateConflict
 from frab.settings import Settings
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.params import TwoPhaseParams
-from frab.strategy.two_phase.evaluators.signal import SignalComputer, _HOURS_PER_YEAR
+from frab.strategy.two_phase.evaluators.signal import SignalComputer
 
 
 def _dt_to_ms(dt: datetime) -> int:
@@ -20,12 +20,12 @@ class PostBreakevenHandler:
     """Hourly handler for FarbPositions in POST_BREAKEVEN state.
 
     On each evaluation:
-    1. Call decide_two_phase(in_profit=True). Only CLOSE_POST_BE can fire
+    1. Call decide_post_breakeven(). Only CLOSE_POST_BE can fire
        (signal < phase2_exit_threshold).
     2. If decision fires → transition POST_BREAKEVEN → CLOSING_SHORT.
     3. If NONE → checkpoint updated counters.
     4. NEVER transitions back to PRE_BREAKEVEN, even if gross_funding dips below
-       total_fees_paid (the latch is one-way, enforced by always passing in_profit=True).
+       total_fees_paid (the latch is one-way).
     """
 
     def __init__(
@@ -51,17 +51,7 @@ class PostBreakevenHandler:
         hours_held = (now_ms - opened_at_ms) / 3_600_000
 
         pos_min_hold = sd.get("position_min_hold_hours", self._params.base_min_hold_hours)
-        gross_funding = sd.get("gross_funding_so_far", 0.0)
-        total_fees = sd.get("total_fees_paid", 0.0)
         consec_neg = sd.get("consec_negative_hours", 0)
-
-        # Compute current hourly income quote (needed for completeness; Phase 2
-        # only checks phase2_exit_threshold but we keep parity with PRE handler)
-        if signal is not None and signal > 0:
-            size_usdc = self._params.compute_size_for(fp.coin, self._settings)
-            current_hourly_income = size_usdc * signal / _HOURS_PER_YEAR
-        else:
-            current_hourly_income = 0.0
 
         # Update consec_negative counter
         new_consec_neg = update_consec_negative(
@@ -74,25 +64,13 @@ class PostBreakevenHandler:
             "consec_negative_hours": new_consec_neg,
         }
 
-        # ── EXIT EVALUATION (Phase 2 only, in_profit=True always) ───────────
-        # The latch is one-way: we always pass in_profit=True.
-        # decide_two_phase will only return CLOSE_POST_BE or NONE in this phase.
-        decision = decide_two_phase(
-            in_position=True,
+        # ── EXIT EVALUATION (Phase 2 only) ───────────────────────────────────
+        # The latch is one-way: POST_BREAKEVEN never reverts to PRE.
+        decision = decide_post_breakeven(
             smoothed_signal_annual=signal,
-            entry_threshold=self._params.entry_threshold_apr,
             hours_in_position=int(hours_held),
             position_min_hold_hours=pos_min_hold,
-            gross_funding_so_far=gross_funding,
-            total_fees_paid=total_fees,
-            consec_negative_hours=new_consec_neg,
-            current_hourly_income_quote=current_hourly_income,
-            phase1_negative_patience=self._params.phase1_negative_patience,
-            phase1_breakeven_cap_hours=self._params.phase1_breakeven_cap_hours,
             phase2_exit_threshold=self._params.phase2_exit_threshold,
-            neg_stop_threshold=self._params.neg_stop_threshold_apr,
-            neg_stop_patience=self._params.neg_stop_patience_hours,
-            in_profit=True,  # explicitly Phase 2 — NEVER revert to PRE
         )
 
         if decision != TwoPhaseDecision.NONE:
