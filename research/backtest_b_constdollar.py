@@ -50,7 +50,9 @@ def simulate_constdollar(df, staking, hedge_signal,
                           risk_free_apr=RISK_FREE_APR,
                           refill_confirm=None,
                           signal_lag=0,
-                          slippage=0.0):
+                          slippage=0.0,
+                          min_hold_h=0,
+                          cooldown_h=0):
     close = df["close"].values
     rates = df["fundingRate"].values
     n = len(df)
@@ -74,6 +76,8 @@ def simulate_constdollar(df, staking, hedge_signal,
     short_size   = 0.0
     entry_price  = 0.0
     in_pos       = False
+    hedge_age    = 0          # часов в текущем хедже
+    idle_age     = 10**9      # часов с момента последнего закрытия
     trades       = 0
     rebals       = 0
     hours_in     = 0
@@ -105,17 +109,18 @@ def simulate_constdollar(df, staking, hedge_signal,
 
         want_hedge = sig_at(hedge_signal, i)
 
-        # 1) Hedge entry/exit
-        if not in_pos and want_hedge:
+        # 1) Hedge entry/exit (с min-hold и cooldown против флаппинга)
+        if not in_pos and want_hedge and idle_age >= cooldown_h:
             short_size = units_spot
             entry_price = P
             fee = short_size * P * perp_cost
             cash -= fee
             perp_fees_total += fee
             in_pos = True
+            hedge_age = 0
             trades += 1
 
-        elif in_pos and not want_hedge:
+        elif in_pos and not want_hedge and hedge_age >= min_hold_h:
             # Закрываем хедж
             realized = short_size * (entry_price - P)
             cash += realized
@@ -126,6 +131,7 @@ def simulate_constdollar(df, staking, hedge_signal,
             short_size = 0.0
             entry_price = 0.0
             in_pos = False
+            idle_age = 0
 
             # После закрытия хеджа — пометить для refill (или сразу залить если v1)
             spot_value = units_spot * P
@@ -178,6 +184,12 @@ def simulate_constdollar(df, staking, hedge_signal,
         equity_now = cash + units_spot * P + short_pnl
         pnl_arr[i] = equity_now - equity_prev
         equity_prev = equity_now
+
+        # старение состояний хеджа (для min-hold / cooldown)
+        if in_pos:
+            hedge_age += 1
+        else:
+            idle_age += 1
 
     # Финал
     P_final = float(close[-1])
