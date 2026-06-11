@@ -1,0 +1,6 @@
+stream,OOS_CAGR,OOS_DD,OOS_Calmar
+cont H=0.1,-5.01,30.42,-0.16
+cont H=0.15,-8.13,32.69,-0.25
+cont H=0.25,-11.59,36.5,-0.32
+binary base,6.03,18.95,0.32
+buy & hold,-21.03,73.56,-0.29
