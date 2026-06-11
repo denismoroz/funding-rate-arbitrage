@@ -9,7 +9,7 @@ Params sourced from research/two_phase_dynamic_stability.py "Candidate C":
     safety_mult=5.0, cap_min_hold=720h
     phase1_negative_patience=72, phase1_breakeven_cap_hours=720
     phase2_exit_threshold=-0.10
-Signal math: two_phase_signals.decide_two_phase + compute_position_min_hold.
+Signal math: two_phase_signals.decide_entry / decide_pre_breakeven / decide_post_breakeven + compute_position_min_hold.
 """
 from __future__ import annotations
 
