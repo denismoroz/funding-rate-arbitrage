@@ -48,7 +48,9 @@ def build_trend_up(close: np.ndarray) -> np.ndarray:
 def simulate_constdollar(df, staking, hedge_signal,
                           rebal_threshold=REBAL_THRESHOLD,
                           risk_free_apr=RISK_FREE_APR,
-                          refill_confirm=None):
+                          refill_confirm=None,
+                          signal_lag=0,
+                          slippage=0.0):
     close = df["close"].values
     rates = df["fundingRate"].values
     n = len(df)
@@ -56,10 +58,18 @@ def simulate_constdollar(df, staking, hedge_signal,
     rf_ph  = risk_free_apr / HOURS_PER_YEAR
     refill_pending = False  # для v2: ждать подтверждения тренда
 
+    # Эффективные косты с проскальзыванием (на каждую ногу сделки)
+    perp_cost = PERP_TAKER + slippage
+    spot_cost = SPOT_TAKER + slippage
+
+    def sig_at(arr, idx):
+        j = idx - signal_lag
+        return bool(arr[j]) if j >= 0 else False
+
     cash         = TOTAL_CAPITAL - POSITION_SIZE
     P0           = float(close[0])
     units_spot   = POSITION_SIZE / P0
-    cash        -= POSITION_SIZE * SPOT_TAKER
+    cash        -= POSITION_SIZE * spot_cost
 
     short_size   = 0.0
     entry_price  = 0.0
@@ -74,7 +84,7 @@ def simulate_constdollar(df, staking, hedge_signal,
     funding_total   = 0.0
     short_realized  = 0.0
     perp_fees_total = 0.0
-    spot_fees_total = POSITION_SIZE * SPOT_TAKER
+    spot_fees_total = POSITION_SIZE * spot_cost
 
     for i in range(n):
         P = float(close[i])
@@ -93,13 +103,13 @@ def simulate_constdollar(df, staking, hedge_signal,
             funding_total += f
             hours_in += 1
 
-        want_hedge = bool(hedge_signal[i])
+        want_hedge = sig_at(hedge_signal, i)
 
         # 1) Hedge entry/exit
         if not in_pos and want_hedge:
             short_size = units_spot
             entry_price = P
-            fee = short_size * P * PERP_TAKER
+            fee = short_size * P * perp_cost
             cash -= fee
             perp_fees_total += fee
             in_pos = True
@@ -110,7 +120,7 @@ def simulate_constdollar(df, staking, hedge_signal,
             realized = short_size * (entry_price - P)
             cash += realized
             short_realized += realized
-            fee = short_size * P * PERP_TAKER
+            fee = short_size * P * perp_cost
             cash -= fee
             perp_fees_total += fee
             short_size = 0.0
@@ -126,7 +136,7 @@ def simulate_constdollar(df, staking, hedge_signal,
                     buy = min(need, max(cash - POSITION_SIZE, 0))
                     if buy > 0:
                         buy_units = buy / P
-                        fee = buy * SPOT_TAKER
+                        fee = buy * spot_cost
                         cash -= buy + fee
                         spot_fees_total += fee
                         units_spot += buy_units
@@ -137,14 +147,14 @@ def simulate_constdollar(df, staking, hedge_signal,
 
         # 2) Если refill_pending и тренд развернулся — доливаем
         if refill_pending and not in_pos and refill_confirm is not None:
-            if bool(refill_confirm[i]):
+            if sig_at(refill_confirm, i):
                 spot_value = units_spot * P
                 if spot_value < POSITION_SIZE:
                     need = POSITION_SIZE - spot_value
                     buy = min(need, max(cash - POSITION_SIZE, 0))
                     if buy > 0:
                         buy_units = buy / P
-                        fee = buy * SPOT_TAKER
+                        fee = buy * spot_cost
                         cash -= buy + fee
                         spot_fees_total += fee
                         units_spot += buy_units
@@ -157,7 +167,7 @@ def simulate_constdollar(df, staking, hedge_signal,
             if spot_value > POSITION_SIZE * (1 + rebal_threshold):
                 excess = spot_value - POSITION_SIZE
                 sell_units = excess / P
-                fee = excess * SPOT_TAKER
+                fee = excess * spot_cost
                 cash += excess - fee
                 spot_fees_total += fee
                 units_spot -= sell_units
@@ -176,12 +186,12 @@ def simulate_constdollar(df, staking, hedge_signal,
         realized = short_size * (entry_price - P_final)
         cash += realized
         short_realized += realized
-        fee = short_size * P_final * PERP_TAKER
+        fee = short_size * P_final * perp_cost
         cash -= fee
         perp_fees_total += fee
         extra -= fee
     if units_spot > 0:
-        fee = units_spot * P_final * SPOT_TAKER
+        fee = units_spot * P_final * spot_cost
         cash -= fee
         spot_fees_total += fee
         extra -= fee
