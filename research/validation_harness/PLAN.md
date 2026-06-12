@@ -46,9 +46,10 @@ def strategy(df_train: pd.DataFrame, df_test: pd.DataFrame, *, costs) -> np.ndar
 ## Фазы (чек-лист)
 - [ ] **Ф0. Скелет.** Папка, контракт стратегии, заглушка `harness.py`,
       подключение `engine.py`. Конфиг костов (maker 2bps / taker 5bps / slip).
-- [ ] **Ф1. Splitter.** Purged K-Fold (N групп) + embargo. CPCV: все C(N,k)
-      комбинаций k тест-групп → список путей (train_idx, test_idx) без утечки.
-      Юнит-проверка: train и test не пересекаются после purge.
+- [x] **Ф1. Splitter.** `splitter.py` — Purged K-Fold + CPCV (все C(N,k)
+      комбинаций), purge симметричный + embargo односторонний. Инвариант
+      train∩test=∅ ассертится на каждом пути; self-test проходит (игрушка +
+      деградация бюджета train: purge=720h → ~50% ряда).
 - [ ] **Ф2. Single-strategy runner.** Прогон одной стратегии по всем CPCV-путям →
       распределение OOS-метрик (Sharpe/CAGR/DD/Calmar): медиана, IQR, доля
       путей с Calmar>0. Per-coin разбивка.
