@@ -1,0 +1,64 @@
+{
+  "name": "Crypto cross-sectional long-short (momentum + carry)",
+  "selected_name": "blend",
+  "coins": [
+    "XSEC"
+  ],
+  "n_portfolio_hours": 1101,
+  "menu_size": 5,
+  "pooled_oos": {
+    "n_segments": 25,
+    "dist": {
+      "annual_pct": {
+        "median": 0.37,
+        "iqr_lo": 0.08,
+        "iqr_hi": 0.59
+      },
+      "sharpe": {
+        "median": 5.22,
+        "iqr_lo": 0.87,
+        "iqr_hi": 6.48
+      },
+      "max_dd_pct": {
+        "median": 0.01,
+        "iqr_lo": 0.01,
+        "iqr_hi": 0.01
+      },
+      "calmar": {
+        "median": 36.81,
+        "iqr_lo": 6.26,
+        "iqr_hi": 69.53
+      }
+    },
+    "frac_calmar_pos": 0.84,
+    "frac_sharpe_pos": 0.84
+  },
+  "pbo": {
+    "pbo": 0.8322455322455322,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.3333333333333333,
+    "is_best_counts": {
+      "mom30": 5497,
+      "mom60": 3018,
+      "blend": 1629,
+      "mom90": 1612,
+      "carry": 1114
+    }
+  },
+  "dsr": {
+    "dsr": 0.6421855708073501,
+    "sr_hat": 0.037053452353056744,
+    "sr_star_deflated": 0.026045637623877026,
+    "psr_vs_zero": 0.8899561533958342,
+    "n_trials": 5,
+    "var_sr_trials": 0.000476963062126764,
+    "T": 1101,
+    "skew": -0.06715665725281213,
+    "kurt": 6.255652045253573,
+    "selected": "blend"
+  },
+  "per_coin_calmar_median": {
+    "XSEC": 36.81
+  }
+}
