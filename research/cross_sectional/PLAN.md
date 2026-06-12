@@ -32,8 +32,9 @@ Deliverable и Acceptance. Между фазами гейт: Opus проверя
 Guardrails для всех Sonnet-задач:
 - Работать ТОЛЬКО в `research/cross_sectional/`. **НЕ трогать `src/frab`**, не
   править `research/validation_harness/` (переиспользовать импортом).
-- Питон: `research/.venv/bin/python` (numpy/scipy есть). Запуск из папки фазы с
-  `PYTHONPATH=..:../..:../../validation_harness`.
+- Питон: репо-рутовый `.venv/bin/python` (numpy 2.4.4/pandas 3.0.3/scipy есть;
+  `research/.venv` НЕ существует). Запуск из папки фазы с PYTHONPATH до `research/`
+  и `research/validation_harness/`.
 - FX-данные — бесплатные, без API-ключей; в коде URL + дата загрузки. Данные в
   `data/` соответствующего под-пакета.
 - НЕ доверять числам из `research/quant/` (в т.ч. `quant/crypto_xsec_momentum`) —
