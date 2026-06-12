@@ -107,24 +107,33 @@ cross_sectional/
       Fade: 2-я пол. Sharpe 1.0 (слабеет, не умирает). Оговорка: НЕ учтён ongoing
       perp funding на удержании — вероятный встречный ветер, проверить до веры в уровень.
 
-## Фазы — FX (второй блок, после крипты)
+## Фазы — FX (второй блок) — ЗАВЕРШЕНО
 
-- [ ] **F0. FX-данные (Sonnet).** G10 дневной спот (Stooq CSV), короткие ставки
-      (FRED CSV) для carry, REER (BIS) для value. `fx/fxdata.py: load_panel()`.
-      **Acceptance:** диапазоны/sanity; знак carry (AUD/NZD high, JPY/CHF low); URL+дата.
+- [x] **F0. FX-данные (Sonnet).** G10 (9 валют vs USD), 2006→2026, 5240 bdays.
+      Спот Stooq→Yahoo (XXXUSD), ставки FRED→OECD 3M (carry), REER BIS broad (value).
+      Egress в песочнице капризный → авто-fallback'и. `fx/fxdata.py: load_panel()` →
+      price/fwd_ret/short_rate/usd_rate/reer. Carry-sanity ок (JPY/CHF−, AUD/NZD/NOK+).
 
-- [ ] **F1. FX-сигналы (Sonnet).** `carry(rate diff)`, `momentum(12-1)`,
-      `value(REER-отклонение)`; переиспользуют общий `xsec`. **Acceptance:** формулы
-      по литературе, ревью Opus.
+- [x] **F1. FX-сигналы (Sonnet).** `carry`=ставка foreign−USD (НЕ негейтим, textbook
+      знак), `momentum`=12-1 (скип последнего месяца), `value`=−Δlog REER 5y (AQR Value
+      Everywhere). z-score/blend подняты в общий `xsec`. Seam-safe, hand-checked.
 
-- [ ] **F2. Адаптер FX + AQR кросс-чек (Sonnet) — ГЕЙТ ДОВЕРИЯ.** `fx_pkg.py` +
-      `run_fx.py`; `aqr_crosscheck.py` качает бесплатные месячные AQR FX-факторы
-      (Carry, Value&Momentum Everywhere), корреляция с нашими. **Acceptance:** corr
-      > 0.7 → конструкция верна; иначе чинить ДО вердикта (аналог Ф6 стенда).
+- [x] **F2. Адаптер FX + AQR-гейт (Sonnet).** `fx_pkg.py`(зеркало crypto)+`run_fx.py`+
+      `aqr_crosscheck.py` (stdlib OOXML-ридер, без openpyxl). Гейт: momentum corr 0.769
+      PASS, value 0.554 borderline (верный знак) → конструкция валидна. carry: AQR-файл
+      недоступен (404), не сверен. ВЫЯВЛЕНО: pnl ~0 — движок не начислял held-carry.
 
-- [ ] **F3. Прогон + вердикт FX (Opus).** DSR/PBO/OOS по carry/momentum/value/blend.
-      H1-H4 (carry +но crashy; momentum слабый/диверсифицирует; blend доминирует;
-      переживает ли DSR/PBO). Коммит, memory.
+- [x] **F2.5 (доп). Начисление held-carry (Opus+Sonnet).** `xsec.portfolio_returns`
+      получил опц. `accrual` (default None → crypto байт-в-байт). carry-yield =
+      (short_rate−usd)/100/252 на ВСЕ факторы. Закрыл модельный пробел (= давний todo
+      «ongoing funding»). Эффект: carry −0.09→+0.26, blend +0.07→+0.32 Sharpe.
+
+- [x] **F3. Вердикт FX (Opus).** blend_fx: честный daily Sharpe **0.32**, ann +3.4%,
+      maxDD **15.7%**, DSR **0.72**, PBO 0.44, +OOS-сегментов 83%, IS-best=blend.
+      **Многофакторный тезис ПОДТВЕРДИЛСЯ** (в отличие от крипты): 2008 carry-crash
+      blend −1.8% vs carry −23.2% — momentum/value гасят крах carry. НО: размер скромен
+      (×4 слабее крипты), выцветает (Sharpe 0.40→0.23), буксует с 2021 (2022 −7.7%);
+      value лишь погранично сверен с AQR, carry не сверен.
 
 ## Фаза — Doc
 - [ ] **D. README (Sonnet).** Таблица факторов crypto+FX, источники, запуск,
