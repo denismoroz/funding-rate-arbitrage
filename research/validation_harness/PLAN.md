@@ -59,8 +59,10 @@ def strategy(df_train: pd.DataFrame, df_test: pd.DataFrame, *, costs) -> np.ndar
       под нуллём + DSR. Все Sharpe поперодные (одна частота). Self-test на
       известном ответе: noise best-of-N → DSR≈0.50 (PSR-vs-0 при этом 0.99);
       реальный edge N=1 → DSR=1.0; тот же edge в 200 пустышках → 0.81.
-- [ ] **Ф4. PBO (CSCV).** Матрица trials×OOS-доходностей по меню конфигов →
-      S сабматриц, IS/OOS сплиты, ранг IS-лучшего в OOS → logit → PBO.
+- [x] **Ф4. PBO (CSCV).** `pbo.py` — матрица (T×N конфигов), S смежных кусков,
+      все C(S,S/2) IS/OOS-сплита, ранг IS-лучшего в OOS → logit → PBO. Self-test
+      проверяет НАПРАВЛЕНИЕ (на iid-шуме PBO<0.5 из-за персистентной «глоб.
+      удачи»): edge 0.008 < noise 0.195 < overfit 1.000.
 - [ ] **Ф5. Report.** Единый отчёт (print + JSON/CSV): OOS-распределение, DSR,
       PBO, IS→OOS деградация, per-coin.
 - [ ] **Ф6. Валидация САМОГО стенда (критично — «кто проверяет проверяющего»).**
