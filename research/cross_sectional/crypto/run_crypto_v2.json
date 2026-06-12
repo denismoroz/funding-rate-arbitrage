@@ -1,0 +1,63 @@
+{
+  "name": "Crypto XSEC — momentum ENSEMBLE (commit) vs lookback menu",
+  "selected_name": "ensemble",
+  "coins": [
+    "XSEC"
+  ],
+  "n_portfolio_hours": 1101,
+  "menu_size": 4,
+  "pooled_oos": {
+    "n_segments": 25,
+    "dist": {
+      "annual_pct": {
+        "median": 0.52,
+        "iqr_lo": 0.46,
+        "iqr_hi": 0.97
+      },
+      "sharpe": {
+        "median": 6.7,
+        "iqr_lo": 4.72,
+        "iqr_hi": 8.09
+      },
+      "max_dd_pct": {
+        "median": 0.01,
+        "iqr_lo": 0.01,
+        "iqr_hi": 0.01
+      },
+      "calmar": {
+        "median": 52.84,
+        "iqr_lo": 36.11,
+        "iqr_hi": 103.18
+      }
+    },
+    "frac_calmar_pos": 1.0,
+    "frac_sharpe_pos": 1.0
+  },
+  "pbo": {
+    "pbo": 0.6045066045066045,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.4,
+    "is_best_counts": {
+      "ensemble": 5284,
+      "mom14": 4806,
+      "mom60": 2267,
+      "mom30": 513
+    }
+  },
+  "dsr": {
+    "dsr": 0.9741819013108738,
+    "sr_hat": 0.07014073339981046,
+    "sr_star_deflated": 0.010869183289418773,
+    "psr_vs_zero": 0.9893616776403878,
+    "n_trials": 4,
+    "var_sr_trials": 0.00010672371655169599,
+    "T": 1101,
+    "skew": -0.20048874148158047,
+    "kurt": 6.076814346711055,
+    "selected": "ensemble"
+  },
+  "per_coin_calmar_median": {
+    "XSEC": 52.84
+  }
+}

@@ -14,6 +14,8 @@ where a coin lacks enough listed history the cell stays NaN (never fabricated).
 Only numpy/pandas.
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -76,6 +78,46 @@ def vol_adjusted_momentum(panel: dict, lookback_days: int,
     daily_ret = price / price.shift(1) - 1.0
     vol = daily_ret.rolling(vol_window, min_periods=vol_window).std(ddof=0)
     return mom / vol.replace(0.0, np.nan)
+
+
+def momentum_ensemble(panel: dict,
+                      lookbacks=(14, 21, 30, 45, 60)) -> pd.DataFrame:
+    """Equal-weight ENSEMBLE of z-scored momentum across a plateau of lookbacks.
+
+    score[t,c] = mean_lb( zscore_cross_section(momentum(panel, lb)) )[t,c] over the
+    given `lookbacks`. This is ONE fixed signal, with NO lookback selection — we
+    commit to the whole plateau (the sweep showed crypto momentum is a positive
+    Sharpe PLATEAU over lookback 14→120d, not a spike, so AVERAGING the region is
+    the disciplined harvest rather than PICKING the best lookback in-sample, which
+    is the overfit that gave v1 its bad PBO). Higher = more attractive to LONG.
+
+    Each leg is z-scored cross-sectionally FIRST so the lookbacks are on a common
+    unit scale before averaging (a raw 14d return and a raw 60d return differ in
+    magnitude; z-scoring makes the average a fair vote across horizons). NO look-
+    ahead: every leg is `momentum(panel, lb)` (price <= t only), then a per-row
+    cross-sectional z-score (uses only that date's coins) — fwd_ret is never read.
+
+    NaN structure: a cell is NaN where ANY required leg is missing — i.e. until a
+    coin has a full `max(lookbacks)` window of listed history (the longest leg is
+    the binding constraint), and on rows the z-score leaves undefined (<2 valid
+    coins / zero cross-sectional spread). Concretely the first `max(lookbacks)`
+    listed rows of each coin are NaN. Implemented by AND-ing the per-leg validity
+    masks so a cell defined by the short legs but missing the long leg still stays
+    NaN (the ensemble must mean ALL lookbacks, never a subset).
+    """
+    if not lookbacks:
+        raise ValueError("momentum_ensemble: need at least one lookback")
+    legs = [zscore_cross_section(momentum(panel, lb)) for lb in lookbacks]
+    # Align all legs on the same grid (identical by construction, but be explicit).
+    idx, cols = legs[0].index, legs[0].columns
+    legs = [leg.reindex(index=idx, columns=cols) for leg in legs]
+    arr = np.stack([leg.values for leg in legs], axis=0)   # (n_lb, T, C)
+    all_present = ~np.isnan(arr).any(axis=0)               # every lookback defined
+    with warnings.catch_warnings():                        # all-NaN rows → NaN (ok)
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        mean = np.nanmean(arr, axis=0)                      # equal-weight average
+    mean = np.where(all_present, mean, np.nan)             # NaN if any leg missing
+    return pd.DataFrame(mean, index=idx, columns=cols)
 
 
 def low_vol(panel: dict, vol_window: int = 30) -> pd.DataFrame:
@@ -289,6 +331,54 @@ if __name__ == "__main__":
         print(f"  {nm:<22} top5(LONG):  {top}")
         print(f"  {'':<22} bot5(SHORT): {bot}")
 
+    # ── momentum_ensemble: no-look-ahead + shape + top/bottom-5 eyeball ────────
+    ENS_LBS = (14, 21, 30, 45, 60)
+    ens = momentum_ensemble(P, lookbacks=ENS_LBS)
+    ENS_MAX = max(ENS_LBS)
+
+    # (a) shape matches the panel.
+    assert ens.shape == price.shape, "ensemble shape != panel"
+
+    # (b) NO look-ahead: hand-recompute one cell as the mean of the per-lookback
+    #     z-scores, each of which is built from price <= t only.
+    te = ens.dropna(how="all").index[-1]            # most recent defined row
+    legs_manual = {lb: zscore_cross_section(momentum(P, lb)) for lb in ENS_LBS}
+    man_ens = np.mean([legs_manual[lb].loc[te, c] for lb in ENS_LBS])
+    assert np.isclose(ens.loc[te, c], man_ens), \
+        f"ensemble cell {ens.loc[te,c]} != mean-of-z-legs {man_ens}"
+    # the longest leg only uses price up to te (its lag bar is te - ENS_MAX days).
+    te_lag = price.index[price.index.get_loc(te) - ENS_MAX]
+    assert te_lag == te - pd.Timedelta(days=ENS_MAX), "ensemble lag not a daily grid"
+    print(f"\n[no-look-ahead] {c} momentum_ensemble{ENS_LBS} @ {te.date()} = "
+          f"{ens.loc[te,c]:+.4f}  == mean of per-lb z-scores ({man_ens:+.4f})  OK")
+
+    # (c) binding NaN: first max(lookbacks) listed rows of a coin are NaN (the
+    #     longest leg needs a full window), row max(lookbacks) is defined.
+    head_ens = ens.loc[btc_listed[:ENS_MAX], c]
+    assert head_ens.isna().all(), f"first {ENS_MAX} listed {c} ensemble rows must be NaN"
+    assert not np.isnan(ens.loc[btc_listed[ENS_MAX], c]), \
+        f"ensemble row {ENS_MAX} should be defined"
+    print(f"[no-look-ahead] first {ENS_MAX}(=max lb) listed {c} ensemble rows NaN, "
+          f"row {ENS_MAX} defined  OK")
+
+    # (d) a cell defined by short legs but missing the LONG leg must stay NaN
+    #     (ensemble means ALL lookbacks, never a subset). Row 14 has mom14 defined
+    #     for BTC but mom60 still NaN → ensemble NaN there.
+    assert not np.isnan(zscore_cross_section(momentum(P, 14)).loc[btc_listed[14], c]), \
+        "mom14 z should be defined at listed row 14"
+    assert np.isnan(ens.loc[btc_listed[14], c]), \
+        "ensemble must be NaN where the long leg is missing (no subset averaging)"
+    print(f"[no-look-ahead] ensemble NaN where short legs defined but long leg "
+          f"missing (no subset average)  OK")
+
+    erow = ens.loc[te].dropna().sort_values(ascending=False)
+    top = "  ".join(f"{cc}{erow[cc]:+.3f}" for cc in erow.index[:5])
+    bot = "  ".join(f"{cc}{erow[cc]:+.3f}" for cc in erow.index[-5:])
+    print(f"\n=== ENSEMBLE SANITY @ {te.date()} ===")
+    print(f"  momentum_ensemble{ENS_LBS}")
+    print(f"    top5(LONG):  {top}")
+    print(f"    bot5(SHORT): {bot}")
+
     # ── Z-score: each row ~0 mean, ~unit std over non-NaN entries ──────────────
     z = zscore_cross_section(mom)
     rmean = z.mean(axis=1)
@@ -310,7 +400,8 @@ if __name__ == "__main__":
         return 100.0 * df.isna().mean().mean()
     print(f"\n=== SHAPES & NaN% ===")
     for name, df in [("momentum(60)", mom), ("carry(14)", car),
-                     ("zscore(mom)", z), ("blend", bl)]:
+                     ("zscore(mom)", z), ("blend", bl),
+                     ("mom_ensemble", ens)]:
         print(f"  {name:<14} shape={str(df.shape):<14} NaN%={nanpct(df):5.1f}")
 
     print("\nALL ASSERTS PASSED")
