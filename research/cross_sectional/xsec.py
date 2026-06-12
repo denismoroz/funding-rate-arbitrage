@@ -89,6 +89,61 @@ def portfolio_returns(
     return pd.Series(out, index=idx, name="xsec_net")
 
 
+def zscore_cross_section(scores: pd.DataFrame) -> pd.DataFrame:
+    """Standardize each ROW (date) across instruments: (x - row_mean) / row_std.
+
+    Mean/std are taken over the non-NaN instruments of that date (ddof=0,
+    population). NaNs are preserved. Rows with <2 valid instruments or zero
+    cross-sectional spread (std==0) yield NaN (undefined standardization → no
+    information that date). Output is unit-scaled so different factors are
+    comparable for blending.
+    """
+    mean = scores.mean(axis=1)
+    std = scores.std(axis=1, ddof=0)
+    z = scores.sub(mean, axis=0).div(std.replace(0.0, np.nan), axis=0)
+    return z
+
+
+def blend(panels_or_scores, weights=None) -> pd.DataFrame:
+    """Weighted average of per-factor z-scored panels → one blended score.
+
+    panels_or_scores: list of pd.DataFrame factor panels (ALREADY z-scored, so the
+                      legs are comparable; pass them through zscore_cross_section).
+    weights: per-factor weights (any positive scale; normalized to sum 1). Default
+             equal weights.
+
+    Frames are aligned on the UNION of index/columns. At each cell the blend is the
+    weight-renormalized average over the factors that are non-NaN there (a missing
+    factor is dropped from that cell's average, not treated as zero); a cell with
+    NO valid factor stays NaN. Higher = more attractive long, by construction.
+    """
+    panels = list(panels_or_scores)
+    if not panels:
+        raise ValueError("blend: need at least one factor panel")
+    if weights is None:
+        weights = [1.0] * len(panels)
+    if len(weights) != len(panels):
+        raise ValueError("blend: weights length must match number of panels")
+    w = np.asarray(weights, dtype=float)
+    if (w < 0).any() or w.sum() == 0:
+        raise ValueError("blend: weights must be non-negative and not all zero")
+
+    idx = panels[0].index
+    cols = panels[0].columns
+    for p in panels[1:]:
+        idx = idx.union(p.index)
+        cols = cols.union(p.columns)
+    panels = [p.reindex(index=idx, columns=cols) for p in panels]
+
+    num = pd.DataFrame(0.0, index=idx, columns=cols)
+    den = pd.DataFrame(0.0, index=idx, columns=cols)
+    for wi, p in zip(w, panels):
+        valid = p.notna()
+        num = num.add((p.where(valid) * wi).fillna(0.0))
+        den = den.add(valid.astype(float) * wi)
+    return num.div(den.replace(0.0, np.nan))
+
+
 if __name__ == "__main__":
     # --- Hand-checkable toy: 4 instruments, 6 dates -----------------------
     dates = pd.date_range("2026-01-01", periods=6, freq="D")
@@ -176,4 +231,53 @@ if __name__ == "__main__":
     print(pnl2.round(6).to_string())
     print(f"\nperiod0 net = {pnl.iloc[0]:.6f} (expected {exp_p0:.6f})")
     print(f"period1 net = {pnl.iloc[1]:.6f} (expected {exp_p1:.6f})")
+    # --- zscore_cross_section: each valid row mean≈0, std≈1 ---------------
+    zsrc = pd.DataFrame(
+        [
+            [1.0, 2.0, 3.0, 4.0],          # full row
+            [10.0, np.nan, 20.0, 30.0],    # one NaN, 3 valid
+            [5.0, np.nan, np.nan, np.nan], # 1 valid → NaN row
+            [7.0, 7.0, 7.0, 7.0],          # zero spread → NaN row
+        ],
+        index=pd.date_range("2026-02-01", periods=4, freq="D"),
+        columns=cols, dtype=float,
+    )
+    z = zscore_cross_section(zsrc)
+    valid = zsrc.notna().sum(axis=1) >= 2
+    rmean = z.mean(axis=1)
+    rstd = z.std(axis=1, ddof=0)
+    # rows 0,1 are valid with non-zero spread → mean 0, std 1.
+    assert np.allclose(rmean.iloc[[0, 1]], 0.0, atol=1e-12), "z row mean != 0"
+    assert np.allclose(rstd.iloc[[0, 1]], 1.0, atol=1e-12), "z row std != 1"
+    assert z.iloc[2].isna().all(), "z: <2 valid → NaN row"
+    assert z.iloc[3].isna().all(), "z: zero spread → NaN row"
+    # NaN cell in row 1 is preserved (not standardized into a number).
+    assert np.isnan(z.iloc[1, 1]), "z must preserve NaN cells"
+    print("\n=== xsec zscore_cross_section ===  valid rows mean≈0 std≈1  OK")
+
+    # --- blend: equal-weight average of two known panels == hand average --
+    pa = pd.DataFrame(
+        [[1.0, 3.0, np.nan], [2.0, np.nan, 6.0]],
+        index=pd.date_range("2026-03-01", periods=2, freq="D"),
+        columns=["A", "B", "C"], dtype=float,
+    )
+    pb = pd.DataFrame(
+        [[5.0, 1.0, 4.0], [np.nan, np.nan, 2.0]],
+        index=pd.date_range("2026-03-01", periods=2, freq="D"),
+        columns=["A", "B", "C"], dtype=float,
+    )
+    bl = blend([pa, pb])
+    # cell [0,A] = mean(1,5)=3 ; [0,B] = mean(3,1)=2 ; [0,C] only pb=4 ;
+    # [1,A] only pa=2 ; [1,B] both NaN → NaN ; [1,C] = mean(6,2)=4.
+    exp = pd.DataFrame(
+        [[3.0, 2.0, 4.0], [2.0, np.nan, 4.0]],
+        index=pa.index, columns=["A", "B", "C"], dtype=float,
+    )
+    assert np.allclose(bl.fillna(-9).values, exp.fillna(-9).values), \
+        f"blend mismatch:\n{bl}\nexpected:\n{exp}"
+    # weighted blend [3,1] on a full-overlap cell renormalizes: [0,A]=(3*1+5*3)/4
+    blw = blend([pa, pb], weights=[1.0, 3.0])
+    assert np.isclose(blw.iloc[0, 0], (1.0 * 1 + 5.0 * 3) / 4.0), "blend weights"
+    print("=== xsec blend ===  equal-weight & weighted per-cell average  OK")
+
     print("\nALL ASSERTS PASSED")
