@@ -55,8 +55,10 @@ def strategy(df_train: pd.DataFrame, df_test: pd.DataFrame, *, costs) -> np.ndar
       распределение (медиана/IQR/доля Calmar>0). Smoke BTC buy&hold: median
       Calmar 1.55, IQR [-0.98, 5.46]; AlwaysFlat≡0 ассерт проходит.
       Per-coin разбивка — через цикл run_cpcv по монетам в оркестраторе (Ф5).
-- [ ] **Ф3. DSR.** Реализовать Deflated Sharpe (нужны: SR, число trials N,
-      дисперсия SR по trials, skew/kurt доходностей). Формула Bailey–LdP.
+- [x] **Ф3. DSR.** `metrics.py` — PSR (поправка skew/kurt) + expected-max-Sharpe
+      под нуллём + DSR. Все Sharpe поперодные (одна частота). Self-test на
+      известном ответе: noise best-of-N → DSR≈0.50 (PSR-vs-0 при этом 0.99);
+      реальный edge N=1 → DSR=1.0; тот же edge в 200 пустышках → 0.81.
 - [ ] **Ф4. PBO (CSCV).** Матрица trials×OOS-доходностей по меню конфигов →
       S сабматриц, IS/OOS сплиты, ранг IS-лучшего в OOS → logit → PBO.
 - [ ] **Ф5. Report.** Единый отчёт (print + JSON/CSV): OOS-распределение, DSR,
