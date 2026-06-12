@@ -61,14 +61,14 @@ cross_sectional/
 
 ## Фазы — Crypto (первый блок)
 
-- [ ] **C1. Общий xsec-движок (Sonnet, data-independent).** `xsec.py`:
+- [x] **C1. Общий xsec-движок (Sonnet, data-independent).** `xsec.py`:
       `rank_to_weights(scores: DataFrame[date×inst], tercile_frac=1/3) -> weights`
       (dollar-neutral, Σлонг=Σшорт=1); `portfolio_returns(weights, fwd_ret, costs)`
       нетто turnover×spread. **Acceptance:** assert нейтральность; игрушка из 4
       инструментов считается руками и сходится; rebal-частота параметризуема (дни).
       *Запускается параллельно с C0.*
 
-- [ ] **C0. Крипто-универс + данные (Sonnet).** Инвентаризовать `research/data/`
+- [x] **C0. Крипто-универс + данные (Sonnet).** Инвентаризовать `research/data/`
       (есть ~18 коинов 1h). Найти существующий HL-загрузчик в репо и **расширить
       универс до ≥30 ликвидных HL-перпов** (публичный HL API, без креденшелов),
       ≥1.5 года часовой истории, фильтр по объёму/возрасту листинга. `cryptodata.py:
@@ -76,20 +76,25 @@ cross_sectional/
       funding). **Acceptance (Opus):** ≥30 коинов, нет дыр/NaN, даты ровные, funding
       присутствует; список универса воспроизводим (фильтр в коде, не захардкожен).
 
-- [ ] **C2. Крипто-сигналы (Sonnet).** `crypto/signals.py`: `momentum(panel, lb)`
+- [x] **C2. Крипто-сигналы (Sonnet).** `crypto/signals.py`: `momentum(panel, lb)`
       (трейлинг-ret, варианты lb=30/60/90/180 дней = trials для DSR);
       `carry(panel)` (накопленный/сглаженный funding). Cross-sectional z-score
       каждый. **Acceptance:** формулы ревьюит Opus; знаки осмысленны; seam-safe
       (считать на полном panel).
 
-- [ ] **C3. Адаптер crypto под стенд (Sonnet, ≤30 строк).** `crypto_pkg.py` —
+- [x] **C3. Адаптер crypto под стенд (Sonnet, ≤30 строк).** `crypto_pkg.py` —
       протокол `harness.Package`: menu={mom30/60/90/180, carry, blend},
       selected="blend"; `run_crypto.py`. Переиспользует `xsec`+`signals`+стенд.
       **Acceptance:** end-to-end прогон, печать отчёта, JSON; purge ≥ макс. lookback
       (в днях); контракт seam-safe.
 
-- [ ] **C4. Прогон + вердикт crypto (Opus).** DSR/PBO/OOS по mom-вариантам /carry
-      /blend. Интерпретация, коммит, заметка в memory.
+- [x] **C4. Прогон + вердикт crypto (Opus).** Вердикт: эдж = чистый momentum
+      (mom30 Sharpe~1.0/+43%, дневная годовизация), но carry МЁРТВ (−0.04),
+      blend ВРЕДИТ (разбавляет). PBO=0.83 ❌ (выбор lookback не переносится),
+      DSR=0.64 ⚠️ (на blend). maxDD 40-60% (factor-crash). Многофакторный тезис
+      в крипте провалился; чистый momentum реален-но-fragile, не robust-альфа.
+      NB: стенд годовит √8760 (часовая модель) — OOS levels раздуты ×~5.9; честные
+      дневные числа в analyze_c4.py. Для FX нужна корректная дневная годовизация.
 
 ## Фазы — FX (второй блок, после C4)
 
