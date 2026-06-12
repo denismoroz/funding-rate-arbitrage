@@ -1,0 +1,79 @@
+{
+  "name": "Strategy B (constant-dollar ratchet + momentum hedge)",
+  "selected_name": "mom14|mom30",
+  "coins": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "AVAX",
+    "TIA",
+    "INJ"
+  ],
+  "n_portfolio_hours": 22165,
+  "menu_size": 10,
+  "pooled_oos": {
+    "n_segments": 150,
+    "dist": {
+      "annual_pct": {
+        "median": 12.09,
+        "iqr_lo": 2.14,
+        "iqr_hi": 45.6225
+      },
+      "sharpe": {
+        "median": 0.58,
+        "iqr_lo": 0.08,
+        "iqr_hi": 1.52
+      },
+      "max_dd_pct": {
+        "median": 13.77,
+        "iqr_lo": 10.8,
+        "iqr_hi": 17.63
+      },
+      "calmar": {
+        "median": 0.98,
+        "iqr_lo": 0.11,
+        "iqr_hi": 3.14
+      }
+    },
+    "frac_calmar_pos": 0.8,
+    "frac_sharpe_pos": 0.8
+  },
+  "pbo": {
+    "pbo": 0.48787878787878786,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.5454545454545454,
+    "is_best_counts": {
+      "mom14|mom30": 4550,
+      "mom60": 3902,
+      "mom30": 2318,
+      "mom14": 1644,
+      "donchian55": 253,
+      "mom45": 191,
+      "mom7": 8,
+      "mom21": 4,
+      "2of3_14_30_60": 0,
+      "donchian20": 0
+    }
+  },
+  "dsr": {
+    "dsr": 0.9310577723031461,
+    "sr_hat": 0.015357956712899487,
+    "sr_star_deflated": 0.005353671852737672,
+    "psr_vs_zero": 0.9886279985216924,
+    "n_trials": 10,
+    "var_sr_trials": 1.1560162500112827e-05,
+    "T": 22165,
+    "skew": -0.4322405830067234,
+    "kurt": 18.524816793329066,
+    "selected": "mom14|mom30"
+  },
+  "per_coin_calmar_median": {
+    "BTC": 1.26,
+    "ETH": 2.07,
+    "SOL": 1.16,
+    "AVAX": 0.98,
+    "TIA": -0.22,
+    "INJ": 0.34
+  }
+}
