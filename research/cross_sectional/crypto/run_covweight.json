@@ -1,0 +1,67 @@
+{
+  "name": "Crypto XSEC — cov-weight variants vs equal-$ baseline",
+  "selected_name": "BASELINE",
+  "coins": [
+    "XSEC"
+  ],
+  "n_portfolio_hours": 1101,
+  "menu_size": 8,
+  "pooled_oos": {
+    "n_segments": 25,
+    "dist": {
+      "annual_pct": {
+        "median": 0.46,
+        "iqr_lo": 0.39,
+        "iqr_hi": 0.89
+      },
+      "sharpe": {
+        "median": 5.91,
+        "iqr_lo": 4.74,
+        "iqr_hi": 7.68
+      },
+      "max_dd_pct": {
+        "median": 0.01,
+        "iqr_lo": 0.01,
+        "iqr_hi": 0.01
+      },
+      "calmar": {
+        "median": 49.76,
+        "iqr_lo": 35.55,
+        "iqr_hi": 87.96
+      }
+    },
+    "frac_calmar_pos": 1.0,
+    "frac_sharpe_pos": 1.0
+  },
+  "pbo": {
+    "pbo": 0.7703962703962703,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.3333333333333333,
+    "is_best_counts": {
+      "INV-VOL-120": 2769,
+      "INV-VOL-60": 2446,
+      "MIN-VAR-60": 2145,
+      "BASELINE": 2054,
+      "INV-VOL-90": 1945,
+      "INV-VOL-45": 821,
+      "MIN-VAR-90": 452,
+      "MIN-VAR-120": 238
+    }
+  },
+  "dsr": {
+    "dsr": 0.9554935705405767,
+    "sr_hat": 0.06379052168159732,
+    "sr_star_deflated": 0.012106269676412993,
+    "psr_vs_zero": 0.9820904441310602,
+    "n_trials": 8,
+    "var_sr_trials": 6.884964786187552e-05,
+    "T": 1101,
+    "skew": -0.17297394863535,
+    "kurt": 5.874026100013842,
+    "selected": "BASELINE"
+  },
+  "per_coin_calmar_median": {
+    "XSEC": 49.76
+  }
+}
