@@ -50,9 +50,11 @@ def strategy(df_train: pd.DataFrame, df_test: pd.DataFrame, *, costs) -> np.ndar
       комбинаций), purge симметричный + embargo односторонний. Инвариант
       train∩test=∅ ассертится на каждом пути; self-test проходит (игрушка +
       деградация бюджета train: purge=720h → ~50% ряда).
-- [ ] **Ф2. Single-strategy runner.** Прогон одной стратегии по всем CPCV-путям →
-      распределение OOS-метрик (Sharpe/CAGR/DD/Calmar): медиана, IQR, доля
-      путей с Calmar>0. Per-coin разбивка.
+- [x] **Ф2. Single-strategy runner.** `runner.py` + `contract.py` (mask-based,
+      seam-safe) + `costs.py` + `strategies/baselines.py`. CPCV-прогон → OOS
+      распределение (медиана/IQR/доля Calmar>0). Smoke BTC buy&hold: median
+      Calmar 1.55, IQR [-0.98, 5.46]; AlwaysFlat≡0 ассерт проходит.
+      Per-coin разбивка — через цикл run_cpcv по монетам в оркестраторе (Ф5).
 - [ ] **Ф3. DSR.** Реализовать Deflated Sharpe (нужны: SR, число trials N,
       дисперсия SR по trials, skew/kurt доходностей). Формула Bailey–LdP.
 - [ ] **Ф4. PBO (CSCV).** Матрица trials×OOS-доходностей по меню конфигов →
