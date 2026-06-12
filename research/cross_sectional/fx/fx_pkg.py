@@ -46,18 +46,36 @@ FX-SPECIFIC CONFIG CHOICES (documented, all sensitivity knobs):
     at each rebalance, and turnover counts BOTH legs (Σ|Δw| over the dollar-neutral
     book), so a one-way per-leg cost is the right unit.
 
-    CAVEAT — UNMODELLED HELD-POSITION CARRY FLOW (the FX analog of crypto's
-    unmodelled perp funding; F3 MUST flag this): like crypto, the book does NOT
-    model the ongoing carry/funding *flow* accruing on held positions inside
-    portfolio_returns — only TURNOVER cost. In FX the interest-rate-differential
-    carry IS the held-position cash flow (you earn/pay the rate diff every day you
-    hold the position), and it is NOT captured here as a daily accrual. The carry
-    FACTOR captures the rate differential only as a cross-sectional *signal* (rank
-    high-yielders long), NOT as a realised held cash flow added to pnl. So the
-    book's pnl is spot-FX price return minus turnover cost — the carry/funding
-    accrual is omitted on BOTH the long and short legs. F3 must surface that the
-    realised FX-carry edge is therefore understated here, just as crypto's perp
-    funding accrual was omitted.
+    RESOLVED — HELD-POSITION CARRY FLOW IS NOW ACCRUED (FX only). Previously the
+    book modelled ONLY spot-FX price return minus turnover cost; the ongoing
+    interest-rate-differential carry that a held FX position earns/pays EVERY day
+    it is held was omitted, which understated the realised FX-carry edge (the FX
+    analog of crypto's unmodelled perp funding). That is now fixed for the FX book:
+    _carry_rate_panel() builds a per-instrument per-business-day carry-rate panel
+      carry_rate[t,c] = (short_rate[t,c] - usd_rate['USD'][t]) / 100 / 252
+    (% p.a. → fraction p.a. → per-business-day fraction), and _config_pnl passes it
+    as `accrual=` to xsec.portfolio_returns for EVERY menu config (carry, momentum,
+    value, blend_fx). ANY held FX position now earns/pays its rate differential,
+    regardless of which factor selected it: a long high-yielder earns (held>0,
+    diff>0); a short low-yielder also earns (held<0, diff<0 → held*diff>0) — correct
+    by construction on both legs. NO look-ahead: short_rate[t]/usd_rate[t] are known
+    at t and earned over t→t+1, the SAME alignment as fwd_ret[t] (so accrual[t] is
+    paired with held[t]).
+
+    Carry FACTOR vs carry FLOW: the carry *factor* still only uses the rate diff as
+    a cross-sectional RANKING signal (long high-yielders); the accrual term is the
+    realised held cash FLOW added to every config's pnl. They are distinct and now
+    both present.
+
+    Business-day (/252) convention: the panel is a business-day grid, so we accrue
+    ONE business day of carry per panel step. A Fri→Mon spot move spans 3 calendar
+    days but accrues only one business day of carry — a small WEEKEND UNDER-ACCRUAL
+    of held carry. This is an accepted minor simplification (a /360 ACT or a
+    weekend-aware grid would close it but is out of scope).
+
+    Remaining transaction-cost caveat: TURNOVER cost (costs_bps, 2bps/leg spot
+    spread) is still the ONLY transaction cost modelled — slippage/market-impact
+    beyond that 2bps is not modelled.
 
   MAX_LOOKBACK_DAYS = 1260.  The deepest menu lookback in business days:
     momentum 12-1 = 12*21 = 252; value 5y = 5*252 = 1260; carry = 0 (point-in-time
@@ -174,13 +192,42 @@ class FXXSecPackage:
             "value": signals.value(P, lookback_years=VALUE_LOOKBACK_YEARS),
         }
 
+    def _carry_rate_panel(self) -> pd.DataFrame:
+        """Per-instrument per-BUSINESS-DAY held-position carry-rate panel.
+
+        carry_rate[t,c] = (short_rate[t,c] - usd_rate['USD'][t]) / 100.0 / 252.0
+          - /100  : % p.a. → fraction p.a.
+          - /252  : fraction p.a. → per-business-day fraction (≈252 bdays/yr).
+        This is the daily carry of holding currency c long, financed in USD. A long
+        high-yielder earns positive; a short low-yielder (held<0, diff<0) also earns
+        positive — correct by construction (xsec multiplies by held).
+
+        NO look-ahead: short_rate[t]/usd_rate[t] are known at t and earned over
+        t→t+1, the SAME alignment as fwd_ret[t]. Aligned to fwd_ret so the panels
+        match the engine's per-period pairing (held[t] earns carry_rate[t]).
+
+        Business-day (/252) convention accrues one business day of carry per panel
+        step; a Fri→Mon spot move spans 3 calendar days but accrues only one
+        business day of carry — a small accepted weekend under-accrual.
+        """
+        P = self._panels()
+        diff = P["short_rate"].sub(P["usd_rate"]["USD"], axis=0)   # foreign − USD, %p.a.
+        carry_rate = diff / 100.0 / 252.0                          # per-business-day fraction
+        return carry_rate.reindex_like(P["fwd_ret"])
+
     def _config_pnl(self, score: pd.DataFrame) -> pd.Series:
-        """score panel → dollar-neutral weights → net portfolio pnl series."""
+        """score panel → dollar-neutral weights → net portfolio pnl series.
+
+        Held-position carry FLOW is accrued for EVERY config: the rate-differential
+        carry_rate (per-business-day fraction) is passed as `accrual=` so any held
+        FX position earns/pays its rate diff each day held (NO look-ahead — same
+        alignment as fwd_ret)."""
         P = self._panels()
         weights = xsec.rank_to_weights(score)
         return xsec.portfolio_returns(
             weights, P["fwd_ret"],
             costs_bps=self.costs_bps, rebal_every=self.rebal_every,
+            accrual=self._carry_rate_panel(),
         )
 
     def _build_menu(self) -> dict[str, pd.Series]:

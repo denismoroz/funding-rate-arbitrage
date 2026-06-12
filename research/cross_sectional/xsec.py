@@ -56,6 +56,7 @@ def portfolio_returns(
     fwd_ret: pd.DataFrame,
     costs_bps: float = 5.0,
     rebal_every: int = 1,
+    accrual: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Нетто-доходность long-short книги по периодам.
 
@@ -65,6 +66,23 @@ def portfolio_returns(
                  0, rebal_every, 2*rebal_every, ... (carry-forward, без дрейфа).
     costs_bps: спред в б.п.; на ребалансе вычитаем turnover×costs_bps/1e4.
 
+    accrual: ОПЦИОНАЛЬНЫЙ held-position carry/funding cash-flow panel, ту же форму
+             что и fwd_ret, в уже-периодных ДРОБНЫХ единицах (НЕ % p.a., НЕ б.п.):
+             accrual[t,c] — доход (или расход, если <0), который удерживаемая
+             позиция c зарабатывает ЗА ОДИН период удержания t→t+1. Начисляется
+             КАЖДЫЙ удерживаемый период (не только в дни ребаланса), на тот же
+             вектор held-весов, что и gross. Выравнивание — как у fwd_ret (NO
+             look-ahead): accrual[t] известен в начале периода t и зарабатывается
+             на интервале t→t+1, поэтому пара (held[t], accrual[t]) корректна и не
+             заглядывает вперёд. Знак следует за позицией: лонг (held>0) с
+             положительным accrual зарабатывает; шорт (held<0) с отрицательным
+             accrual ТОЖЕ зарабатывает (held*accrual>0) — это by-construction
+             корректно для rate-differential / funding flow.
+
+             accrual=None (DEFAULT) → начисление ВЫКЛЮЧЕНО, out[i]=gross-cost, т.е.
+             поведение В ТОЧНОСТИ как раньше (это инвариант, на котором держится
+             неизменность crypto-книги — crypto никогда не передаёт accrual).
+
     Возврат: pd.Series нетто-доходности, индексирована датами. Это «один актив»
              (вся книга) для скармливания в validation_harness.
     """
@@ -72,6 +90,10 @@ def portfolio_returns(
     r = fwd_ret.fillna(0.0)
     idx = w.index
     cost_rate = costs_bps / 1e4
+
+    accr_aligned = None
+    if accrual is not None:
+        accr_aligned = accrual.reindex_like(fwd_ret).fillna(0.0)
 
     held = pd.Series(0.0, index=w.columns)  # текущие удерживаемые веса
     prev = pd.Series(0.0, index=w.columns)  # веса до последнего ребаланса
@@ -85,7 +107,11 @@ def portfolio_returns(
         else:
             cost = 0.0
         gross = float((held * r.iloc[i]).sum())
-        out[i] = gross - cost
+        if accr_aligned is not None:
+            accr = float((held * accr_aligned.iloc[i]).sum())
+            out[i] = gross + accr - cost
+        else:
+            out[i] = gross - cost
     return pd.Series(out, index=idx, name="xsec_net")
 
 
@@ -222,6 +248,41 @@ if __name__ == "__main__":
     assert np.isclose(pnl2.iloc[1], 0.0), f"rebal_every=2 period1 {pnl2.iloc[1]} != 0"
     assert np.isclose(pnl2.iloc[0], exp_p0), "rebal_every=2 period0 mismatch"
 
+    # --- accrual=None regression guard: identical to the no-accrual pnl ----
+    pnl_none = portfolio_returns(w, fwd, costs_bps=costs_bps, rebal_every=1,
+                                 accrual=None)
+    assert np.allclose(pnl_none.values, pnl.values), \
+        "accrual=None must reproduce the original pnl EXACTLY"
+    pnl2_none = portfolio_returns(w, fwd, costs_bps=costs_bps, rebal_every=2,
+                                  accrual=None)
+    assert np.allclose(pnl2_none.values, pnl2.values), \
+        "accrual=None (rebal_every=2) must reproduce the original pnl EXACTLY"
+
+    # --- hand-checkable accrual case: a single held long with a constant rate -
+    # One instrument 'X', held long (weight +1) every period, zero spot return,
+    # zero turnover after period 0; a constant per-period accrual rate adds
+    # exactly held*rate = +1*rate to EACH period's net (minus only the period-0
+    # turnover cost of establishing the position from zero).
+    adates = pd.date_range("2026-04-01", periods=4, freq="D")
+    aw = pd.DataFrame(1.0, index=adates, columns=["X"])     # always long 1 unit
+    afwd = pd.DataFrame(0.0, index=adates, columns=["X"])   # no spot move
+    rate = 0.0003                                            # const per-period accrual
+    aacc = pd.DataFrame(rate, index=adates, columns=["X"])
+    apnl = portfolio_returns(aw, afwd, costs_bps=costs_bps, rebal_every=1,
+                             accrual=aacc)
+    # period 0: gross 0 + accr (1*rate) - turnover cost (|1-0|*costs_bps/1e4)
+    exp_a0 = 0.0 + 1.0 * rate - 1.0 * (costs_bps / 1e4)
+    assert np.isclose(apnl.iloc[0], exp_a0), f"accrual period0 {apnl.iloc[0]} != {exp_a0}"
+    # periods 1..3: gross 0, no turnover (weights unchanged) → net == 1*rate.
+    assert np.allclose(apnl.iloc[1:].values, rate), \
+        f"each held period must add exactly held*rate={rate}:\n{apnl}"
+    # short symmetry: held=-1 with a NEGATIVE rate earns +|rate| (held*accr>0).
+    aws = pd.DataFrame(-1.0, index=adates, columns=["X"])
+    aacc_neg = pd.DataFrame(-rate, index=adates, columns=["X"])
+    apnl_s = portfolio_returns(aws, afwd, costs_bps=0.0, rebal_every=1,
+                               accrual=aacc_neg)
+    assert np.allclose(apnl_s.values, rate), "short*(-rate) must earn +rate each period"
+
     print("=== xsec self-test ===")
     print("\nweights:")
     print(w.to_string())
@@ -231,6 +292,9 @@ if __name__ == "__main__":
     print(pnl2.round(6).to_string())
     print(f"\nperiod0 net = {pnl.iloc[0]:.6f} (expected {exp_p0:.6f})")
     print(f"period1 net = {pnl.iloc[1]:.6f} (expected {exp_p1:.6f})")
+    print("\n=== xsec accrual ===  accrual=None reproduces original pnl exactly; "
+          f"\n  held-long const rate {rate} adds exactly held*rate each period "
+          "(long & short symmetric)  OK")
     # --- zscore_cross_section: each valid row mean≈0, std≈1 ---------------
     zsrc = pd.DataFrame(
         [
