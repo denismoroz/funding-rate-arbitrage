@@ -96,7 +96,18 @@ cross_sectional/
       NB: стенд годовит √8760 (часовая модель) — OOS levels раздуты ×~5.9; честные
       дневные числа в analyze_c4.py. Для FX нужна корректная дневная годовизация.
 
-## Фазы — FX (второй блок, после C4)
+## Крипто v2 (C5-C6) — робастность + ансамбль — ЗАВЕРШЕНО
+
+- [x] **C5. Карта робастности (Sonnet).** `sweep.py` + `metrics_daily.py` (честный
+      daily √365) + сигналы reversal/vol-adj. Вывод: momentum = ПЛАТО (не магическое
+      число), но reversal/vol-adj/carry провалились; эдж выцветает.
+- [x] **C6. Ансамбль vs adaptive-select (Sonnet+Opus).** `momentum_ensemble` (среднее
+      по плато, без выбора). Решающий OOS-тест: ансамбль БЬЁТ adaptive-select (100% vs
+      80% сегментов+). Честный daily: Sharpe 1.34/Calmar 2.11/maxDD 26%, DSR 0.974 ✅.
+      Fade: 2-я пол. Sharpe 1.0 (слабеет, не умирает). Оговорка: НЕ учтён ongoing
+      perp funding на удержании — вероятный встречный ветер, проверить до веры в уровень.
+
+## Фазы — FX (второй блок, после крипты)
 
 - [ ] **F0. FX-данные (Sonnet).** G10 дневной спот (Stooq CSV), короткие ставки
       (FRED CSV) для carry, REER (BIS) для value. `fx/fxdata.py: load_panel()`.
