@@ -1,0 +1,284 @@
+{
+  "meta": {
+    "description": "Honest operating points on survivorship-debiased PT book (Sharpe\u22480.76, ann\u224829.5%, vol\u224838.9%). Bear drawdown pinned by vol-equivalence cross-walk to 2021-22 Binance bear panel.",
+    "method_note": "For each target return T: k_honest = T / honest_ann scales the honest book; target_vol = k_honest * honest_vol is the risk budget. k_bear = target_vol / bear_vol scales the bear book to the SAME risk budget. maxDD is computed on (1+k*r).cumprod() (exact compounding), not the linear k*maxDD approximation.",
+    "honest_book": {
+      "description": "Survivorship-debiased point-in-time book (2023-06 \u2192 2026-06)",
+      "n_coins_pt": 62,
+      "period": {
+        "start": "2023-06-08",
+        "end": "2026-06-12",
+        "n_days": 1101
+      },
+      "full_tilt_metrics": {
+        "n": 1102,
+        "ann": 0.2943679193949713,
+        "vol_ann": 0.3891767937904096,
+        "sharpe": 0.7563861054713928,
+        "maxdd": 0.27780224265857456,
+        "calmar": 1.0596311843196902,
+        "hit": 0.4809437386569873,
+        "mean": 0.0008064874503971816,
+        "std": 0.02037044439868589
+      }
+    },
+    "bear_book": {
+      "description": "Binance perp 2021-22 bear stress (20 coins, warmup-trimmed)",
+      "period": {
+        "start": "2021-03-02",
+        "end": "2023-01-01",
+        "n_days": 671
+      },
+      "full_tilt_metrics": {
+        "n": 671,
+        "ann": 0.7860794210325263,
+        "vol_ann": 0.519257229673178,
+        "sharpe": 1.5138535895345875,
+        "maxdd": 0.40100945943699806,
+        "calmar": 1.9602515664746456,
+        "hit": 0.5216095380029806,
+        "mean": 0.0021536422494041817,
+        "std": 0.027179165598886237
+      }
+    }
+  },
+  "caveats": {
+    "cross_walk": "The bear cross-walk equates RISK BUDGET (annualized vol) across two different universes (20 Binance coins 2021-22 vs HL-era PT book). This is the right operational equivalence but NOT a same-universe replay.",
+    "maxdd_one_path": "maxDD is one path from limited history. The true forward drawdown distribution is wider. These are planning anchors, not guarantees.",
+    "sharpe_point_estimate": "Sharpe ~0.76 is itself a debiased point estimate. Do not over-trust the digits; half-splits show Sharpe 0.51 (H1) to 1.01 (H2).",
+    "missing_dead_coins": "22 extra dead-coin candidates had no Binance data and could NOT be included in the PT book. The true survivorship discount may be larger; the honest ann ~29.5% may still be slightly generous.",
+    "bear_2021_bull": "The bear panel runs 2021-2022 full window; 2021 H1 was a strong bull season for crypto momentum (ann ~238%). Bear-2022 maxDD is the more conservative single-year stress number."
+  },
+  "operating_points": [
+    {
+      "target_ret": 0.1,
+      "k_honest": 0.3397109311555922,
+      "k_bear": 0.2546090905386137,
+      "vol": 0.1322076110026879,
+      "normal_maxdd": 0.0972638610698805,
+      "bear_maxdd": 0.11958100572897568,
+      "bear_2022_maxdd": 0.10832849199957617,
+      "sharpe": 0.756386105471393,
+      "calmar": 1.0281310951469806,
+      "per_side_gross": 0.3397109311555922,
+      "bear_worst_week": -0.0451370930172279,
+      "honest_metrics": {
+        "n": 1102,
+        "ann": 0.10000000000000002,
+        "vol_ann": 0.1322076110026879,
+        "sharpe": 0.756386105471393,
+        "maxdd": 0.0972638610698805,
+        "calmar": 1.0281310951469806,
+        "hit": 0.4809437386569873,
+        "mean": 0.00027397260273972606,
+        "std": 0.006920062634730801
+      },
+      "bear_metrics": {
+        "n": 671,
+        "ann": 0.20014296648021151,
+        "vol_ann": 0.1322076110026879,
+        "sharpe": 1.5138535895345875,
+        "maxdd": 0.11958100572897568,
+        "calmar": 1.6737019835225793,
+        "hit": 0.5216095380029806,
+        "mean": 0.0005483368944663329,
+        "std": 0.0069200626347308
+      },
+      "bear_2022_metrics": {
+        "n": 365,
+        "ann": 0.009730072888358775,
+        "vol_ann": 0.10968354617971994,
+        "sharpe": 0.08871041489136157,
+        "maxdd": 0.10832849199957617,
+        "calmar": 0.08982007142125494,
+        "hit": 0.5095890410958904,
+        "mean": 2.665773394070897e-05,
+        "std": 0.005741099198499387
+      }
+    },
+    {
+      "target_ret": 0.14,
+      "k_honest": 0.4755953036178291,
+      "k_bear": 0.35645272675405926,
+      "vol": 0.1850906554037631,
+      "normal_maxdd": 0.13380243395847713,
+      "bear_maxdd": 0.1638029356167625,
+      "bear_2022_maxdd": 0.14922974546945367,
+      "sharpe": 0.7563861054713931,
+      "calmar": 1.046318784032331,
+      "per_side_gross": 0.4755953036178291,
+      "bear_worst_week": -0.0627705737196671,
+      "honest_metrics": {
+        "n": 1102,
+        "ann": 0.14000000000000004,
+        "vol_ann": 0.1850906554037631,
+        "sharpe": 0.7563861054713931,
+        "maxdd": 0.13380243395847713,
+        "calmar": 1.046318784032331,
+        "hit": 0.4809437386569873,
+        "mean": 0.0003835616438356166,
+        "std": 0.009688087688623122
+      },
+      "bear_metrics": {
+        "n": 671,
+        "ann": 0.28020015307229623,
+        "vol_ann": 0.18509065540376313,
+        "sharpe": 1.5138535895345877,
+        "maxdd": 0.1638029356167625,
+        "calmar": 1.7105929879538886,
+        "hit": 0.5216095380029806,
+        "mean": 0.0007676716522528665,
+        "std": 0.009688087688623124
+      },
+      "bear_2022_metrics": {
+        "n": 365,
+        "ann": 0.013622102043702282,
+        "vol_ann": 0.15355696465160795,
+        "sharpe": 0.08871041489136156,
+        "maxdd": 0.14922974546945367,
+        "calmar": 0.09128275332005197,
+        "hit": 0.5095890410958904,
+        "mean": 3.7320827516992554e-05,
+        "std": 0.008037538877899143
+      }
+    },
+    {
+      "target_ret": 0.15,
+      "k_honest": 0.5095663967333882,
+      "k_bear": 0.38191363580792054,
+      "vol": 0.19831141650403186,
+      "normal_maxdd": 0.14273356871809184,
+      "bear_maxdd": 0.1745507952300318,
+      "bear_2022_maxdd": 0.1592409516278328,
+      "sharpe": 0.756386105471393,
+      "calmar": 1.050909056272949,
+      "per_side_gross": 0.5095663967333882,
+      "bear_worst_week": -0.06714176266829797,
+      "honest_metrics": {
+        "n": 1102,
+        "ann": 0.15000000000000002,
+        "vol_ann": 0.19831141650403186,
+        "sharpe": 0.756386105471393,
+        "maxdd": 0.14273356871809184,
+        "calmar": 1.050909056272949,
+        "hit": 0.4809437386569873,
+        "mean": 0.00041095890410958907,
+        "std": 0.0103800939520962
+      },
+      "bear_metrics": {
+        "n": 671,
+        "ann": 0.30021444972031736,
+        "vol_ann": 0.19831141650403186,
+        "sharpe": 1.5138535895345877,
+        "maxdd": 0.1745507952300318,
+        "calmar": 1.7199259924578383,
+        "hit": 0.5216095380029806,
+        "mean": 0.0008225053416994996,
+        "std": 0.0103800939520962
+      },
+      "bear_2022_metrics": {
+        "n": 365,
+        "ann": 0.01459510933253814,
+        "vol_ann": 0.16452531926957992,
+        "sharpe": 0.08871041489136144,
+        "maxdd": 0.1592409516278328,
+        "calmar": 0.09165424586665899,
+        "hit": 0.5095890410958904,
+        "mean": 3.9986600911063394e-05,
+        "std": 0.00861164879774908
+      }
+    },
+    {
+      "target_ret": 0.2,
+      "k_honest": 0.6794218623111844,
+      "k_bear": 0.5092181810772274,
+      "vol": 0.2644152220053758,
+      "normal_maxdd": 0.1877249972290007,
+      "bear_maxdd": 0.2265012973635946,
+      "bear_2022_maxdd": 0.20802545289814312,
+      "sharpe": 0.756386105471393,
+      "calmar": 1.065388216551818,
+      "per_side_gross": 0.6794218623111844,
+      "bear_worst_week": -0.08877636680801171,
+      "honest_metrics": {
+        "n": 1102,
+        "ann": 0.20000000000000004,
+        "vol_ann": 0.2644152220053758,
+        "sharpe": 0.756386105471393,
+        "maxdd": 0.1877249972290007,
+        "calmar": 1.065388216551818,
+        "hit": 0.4809437386569873,
+        "mean": 0.0005479452054794521,
+        "std": 0.013840125269461602
+      },
+      "bear_metrics": {
+        "n": 671,
+        "ann": 0.40028593296042303,
+        "vol_ann": 0.2644152220053758,
+        "sharpe": 1.5138535895345875,
+        "maxdd": 0.2265012973635946,
+        "calmar": 1.7672566895626123,
+        "hit": 0.5216095380029806,
+        "mean": 0.0010966737889326658,
+        "std": 0.0138401252694616
+      },
+      "bear_2022_metrics": {
+        "n": 365,
+        "ann": 0.01946014577671755,
+        "vol_ann": 0.21936709235943988,
+        "sharpe": 0.08871041489136157,
+        "maxdd": 0.20802545289814312,
+        "calmar": 0.09354694584535264,
+        "hit": 0.5095890410958904,
+        "mean": 5.331546788141794e-05,
+        "std": 0.011482198396998773
+      }
+    },
+    {
+      "target_ret": 0.25,
+      "k_honest": 0.8492773278889804,
+      "k_bear": 0.6365227263465342,
+      "vol": 0.33051902750671974,
+      "normal_maxdd": 0.2353099775043369,
+      "bear_maxdd": 0.27557213039536743,
+      "bear_2022_maxdd": 0.25471682256090145,
+      "sharpe": 0.756386105471393,
+      "calmar": 1.062428387658965,
+      "per_side_gross": 0.8492773278889804,
+      "bear_worst_week": -0.11004525478790184,
+      "honest_metrics": {
+        "n": 1102,
+        "ann": 0.25,
+        "vol_ann": 0.33051902750671974,
+        "sharpe": 0.756386105471393,
+        "maxdd": 0.2353099775043369,
+        "calmar": 1.062428387658965,
+        "hit": 0.4809437386569873,
+        "mean": 0.0006849315068493151,
+        "std": 0.017300156586827
+      },
+      "bear_metrics": {
+        "n": 671,
+        "ann": 0.5003574162005286,
+        "vol_ann": 0.3305190275067197,
+        "sharpe": 1.5138535895345875,
+        "maxdd": 0.27557213039536743,
+        "calmar": 1.8157039882177433,
+        "hit": 0.5216095380029806,
+        "mean": 0.001370842236165832,
+        "std": 0.017300156586826997
+      },
+      "bear_2022_metrics": {
+        "n": 365,
+        "ann": 0.02432518222089688,
+        "vol_ann": 0.27420886544929984,
+        "sharpe": 0.08871041489136137,
+        "maxdd": 0.25471682256090145,
+        "calmar": 0.09549892298566523,
+        "hit": 0.5095890410958904,
+        "mean": 6.664433485177228e-05,
+        "std": 0.014352747996248466
+      }
+    }
+  ]
+}
