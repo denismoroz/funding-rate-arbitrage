@@ -1,0 +1,798 @@
+{
+  "description": "Regime / Correlation Map of CarryMesh return streams. Common window: ~2023-06 to 2026-06 (business-day intersection). Three streams: crypto_momentum (survivorship-debiased PT book), fx_blend (FX multifactor blend_fx), funding_arb_bt (BACKTEST, BTC/ETH/SOL only, prod_slot sizing).",
+  "common_window": {
+    "start": "2023-06-09",
+    "end": "2026-05-12",
+    "n_days": 763,
+    "note": "The intersection is business-day spaced because FX has no weekend data. This removes ~30% of calendar days and DISPROPORTIONATELY removes crypto momentum's weekend alpha. See weekend_effect_diagnostic."
+  },
+  "weekend_effect_diagnostic": {
+    "finding": "Crypto momentum earns NEARLY ALL its alpha on weekends. Business-day Sharpe (within common BD window) = near-zero. Weekend Sharpe = +1.84. Calendar-day Sharpe (same period) = +0.58. This severely biases the momentum standalone metrics on the BD intersection. Correlations on BD days are still VALID for cross-day relationships, but the risk-parity combo and momentum comparison are misleading.",
+    "crypto_momentum_calendar_days": {
+      "n": 1069,
+      "ann": 0.22339053649962293,
+      "vol_ann": 0.38758840438385983,
+      "sharpe": 0.5763602160770046,
+      "maxdd": 0.27780224265857456,
+      "calmar": 0.8041351083481897,
+      "hit": 0.47801683816651075,
+      "mean": 0.0006120288671222546,
+      "std": 0.02028730429730819
+    },
+    "crypto_momentum_bd_only": {
+      "n": 763,
+      "ann": -0.001700596709836109,
+      "vol_ann": 0.369752675529794,
+      "sharpe": -0.004599281688494713,
+      "maxdd": 0.43296663665010704,
+      "calmar": -0.003927777722075179,
+      "hit": 0.4534731323722149,
+      "mean": -4.659169068044134e-06,
+      "std": 0.019353739581403132
+    },
+    "crypto_momentum_weekend_only": {
+      "n": 306,
+      "ann": 0.7846471856460843,
+      "vol_ann": 0.42743028915200937,
+      "sharpe": 1.8357313591481017,
+      "maxdd": 0.21172952060871086,
+      "calmar": 3.70589412090608,
+      "hit": 0.5392156862745098,
+      "mean": 0.002149718316838587,
+      "std": 0.0223727238581814
+    }
+  },
+  "standalone_metrics_common_window": {
+    "crypto_momentum": {
+      "n": 763,
+      "ann": -0.001700596709836109,
+      "vol_ann": 0.369752675529794,
+      "sharpe": -0.004599281688494713,
+      "maxdd": 0.43296663665010704,
+      "calmar": -0.003927777722075179,
+      "hit": 0.4534731323722149,
+      "mean": -4.659169068044134e-06,
+      "std": 0.019353739581403132
+    },
+    "fx_blend": {
+      "n": 763,
+      "ann": 0.037504384370877636,
+      "vol_ann": 0.05826149882897051,
+      "sharpe": 0.64372501780247,
+      "maxdd": 0.06949165129248858,
+      "calmar": 0.539696260965546,
+      "hit": 0.563564875491481,
+      "mean": 0.00010275173800240447,
+      "std": 0.003049546225304489
+    },
+    "funding_arb_bt": {
+      "n": 763,
+      "ann": 0.08678322244512157,
+      "vol_ann": 0.008854836235159752,
+      "sharpe": 9.80065809693158,
+      "maxdd": 0.0020122727501391546,
+      "calmar": 43.12696797147417,
+      "hit": 0.8269986893840104,
+      "mean": 0.00023776225327430567,
+      "std": 0.0004634833116101278
+    }
+  },
+  "standalone_metrics_note": "crypto_momentum on the BD-only intersection shows near-zero Sharpe because the strategy earns its alpha primarily on weekends. The 'true' crypto momentum Sharpe on calendar days in the same period is +0.58. FX and funding_arb are unaffected by this bias.",
+  "funding_arb_extracted": true,
+  "funding_arb_caveat": "BACKTEST on BTC/ETH/SOL only (2023-06 to 2026-06). HYPE/PURR/ZEC/XPL excluded because they start 2025-11. Prod uses 7 coins; this underestimates prod APR. Live history is only ~2 weeks (2026-05-30+). Correlations involving this stream are AS SOFT AS THE BACKTEST.",
+  "correlation_matrix": {
+    "crypto_momentum": {
+      "crypto_momentum": 1.0,
+      "fx_blend": -0.0533744281792941,
+      "funding_arb_bt": 0.026216419688772283
+    },
+    "fx_blend": {
+      "crypto_momentum": -0.0533744281792941,
+      "fx_blend": 1.0,
+      "funding_arb_bt": -0.053596196411675144
+    },
+    "funding_arb_bt": {
+      "crypto_momentum": 0.026216419688772283,
+      "fx_blend": -0.053596196411675144,
+      "funding_arb_bt": 1.0
+    }
+  },
+  "rolling_correlation_90d": {
+    "crypto_momentum_vs_fx_blend": {
+      "max_rolling_corr": 0.129,
+      "max_rolling_corr_date": "2024-12-20",
+      "min_rolling_corr": -0.222,
+      "min_rolling_corr_date": "2024-05-08",
+      "mean_rolling_corr": -0.049
+    },
+    "crypto_momentum_vs_funding_arb_bt": {
+      "max_rolling_corr": 0.36,
+      "max_rolling_corr_date": "2024-11-19",
+      "min_rolling_corr": -0.202,
+      "min_rolling_corr_date": "2025-07-22",
+      "mean_rolling_corr": 0.039
+    },
+    "fx_blend_vs_funding_arb_bt": {
+      "max_rolling_corr": 0.1,
+      "max_rolling_corr_date": "2025-07-02",
+      "min_rolling_corr": -0.308,
+      "min_rolling_corr_date": "2024-11-05",
+      "mean_rolling_corr": -0.107
+    }
+  },
+  "monthly_regime": [
+    {
+      "month": "2023-06",
+      "btc_mom_21d": 15.1,
+      "btc_vol_ann": 42.3,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": -1065.7,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": 0.0,
+      "fx_blend": 2.48,
+      "funding_arb_bt": 0.85,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2023-07",
+      "btc_mom_21d": -3.9,
+      "btc_vol_ann": 25.8,
+      "trend": "range_chop",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": -343.5,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": 0.0,
+      "fx_blend": -0.82,
+      "funding_arb_bt": 0.79,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2023-08",
+      "btc_mom_21d": -11.9,
+      "btc_vol_ann": 46.2,
+      "trend": "trend_down",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": -655.3,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": -5.99,
+      "fx_blend": 0.96,
+      "funding_arb_bt": -0.14,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend"
+      ]
+    },
+    {
+      "month": "2023-09",
+      "btc_mom_21d": 4.1,
+      "btc_vol_ann": 24.0,
+      "trend": "range_chop",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": -641.0,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": 13.73,
+      "fx_blend": -0.45,
+      "funding_arb_bt": 0.13,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2023-10",
+      "btc_mom_21d": 26.5,
+      "btc_vol_ann": 48.3,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": -165.2,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": -4.03,
+      "fx_blend": 0.67,
+      "funding_arb_bt": 0.23,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2023-11",
+      "btc_mom_21d": 2.8,
+      "btc_vol_ann": 47.0,
+      "trend": "range_chop",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 872.4,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -0.97,
+      "fx_blend": 1.03,
+      "funding_arb_bt": 0.53,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2023-12",
+      "btc_mom_21d": -3.4,
+      "btc_vol_ann": 41.4,
+      "trend": "range_chop",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 1435.1,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -6.58,
+      "fx_blend": -2.04,
+      "funding_arb_bt": 2.46,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-01",
+      "btc_mom_21d": -8.7,
+      "btc_vol_ann": 49.1,
+      "trend": "trend_down",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 490.5,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 9.45,
+      "fx_blend": 1.94,
+      "funding_arb_bt": 1.4,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-02",
+      "btc_mom_21d": 35.0,
+      "btc_vol_ann": 52.1,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 1076.4,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -11.73,
+      "fx_blend": 1.85,
+      "funding_arb_bt": 1.57,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-03",
+      "btc_mom_21d": 3.4,
+      "btc_vol_ann": 75.8,
+      "trend": "range_chop",
+      "vol_bucket": "high_vol",
+      "fund_apr_ann": 1624.1,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 5.15,
+      "fx_blend": -0.59,
+      "funding_arb_bt": 3.4,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-04",
+      "btc_mom_21d": -12.3,
+      "btc_vol_ann": 48.7,
+      "trend": "trend_down",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 271.6,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 13.99,
+      "fx_blend": 0.72,
+      "funding_arb_bt": 0.78,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-05",
+      "btc_mom_21d": 11.1,
+      "btc_vol_ann": 51.5,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 239.3,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -7.79,
+      "fx_blend": 2.47,
+      "funding_arb_bt": 0.64,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-06",
+      "btc_mom_21d": -9.9,
+      "btc_vol_ann": 34.3,
+      "trend": "trend_down",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": 271.0,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -0.07,
+      "fx_blend": -0.2,
+      "funding_arb_bt": 0.69,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-07",
+      "btc_mom_21d": 12.0,
+      "btc_vol_ann": 41.8,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 159.5,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 11.93,
+      "fx_blend": -5.0,
+      "funding_arb_bt": 0.56,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-08",
+      "btc_mom_21d": -3.2,
+      "btc_vol_ann": 47.9,
+      "trend": "range_chop",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 24.5,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -7.43,
+      "fx_blend": 2.45,
+      "funding_arb_bt": 0.11,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-09",
+      "btc_mom_21d": 11.0,
+      "btc_vol_ann": 35.1,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 183.3,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -9.38,
+      "fx_blend": -1.12,
+      "funding_arb_bt": 0.23,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-10",
+      "btc_mom_21d": 16.5,
+      "btc_vol_ann": 38.9,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 222.6,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 9.3,
+      "fx_blend": -0.17,
+      "funding_arb_bt": 0.25,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-11",
+      "btc_mom_21d": 25.7,
+      "btc_vol_ann": 61.6,
+      "trend": "trend_up",
+      "vol_bucket": "high_vol",
+      "fund_apr_ann": 807.1,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 18.88,
+      "fx_blend": 0.59,
+      "funding_arb_bt": 0.82,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2024-12",
+      "btc_mom_21d": -3.1,
+      "btc_vol_ann": 45.3,
+      "trend": "range_chop",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 711.1,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -5.07,
+      "fx_blend": -0.44,
+      "funding_arb_bt": 0.79,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-01",
+      "btc_mom_21d": 8.1,
+      "btc_vol_ann": 37.8,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 291.6,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 11.48,
+      "fx_blend": 1.59,
+      "funding_arb_bt": 0.51,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-02",
+      "btc_mom_21d": -12.6,
+      "btc_vol_ann": 35.7,
+      "trend": "trend_down",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 11.0,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -1.97,
+      "fx_blend": 0.31,
+      "funding_arb_bt": 0.26,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-03",
+      "btc_mom_21d": 5.0,
+      "btc_vol_ann": 45.9,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": -58.3,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": 1.84,
+      "fx_blend": -0.13,
+      "funding_arb_bt": -0.05,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum"
+      ]
+    },
+    {
+      "month": "2025-04",
+      "btc_mom_21d": 14.0,
+      "btc_vol_ann": 41.1,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": -63.6,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": -2.5,
+      "fx_blend": -1.4,
+      "funding_arb_bt": 0.06,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-05",
+      "btc_mom_21d": -0.2,
+      "btc_vol_ann": 30.2,
+      "trend": "range_chop",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": 246.3,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 0.7,
+      "fx_blend": 1.84,
+      "funding_arb_bt": 0.29,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-06",
+      "btc_mom_21d": -2.8,
+      "btc_vol_ann": 27.4,
+      "trend": "range_chop",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": 110.1,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 8.59,
+      "fx_blend": -1.73,
+      "funding_arb_bt": 0.11,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-07",
+      "btc_mom_21d": -0.2,
+      "btc_vol_ann": 19.4,
+      "trend": "range_chop",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": 405.6,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -5.41,
+      "fx_blend": -0.93,
+      "funding_arb_bt": 0.29,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-08",
+      "btc_mom_21d": -9.3,
+      "btc_vol_ann": 37.8,
+      "trend": "trend_down",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 229.5,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -6.91,
+      "fx_blend": 2.21,
+      "funding_arb_bt": 0.18,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-09",
+      "btc_mom_21d": 2.2,
+      "btc_vol_ann": 26.7,
+      "trend": "range_chop",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": 297.7,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -12.69,
+      "fx_blend": 0.33,
+      "funding_arb_bt": 0.16,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-10",
+      "btc_mom_21d": -2.8,
+      "btc_vol_ann": 34.6,
+      "trend": "range_chop",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": 3.1,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": 18.71,
+      "fx_blend": -1.37,
+      "funding_arb_bt": 0.17,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-11",
+      "btc_mom_21d": -13.7,
+      "btc_vol_ann": 41.3,
+      "trend": "trend_down",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": -16.0,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": -6.93,
+      "fx_blend": -0.32,
+      "funding_arb_bt": 0.11,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2025-12",
+      "btc_mom_21d": -4.7,
+      "btc_vol_ann": 25.2,
+      "trend": "range_chop",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": -30.4,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": -9.31,
+      "fx_blend": -0.37,
+      "funding_arb_bt": 0.08,
+      "dead_month": false,
+      "who_carried": [
+        "funding_arb_bt"
+      ]
+    },
+    {
+      "month": "2026-01",
+      "btc_mom_21d": -13.0,
+      "btc_vol_ann": 46.8,
+      "trend": "trend_down",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 64.3,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -7.97,
+      "fx_blend": 0.59,
+      "funding_arb_bt": -0.0,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend"
+      ]
+    },
+    {
+      "month": "2026-02",
+      "btc_mom_21d": -3.3,
+      "btc_vol_ann": 43.6,
+      "trend": "range_chop",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": -213.2,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": 1.16,
+      "fx_blend": 0.76,
+      "funding_arb_bt": 0.0,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum",
+        "fx_blend"
+      ]
+    },
+    {
+      "month": "2026-03",
+      "btc_mom_21d": -2.4,
+      "btc_vol_ann": 40.2,
+      "trend": "range_chop",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": -107.3,
+      "carry_regime": "carry_hostile",
+      "crypto_momentum": 2.98,
+      "fx_blend": -0.63,
+      "funding_arb_bt": 0.0,
+      "dead_month": false,
+      "who_carried": [
+        "crypto_momentum"
+      ]
+    },
+    {
+      "month": "2026-04",
+      "btc_mom_21d": 6.4,
+      "btc_vol_ann": 36.6,
+      "trend": "trend_up",
+      "vol_bucket": "mid_vol",
+      "fund_apr_ann": 2.6,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -15.56,
+      "fx_blend": 2.46,
+      "funding_arb_bt": 0.0,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend"
+      ]
+    },
+    {
+      "month": "2026-05",
+      "btc_mom_21d": -10.4,
+      "btc_vol_ann": 23.8,
+      "trend": "trend_down",
+      "vol_bucket": "low_vol",
+      "fund_apr_ann": 93.3,
+      "carry_regime": "carry_friendly",
+      "crypto_momentum": -0.49,
+      "fx_blend": 0.38,
+      "funding_arb_bt": 0.0,
+      "dead_month": false,
+      "who_carried": [
+        "fx_blend"
+      ]
+    }
+  ],
+  "dead_months": [],
+  "risk_parity": {
+    "weights": {
+      "crypto_momentum": 0.0204,
+      "fx_blend": 0.1292,
+      "funding_arb_bt": 0.8504
+    },
+    "metrics": {
+      "n": 763,
+      "ann": 0.07861215491937908,
+      "vol_ann": 0.012686505177296416,
+      "sharpe": 6.196517781749872,
+      "maxdd": 0.005197343847058611,
+      "calmar": 15.12544815826817,
+      "hit": 0.6094364351245085,
+      "mean": 0.00021537576690240843,
+      "std": 0.0006640420303861545
+    },
+    "worst_5_months": {
+      "2025-12": -0.0016961255588158197,
+      "2025-04": -0.0016730143598154834,
+      "2024-09": -0.0014856125631584893,
+      "2023-08": -0.0011438760161145423,
+      "2025-09": -0.0009537334565130617
+    },
+    "note": "RP weights are dominated by funding_arb_bt (low vol ~0.9% ann) which crowds out crypto_momentum (vol ~37% ann). The RP combo is effectively a funding-arb book with trace amounts of FX and momentum. This is a feature of inverse-vol weighting with very different vol scales, not an endorsement of that allocation."
+  },
+  "momentum_alone_metrics": {
+    "n": 763,
+    "ann": -0.001700596709836109,
+    "vol_ann": 0.369752675529794,
+    "sharpe": -0.004599281688494713,
+    "maxdd": 0.43296663665010704,
+    "calmar": -0.003927777722075179,
+    "hit": 0.4534731323722149,
+    "mean": -4.659169068044134e-06,
+    "std": 0.019353739581403132
+  },
+  "next_strategy_spec": {
+    "n_dead_months": 0,
+    "dead_month_regime_breakdown": {},
+    "most_uncovered_regime": "unknown",
+    "carry_hostile_dead_months": 0,
+    "rp_sharpe": 6.196517781749872,
+    "mom_sharpe": -0.004599281688494713,
+    "rp_maxdd": 0.005197343847058611,
+    "mom_maxdd": 0.43296663665010704,
+    "spec_for_next_strategy": {
+      "target_regime": "range_chop and/or crisis (not in this window)",
+      "success_bar": "Must have correlation-to-combined-book <= +0.2 AND net-positive Sharpe > 0.0. A Sharpe-0.3 / corr-(-0.2) candidate BEATS a Sharpe-0.8 / corr-(+0.7) one \u2014 the marginal diversification value is what matters, not standalone return.",
+      "corr_to_book_bar": 0.2,
+      "minimum_sharpe_standalone": 0.0,
+      "preferred_negative_corr_vs": "range_chop & carry_hostile months",
+      "rationale": "The existing book (crypto momentum + FX blend + funding arb) is collectively weak in range-chopping, low-volatility, low-funding months where momentum signals are noisy and carry is absent. A strategy that is net-positive PRECISELY in those months \u2014 even with low standalone Sharpe \u2014 is more valuable than another momentum or carry leg that fails at the same time."
+    },
+    "caveats": [
+      "The 2023-26 window contains NO real crisis/bear market (crypto was in bull recovery). The worst dead-month cluster is NOT the crisis hole \u2014 that must be reasoned separately. Live 2021-22 bear showed both crypto momentum and carry can drop together.",
+      "Funding-arb stream is a BACKTEST (live is ~2 weeks). Correlations involving it are soft.",
+      "FX 2023-26 is its weakest sub-period; full-history FX behavior is stronger (Sharpe ~0.32).",
+      "Risk-parity weights are computed once on the full window (no rolling) \u2014 illustrative only, not a live allocation spec.",
+      "Only ~3 years of data; statistical power for correlation estimation is low. A 3-year |corr| of 0.10 is noise; only |corr| > 0.3 should be flagged as meaningful."
+    ]
+  },
+  "mandatory_caveats": [
+    "WEEKEND EFFECT (CRITICAL): crypto momentum earns alpha primarily on weekends. The business-day-only intersection removes this alpha, making the BD-window standalone Sharpe near-zero. This is a data-alignment artifact, not a real finding about the strategy. Correlations on BD days are valid; standalone momentum metrics on BD-intersection should NOT be used for planning.",
+    "Window 2023-26 (~3 years) contains NO real crypto bear/crisis. The map shows trend/carry/calm relationships but CANNOT measure the crisis hole. Live 2021-22 data (separate test) shows momentum+carry can both drop in crisis.",
+    "Funding-arb is a BACKTEST \u2014 treat all correlations with it as soft/illustrative.",
+    "FX 2023-26 is its weakest sub-period; full-history FX Sharpe is ~0.32. The standalone FX numbers here understate its full-history performance.",
+    "Statistical power: 3 years of daily data (~780 business days). Correlation estimates have wide confidence intervals. Only |corr| > 0.30 should be considered meaningfully non-zero.",
+    "Risk-parity weights are whole-window constants \u2014 illustrative only, NOT a live allocation spec. Rolling risk parity would differ."
+  ]
+}
