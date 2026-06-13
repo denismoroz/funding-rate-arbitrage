@@ -1,0 +1,165 @@
+{
+  "test": "rebal_frequency_validation",
+  "description": "Rigorous CPCV+DSR+PBO validation of rebalance frequency choice for the crypto cross-sectional momentum book. Candidates: R ∈ {7, 14, 21} days (all multiples of 7 → same Thursday weekday anchor → no calendar-phase confound). Book: survivorship-debiased PT panel, identical hyperparams to validated book.",
+  "anchor_date": "2023-06-08",
+  "anchor_day_of_week": "Thursday",
+  "calendar_confound_removed": true,
+  "calendar_confound_note": "7/14/21 are multiples of 7; anchor is 2023-06-08 (Thursday). All three schedules rebalance ONLY on Thursdays. R=14 and R=21 land on a subset of R=7's rebal dates. This removes the weekday-phase confound from the earlier 5/10/15 sweep.",
+  "common_window": {
+    "start": "2023-06-08",
+    "end": "2026-06-13",
+    "n_days": 1102
+  },
+  "cpcv_params": {
+    "n_groups": 6,
+    "k": 2,
+    "purge_days": 60,
+    "embargo_days": 7
+  },
+  "pbo_S": 16,
+  "r7_equals_run_book": true,
+  "r7_max_diff": 0.0,
+  "per_r": {
+    "7": {
+      "is_sharpe_daily": 0.7563861054713928,
+      "is_ann_pct": 29.43679193949713,
+      "is_maxdd_pct": 27.780224265857456,
+      "is_calmar": 1.0596311843196902,
+      "is_vol_ann_pct": 38.91767937904096,
+      "is_hit_pct": 48.09437386569873,
+      "dsr_n3": 0.8964117460965102,
+      "dsr_n3_sr_hat": 0.03957309087979416,
+      "dsr_n3_sr_star": 0.0013738884034400413,
+      "dsr_n3_psr_vs_zero": 0.9043485114452681,
+      "dsr_n1": 0.9043485114452681,
+      "dsr_n1_psr_vs_zero": 0.9043485114452681,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.5745395689313052,
+          "iqr_lo": 0.07591401398084414,
+          "iqr_hi": 1.235393814110711,
+          "mean": 0.7191889814661985
+        },
+        "ann_pct": {
+          "median": 22.750448928532077,
+          "iqr_lo": 2.8068814363054018,
+          "iqr_hi": 47.495670601349524,
+          "mean": 28.296304199046666
+        },
+        "maxdd_pct": {
+          "median": 23.866395984183853,
+          "iqr_lo": 18.36700607371603,
+          "iqr_hi": 24.645562180454494,
+          "mean": 22.21957265054441
+        },
+        "frac_sharpe_pos": 0.84
+      },
+      "turnover_per_yr": 54.301963842939855
+    },
+    "14": {
+      "is_sharpe_daily": 0.7590624987045083,
+      "is_ann_pct": 29.40777441673173,
+      "is_maxdd_pct": 40.60907701312302,
+      "is_calmar": 0.7241675157312358,
+      "is_vol_ann_pct": 38.74223066864977,
+      "is_hit_pct": 49.18330308529946,
+      "dsr_n3": 0.8964656160129608,
+      "dsr_n3_sr_hat": 0.03971311612864261,
+      "dsr_n3_sr_star": 0.0013738884034400413,
+      "dsr_n3_psr_vs_zero": 0.9043730154423749,
+      "dsr_n1": 0.9043730154423749,
+      "dsr_n1_psr_vs_zero": 0.9043730154423749,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.9399835321044926,
+          "iqr_lo": 0.14250930746469326,
+          "iqr_hi": 1.6936022846891112,
+          "mean": 0.761203893745054
+        },
+        "ann_pct": {
+          "median": 35.91546357447705,
+          "iqr_lo": 5.837820712780325,
+          "iqr_hi": 59.41340045618332,
+          "mean": 29.465242441486584
+        },
+        "maxdd_pct": {
+          "median": 22.340236671886515,
+          "iqr_lo": 18.353384073821964,
+          "iqr_hi": 26.691950232918018,
+          "mean": 23.381311137546433
+        },
+        "frac_sharpe_pos": 0.84
+      },
+      "turnover_per_yr": 39.190298459393695
+    },
+    "21": {
+      "is_sharpe_daily": 0.811008161463404,
+      "is_ann_pct": 30.58116358106901,
+      "is_maxdd_pct": 28.154233169296937,
+      "is_calmar": 1.086201261358406,
+      "is_vol_ann_pct": 37.707590421639615,
+      "is_hit_pct": 50.18148820326679,
+      "dsr_n3": 0.9119812695169023,
+      "dsr_n3_sr_hat": 0.042430842456901645,
+      "dsr_n3_sr_star": 0.0013738884034400413,
+      "dsr_n3_psr_vs_zero": 0.918993634324964,
+      "dsr_n1": 0.918993634324964,
+      "dsr_n1_psr_vs_zero": 0.918993634324964,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.7326394126928982,
+          "iqr_lo": 0.5655122167723511,
+          "iqr_hi": 0.928223056230946,
+          "mean": 0.8087754817022806
+        },
+        "ann_pct": {
+          "median": 26.00935065790706,
+          "iqr_lo": 20.665917427203436,
+          "iqr_hi": 35.90780300422332,
+          "mean": 30.440724856104485
+        },
+        "maxdd_pct": {
+          "median": 21.429143547337716,
+          "iqr_lo": 18.689921132622167,
+          "iqr_hi": 21.77723289545699,
+          "mean": 21.59747188868942
+        },
+        "frac_sharpe_pos": 1.0
+      },
+      "turnover_per_yr": 31.889150170907453
+    }
+  },
+  "pbo_across_menu": {
+    "pbo": 0.9807303807303808,
+    "n_splits": 12870,
+    "n_configs": 3,
+    "S": 16,
+    "median_oos_rank": 0.25,
+    "is_best_counts": {
+      "R21": 4704,
+      "R14": 4279,
+      "R7": 3887
+    },
+    "note": "N=3 configs → coarse resolution; PBO=0.981 tells how often the IS-best rebal is below-median OOS."
+  },
+  "pbo_note": "PBO=0.9807 (N=3, S=16). With only 3 highly-correlated configs (pairwise rho ~0.85), PBO mechanics are severely limited: only 3 possible lambda values (-1.099/0/+1.099), so 'passing' requires the IS-best to be UNIQUELY the best OOS config on every split. Baseline iid noise at N=3 already gives PBO ~0.88. The observed 0.98 confirms IS-winner selection is unreliable among these nearly-identical books, but is not an independent strong signal beyond what the DSR and OOS IQR already show.",
+  "pairwise_correlations": {
+    "R7_R14": 0.8816624286630916,
+    "R7_R21": 0.808890253972241,
+    "R14_R21": 0.8250695183197821
+  },
+  "verdict": "KEEP R=7 — 7/14/21 ARE STATISTICALLY INDISTINGUISHABLE.\n\n  All three books land in the DSR WARN zone (0.90-0.92): the momentum\n  edge is likely real (PSR vs 0 ~0.90) but ~3 years is insufficient\n  data power to confirm it past the 0.95 bar even without multi-test\n  penalty. None of the three rebal choices clears DSR > 0.95.\n\n  OOS IQR ranges overlap broadly for all three. PBO=0.98 confirms\n  IS-winner selection among these nearly-identical books is unreliable.\n\n  Switching from R=7 to R=14 or R=21 on the basis of a higher IS\n  Sharpe would be overfitting a distinction that the data cannot support.\n\n  SECONDARY OBSERVATION (not a reason to switch): R=21 shows the\n  tightest OOS IQR (0.57 to 0.93 Sharpe, 100% positive segments)\n  and ~41% lower turnover vs R=7. If live costs exceed 8.5bps modeled,\n  R=21 would benefit more. This is a cost argument, not a Sharpe\n  argument — and it is too weak to override the indistinguishability\n  finding. Retain R=7 as the incumbent non-overfit default.\n  Revisit if/when the live track record provides more data.",
+  "dsr_threshold": 0.95,
+  "honesty_caveats": [
+    "~3 years of data only (1102 days); low statistical power for discriminating between similar strategies.",
+    "Survivorship-debiased PT book (the honest version; includes 28 dead/delisted coins).",
+    "No real crypto bear market or liquidity crisis in the study window (2023-06 to present).",
+    "3-candidate menu gives very coarse PBO resolution (N=3 in CSCV).",
+    "The harness was validated on reference series previously; we import it unchanged.",
+    "Turnover estimates ignore intra-rebal drift (weights held fixed between rebalances, consistent with the xsec model assumption)."
+  ],
+  "annualization_note": "IS and OOS Sharpe/ann use sqrt(365) daily annualization (honest daily). DSR and PBO use per-period (per-day) Sharpe ratios — annualization-agnostic."
+}
