@@ -20,6 +20,7 @@ from tenacity import (
 )
 
 from frab.exchanges.hyperliquid.wire import (
+    HLCandle,
     HLFillRecord,
     HLFundingDelta,
     HLFundingRecord,
@@ -224,6 +225,43 @@ class HLClient:
             start = int(batch[-1]["time"]) + 1
         records.sort(key=lambda r: r.ts_ms)
         return records
+
+    async def candle_snapshot(
+        self,
+        coin: str,
+        interval: str,
+        start_ms: int,
+        end_ms: int,
+    ) -> list[HLCandle]:
+        """Return daily candles for coin in [start_ms, end_ms], sorted ascending by close_ms.
+
+        Body: {"type": "candleSnapshot", "req": {"coin", "interval", "startTime", "endTime"}}.
+        Candle keys: t=open_ms, T=close_ms, c=close (string). Returns [] on empty/None response.
+        """
+        data = await self._post({
+            "type": "candleSnapshot",
+            "req": {
+                "coin": coin,
+                "interval": interval,
+                "startTime": start_ms,
+                "endTime": end_ms,
+            },
+        })
+        if not data:
+            return []
+        candles: list[HLCandle] = []
+        for raw in data:
+            try:
+                candles.append(HLCandle(
+                    coin=coin,
+                    open_ms=int(raw["t"]),
+                    close_ms=int(raw["T"]),
+                    close=float(raw["c"]),
+                ))
+            except (KeyError, TypeError, ValueError):
+                continue
+        candles.sort(key=lambda c: c.close_ms)
+        return candles
 
     async def user_funding(self, address: str, since_ms: int) -> list[HLFundingDelta]:
         """Return user funding settlement deltas since since_ms.

@@ -35,7 +35,7 @@ from frab.exchanges.hyperliquid.actions.transfer import TransferAction
 from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
 from frab.exchanges.hyperliquid.symbols import HLSymbols, SPOT_TOKEN_INVERSE
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
-from frab.exchanges.hyperliquid.wire import HLPerpState, HLSpotState, HLUserFill
+from frab.exchanges.hyperliquid.wire import HLCandle, HLPerpState, HLSpotState, HLUserFill
 from frab.exchanges.protocol import (
     FundingTick,
     MarketSpec,
@@ -305,6 +305,22 @@ class HLExchange:
             )
             for r in records
         ]
+
+    async def get_daily_candles(self, coin: str, days: int) -> list[tuple[int, float]]:
+        """Return the last `days` daily closes for coin as [(close_ms, close), ...] ascending.
+
+        Fetches from HL candleSnapshot with a (days+5)-day buffer to ensure we get at least
+        `days` candles even across weekends/holidays. close_ms is the candle close time (T)
+        as returned by HL — a regular daily UTC timestamp. Callers and signal.py use close_ms
+        as the day key; consistency across coins is guaranteed because all candles share the
+        same HL daily grid.
+        """
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        start_ms = now_ms - (days + 5) * 86_400_000
+        candles = await self._hl_client.candle_snapshot(coin, "1d", start_ms, now_ms)
+        # Trim to most recent `days` bars (buffer may give a few extra).
+        candles = candles[-days:] if len(candles) > days else candles
+        return [(c.close_ms, c.close) for c in candles]
 
     async def get_account_snapshot(self) -> tuple[HLPerpState, HLSpotState]:
         """Return typed perp + spot account state in one round-trip pair."""

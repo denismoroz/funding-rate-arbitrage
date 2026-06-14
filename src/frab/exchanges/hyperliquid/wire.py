@@ -113,3 +113,12 @@ class HLSpotMeta:
 class HLPerpMarketSpec:
     name: str
     sz_decimals: int
+
+
+@dataclass(frozen=True)
+class HLCandle:
+    """One daily OHLCV candle from HL candleSnapshot."""
+    coin: str
+    open_ms: int    # candle open time (t)
+    close_ms: int   # candle close time (T)
+    close: float    # parsed from c
