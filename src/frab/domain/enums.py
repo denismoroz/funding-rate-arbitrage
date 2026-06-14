@@ -1,6 +1,22 @@
 from enum import Enum
 
 
+class XsmomState(str, Enum):
+    NEW = "new"
+    OPENED = "opened"
+    CLOSE = "close"
+    CLOSED = "closed"
+    FAILED = "failed"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in (XsmomState.CLOSED, XsmomState.FAILED)
+
+
+# States in which an XsmomPosition is actively holding an open position.
+XSMOM_ACTIVE_STATES: frozenset[XsmomState] = frozenset({XsmomState.OPENED})
+
+
 class Instrument(str, Enum):
     SPOT = "spot"
     PERP = "perp"

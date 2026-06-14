@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from frab.domain.enums import FarbState, Instrument, PositionStatus, Side
+from frab.domain.enums import FarbState, Instrument, PositionStatus, Side, XsmomState
 
 
 class Base(DeclarativeBase):
@@ -232,3 +232,73 @@ class Event(Base):
     kind: Mapped[str] = mapped_column(String, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+# ── XSMOM tables ─────────────────────────────────────────────────────────────
+
+class XsmomPosition(Base):
+    __tablename__ = "xsmom_positions"
+    __table_args__ = (
+        Index("ix_xsmom_positions_state", "state"),
+        Index("ix_xsmom_positions_strategy", "strategy_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    side: Mapped[str] = mapped_column(
+        SQLEnum(Side, native_enum=False, length=8),
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        SQLEnum(XsmomState, native_enum=False, length=12),
+        nullable=False,
+    )
+    state_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    perp_position_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey(
+            "positions.id",
+            use_alter=True,
+            name="fk_xsmom_positions_perp_position_id",
+        ),
+        nullable=True,
+    )
+    collateral_position_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey(
+            "positions.id",
+            use_alter=True,
+            name="fk_xsmom_positions_collateral_position_id",
+        ),
+        nullable=True,
+    )
+    target_qty: Mapped[Optional[float]] = mapped_column(nullable=True)
+    opened_at: Mapped[int] = mapped_column(Integer, nullable=False)   # Unix ms UTC
+    closed_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class XsmomScan(Base):
+    __tablename__ = "xsmom_scans"
+    __table_args__ = (
+        Index("ix_xsmom_scans_strategy_ts", "strategy_id", "ts_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    ranking_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    n_long: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_short: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class XsmomDailyPrice(Base):
+    __tablename__ = "xsmom_daily_prices"
+    __table_args__ = (
+        UniqueConstraint("coin", "day_ms"),
+        Index("ix_xsmom_daily_prices_coin_day", "coin", "day_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    day_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    close: Mapped[float] = mapped_column(nullable=False)
