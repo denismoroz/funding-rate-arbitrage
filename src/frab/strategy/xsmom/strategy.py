@@ -1,0 +1,262 @@
+"""XsmomStrategy — thin orchestrator for the XSMOM cross-sectional momentum strategy.
+
+State machine is driven one step per XsmomPosition per tick.
+NO in-memory accumulators: all state lives in XsmomRepo / Exchange / DB.
+
+Phase C implements:
+  - State machine (NEW → OPENED; CLOSE → CLOSED)
+  - Funding accrual (hour tick)
+  - Margin watchdog (hour tick)
+  - manual_close / close_all helpers
+  - reload_params fast path
+
+Phase D will add: scan + rebalance (marked with a clearly-labelled hook below).
+"""
+from __future__ import annotations
+
+import logging
+
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+
+from frab.db.models import Strategy as StrategyRow
+from frab.db.session import session_scope
+from frab.domain import XsmomPosition, XsmomState, XSMOM_ACTIVE_STATES
+from frab.events.bus import EventBus
+from frab.exchanges.protocol import Exchange
+from frab.repo.xsmom_repo import XsmomRepo, XsmomStateConflict
+from frab.settings import Settings
+from frab.strategy.two_phase.states._helpers import publish_event
+from frab.strategy.xsmom.actions.funding_accrual import XsmomFundingAccrual
+from frab.strategy.xsmom.params import XsmomParams
+from frab.strategy.xsmom.state_machine import StateMachine
+from frab.strategy.xsmom.states import STATE_CLASSES, XsmomContext
+
+logger = logging.getLogger(__name__)
+
+# States in which _advance_one should stop stepping:
+#   - OPENED  → resting (non-transient); rebalance is evaluated hourly in Phase D
+#   - CLOSED  → terminal
+#   - FAILED  → terminal
+_NON_TRANSIENT_STATES = frozenset(
+    XSMOM_ACTIVE_STATES | {XsmomState.CLOSED, XsmomState.FAILED}
+)
+
+_ADVANCE_MAX_ITERS = 20
+
+
+class XsmomStrategy:
+    """Stateless orchestrator that drives XsmomPositions through their lifecycle.
+
+    The only instance state is the constructor arguments (ids, wired deps, params).
+    All position / wallet state is fetched from Exchange / XsmomRepo on every call.
+
+    NOTE on no-rollback design: XSMOM has only one perp leg (no composite spot+perp).
+    On a generic Exception in _advance_one we mark_failed immediately — there is no
+    partial composite to unwind (unlike FRAB which must unwind a spot leg if the
+    perp fails). This is the deliberate simplification vs. TwoPhaseStrategy._rollback.
+    """
+
+    def __init__(
+        self,
+        *,
+        strategy_id: int,
+        exchange: Exchange,
+        xsmom_repo: XsmomRepo,
+        session_factory: async_sessionmaker[AsyncSession],
+        params: XsmomParams,
+        settings: Settings,
+        event_bus: EventBus | None = None,
+        margin_watchdog=None,  # XsmomMarginWatchdog | None (typed loosely to avoid cycle)
+    ) -> None:
+        self.strategy_id = strategy_id
+        self.exchange = exchange
+        self.xsmom_repo = xsmom_repo
+        self._sf = session_factory
+        self._settings = settings
+        self._bus = event_bus
+        self._margin_watchdog = margin_watchdog
+
+        self.params = params
+        self._build_internals(params)
+
+    def _build_internals(self, params: XsmomParams) -> None:
+        """Construct all params-dependent components and wire them onto self.
+
+        Called from __init__ and reload_params. Does NOT touch strategy_id,
+        exchange, xsmom_repo, _sf, _settings, _bus, or _margin_watchdog.
+        """
+        self._funding_accrual = XsmomFundingAccrual(
+            strategy_id=self.strategy_id,
+            exchange=self.exchange,
+            xsmom_repo=self.xsmom_repo,
+            session_factory=self._sf,
+        )
+        ctx = XsmomContext(
+            exchange=self.exchange,
+            xsmom_repo=self.xsmom_repo,
+            params=params,
+            session_factory=self._sf,
+            settings=self._settings,
+            event_bus=self._bus,
+        )
+        self._state_machine = StateMachine(
+            {cls.state: cls(ctx) for cls in STATE_CLASSES}
+        )
+
+    def reload_params(self, new_params: XsmomParams) -> None:
+        """Rebuild all params-dependent internals. Idempotent (structural equality fast path)."""
+        if new_params == self.params:
+            return  # XsmomParams is frozen dataclass so == is structural
+        self.params = new_params
+        self._build_internals(new_params)
+
+    # ── Public entry points ───────────────────────────────────────────────────
+
+    async def advance_all_pending(self) -> None:
+        """For every XsmomPosition not in a terminal/resting state, take ONE step."""
+        pending = await self.xsmom_repo.list_non_terminal(self.strategy_id)
+        for fp in pending:
+            await self._advance_one(fp)
+
+    async def on_minute_tick(self, *, now_ms: int) -> None:
+        """Minute tick: advance pending state machines only."""
+        await self.advance_all_pending()
+
+    async def on_hour_tick(self, *, now_ms: int) -> None:
+        """Hourly: accrue funding; run watchdog; (Phase D: scan + rebalance)."""
+        # Read fresh strategy status from DB (can be edited without restart).
+        async with session_scope(self._sf) as session:
+            strat_row = await session.get(StrategyRow, self.strategy_id)
+            status = strat_row.status if strat_row is not None else "active"
+
+        if status == "paused":
+            logger.info("xsmom paused: skipping exits/entries strategy_id=%s", self.strategy_id)
+            await self._accrue_funding(now_ms=now_ms)
+            return
+
+        await self._accrue_funding(now_ms=now_ms)
+
+        if self._margin_watchdog is not None:
+            try:
+                report = await self._margin_watchdog.run_check(now_ms=now_ms)
+                if report.actions_taken:
+                    logger.info("xsmom margin_watchdog actions: %s", report.actions_taken)
+            except Exception:  # noqa: BLE001
+                logger.exception("xsmom margin_watchdog crashed; skipping this tick")
+
+        # Phase D: scan + rebalance hook
+        # await self._scan_and_rebalance(now_ms=now_ms)
+
+    # ── State machine ─────────────────────────────────────────────────────────
+
+    async def _advance_one(self, fp: XsmomPosition) -> None:
+        """Drive the state machine in a tight loop until a steady/terminal state.
+
+        Mirrors TwoPhaseStrategy._advance_one EXACTLY (battle-tested pattern):
+          - Each iteration dispatches the current state, then refetches from DB.
+          - XsmomStateConflict → log warning + break (another process is touching it).
+          - Generic Exception → mark_failed + break + publish xsmom.failed.
+            NOTE: no rollback action here because XSMOM has a single perp leg;
+            there is no partial composite to unwind (see class docstring).
+          - repo.get returns None → log error + break (defensive).
+          - 20 iterations without reaching terminal → safety cap + log error.
+        """
+        current = fp
+        for _iteration in range(_ADVANCE_MAX_ITERS):
+            if current.state in _NON_TRANSIENT_STATES:
+                break
+
+            try:
+                await self._dispatch(current)
+            except XsmomStateConflict as exc:
+                logger.warning(
+                    "xsmom state_conflict id=%s: %s — skipping tick",
+                    current.id,
+                    exc,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "xsmom advance_one error id=%s state=%s: %s — marking failed",
+                    current.id,
+                    current.state.value,
+                    exc,
+                    exc_info=True,
+                )
+                await self.xsmom_repo.mark_failed(current.id, reason=str(exc))
+                await publish_event(
+                    self._bus,
+                    level="ERROR",
+                    kind="xsmom.failed",
+                    message=f"{current.coin} FAILED at {current.state.value}: {exc}",
+                    payload={
+                        "xsmom_position_id": current.id,
+                        "coin": current.coin,
+                        "state": current.state.value,
+                        "error": str(exc),
+                    },
+                )
+                break
+
+            # Refetch to see the new state written by the handler
+            refreshed = await self.xsmom_repo.get(current.id)
+            if refreshed is None:
+                logger.error(
+                    "xsmom advance_one: xsmom_repo.get returned None for id=%s after dispatch — aborting",
+                    current.id,
+                )
+                break
+            current = refreshed
+        else:
+            # Safety cap: loop exhausted without reaching a terminal/resting state
+            logger.error(
+                "xsmom advance_one safety cap hit id=%s state=%s — aborting burst",
+                current.id,
+                current.state.value,
+            )
+
+    async def _dispatch(self, fp: XsmomPosition) -> None:
+        """Route to the registered state handler."""
+        await self._state_machine.step(fp)
+
+    async def _accrue_funding(self, *, now_ms: int) -> None:
+        await self._funding_accrual.accrue(now_ms=now_ms)
+
+    # ── Manual controls ───────────────────────────────────────────────────────
+
+    async def manual_close(self, xsmom_position_id: int) -> XsmomPosition:
+        """Transition a single OPENED position to CLOSE.
+
+        Raises XsmomStateConflict if not in OPENED state.
+        The minute-tick will drive it from CLOSE → CLOSED.
+        """
+        fp = await self.xsmom_repo.get(xsmom_position_id)
+        if fp is None:
+            raise KeyError(f"XsmomPosition {xsmom_position_id} not found")
+        return await self.xsmom_repo.transition(
+            xsmom_position_id,
+            from_state=XsmomState.OPENED,
+            to_state=XsmomState.CLOSE,
+            state_data={**fp.state_data, "exit_decision": "manual_close"},
+        )
+
+    async def close_all(self) -> list[XsmomPosition]:
+        """Transition all OPENED positions for this strategy to CLOSE.
+
+        Skips any that raise XsmomStateConflict (already transitioning).
+        Returns the list of successfully transitioned positions.
+        """
+        opened = await self.xsmom_repo.list_in_state(self.strategy_id, XsmomState.OPENED)
+        closed: list[XsmomPosition] = []
+        for fp in opened:
+            try:
+                result = await self.xsmom_repo.transition(
+                    fp.id,
+                    from_state=XsmomState.OPENED,
+                    to_state=XsmomState.CLOSE,
+                    state_data={**fp.state_data, "exit_decision": "close_all"},
+                )
+                closed.append(result)
+            except XsmomStateConflict as exc:
+                logger.warning("xsmom close_all: skipping id=%s: %s", fp.id, exc)
+        return closed
