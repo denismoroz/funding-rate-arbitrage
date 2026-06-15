@@ -274,9 +274,15 @@ export function fetchFundingHistory(
   return apiFetch<FundingRate[]>(`/funding/${coin}${qs ? `?${qs}` : ""}`);
 }
 
-export function fetchEvents(opts?: { limit?: number; level?: string; kindPrefix?: string }): Promise<Event[]> {
+export function fetchEvents(opts?: {
+  limit?: number;
+  offset?: number;
+  level?: string;
+  kindPrefix?: string;
+}): Promise<Event[]> {
   const params = new URLSearchParams();
   if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.offset != null) params.set("offset", String(opts.offset));
   if (opts?.level != null) params.set("level", opts.level);
   if (opts?.kindPrefix != null) params.set("kind_prefix", opts.kindPrefix);
   return apiFetch<Event[]>(`/events?${params}`);

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { fetchEvents } from "../../lib/api";
 import { formatRelative } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
@@ -17,16 +17,19 @@ const PAGE_SIZE = 20;
 
 export function XsmomRecentEvents() {
   const now = useNow();
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["xsmom-events"],
-    queryFn: () => fetchEvents({ limit: 1000 }),
-  });
   const [page, setPage] = useState(0);
+  // Server-side pagination: fetch PAGE_SIZE+1 rows so we know whether a next
+  // page exists without an extra COUNT query. Keyed under ["events", ...] so the
+  // live-event WebSocket invalidation (queryKey ["events"]) refreshes it too.
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["events", "xsmom", page],
+    queryFn: () => fetchEvents({ limit: PAGE_SIZE + 1, offset: page * PAGE_SIZE }),
+    placeholderData: keepPreviousData,
+  });
 
-  const total = data?.length ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageEvents = data?.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) ?? [];
+  const hasNext = (data?.length ?? 0) > PAGE_SIZE;
+  const pageEvents = data?.slice(0, PAGE_SIZE) ?? [];
+  const total = pageEvents.length;
 
   const pagerBtn =
     "rounded border border-gray-300 bg-gray-50 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50";
@@ -37,7 +40,7 @@ export function XsmomRecentEvents() {
         Recent Events
         {total > 0 && (
           <span className="ml-2 text-[11px] font-normal text-gray-400">
-            ({Math.min(PAGE_SIZE, total)} of {total})
+            ({page * PAGE_SIZE + 1}–{page * PAGE_SIZE + total})
           </span>
         )}
       </h2>
@@ -82,24 +85,22 @@ export function XsmomRecentEvents() {
               </tbody>
             </table>
           </div>
-          {total > 0 && (
+          {(page > 0 || hasNext) && (
             <div className="mt-3 flex items-center justify-end gap-2">
               <button
                 type="button"
                 className={pagerBtn}
-                disabled={safePage === 0}
+                disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
               >
                 Prev
               </button>
-              <span className="text-[11px] text-gray-500">
-                page {safePage + 1} / {pageCount}
-              </span>
+              <span className="text-[11px] text-gray-500">page {page + 1}</span>
               <button
                 type="button"
                 className={pagerBtn}
-                disabled={safePage >= pageCount - 1}
-                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                disabled={!hasNext}
+                onClick={() => setPage((p) => p + 1)}
               >
                 Next
               </button>

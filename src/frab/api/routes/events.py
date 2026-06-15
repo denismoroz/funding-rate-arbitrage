@@ -15,15 +15,17 @@ async def list_events(
     source: str | None = None,
     kind_prefix: str | None = None,
     limit: int = 200,
+    offset: int = 0,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
-    stmt = select(Event).order_by(Event.ts_ms.desc()).limit(limit)
+    stmt = select(Event).order_by(Event.ts_ms.desc())
     if level is not None:
         stmt = stmt.where(Event.level == level)
     if source is not None:
         stmt = stmt.where(Event.source == source)
     if kind_prefix is not None:
         stmt = stmt.where(Event.kind.like(f"{kind_prefix}%"))
+    stmt = stmt.offset(offset).limit(limit)
 
     result = await session.execute(stmt)
     events = result.scalars().all()
