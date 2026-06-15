@@ -97,6 +97,9 @@ def _make_mock_exchange(session_factory, exchange_id: int):
     mock = AsyncMock()
     mock.name = "mock_exchange"
 
+    # Exercise the per-coin get_quote() path; None == "batch not available"
+    # (matches the loop's getattr feature-detect for get_quotes).
+    mock.get_quotes = None
     mock.get_quote.return_value = Quote(
         coin="BTC", mark=50000.0, spot=50000.0, bid=49990.0, ask=50010.0, ts_ms=_NOW_MS
     )

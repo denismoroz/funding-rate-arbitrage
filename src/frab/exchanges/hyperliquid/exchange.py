@@ -200,6 +200,38 @@ class HLExchange:
         ts_ms = snap.ts_ms
         return Quote(coin=coin, mark=mark, spot=None, bid=bid, ask=ask, ts_ms=ts_ms)
 
+    async def get_quotes(self, coins: list[str]) -> list[Quote]:
+        """Batch quote fetch: ONE all_mids() for every coin's mark + bounded-
+        concurrent l2_book() for bid/ask.
+
+        Mirrors get_quote() semantics exactly, just batched + parallel:
+          - mark = all_mids().get(coin, 0.0)
+          - bid/ask from l2_book; if a level is empty, fall back to mark
+          - if a coin's l2_book call raises, that coin is OMITTED from the result
+            (same as the per-coin get_quote raising → _fetch_quotes dropping it)
+        Turns ~34 serial round-trips (~3 min) into 1 all_mids + N parallel l2_book
+        (~seconds). Concurrency is capped to stay within HL rate limits.
+        """
+        mids = await self._hl_client.all_mids()
+        sem = asyncio.Semaphore(8)
+
+        async def _one(coin: str) -> "Quote | None":
+            async with sem:
+                try:
+                    snap = await self._hl_client.l2_book(coin)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 — match get_quote: a failed l2_book drops the coin
+                    logger.warning("get_quotes: l2_book failed for %s; dropping coin", coin)
+                    return None
+            mark = mids.get(coin, 0.0)
+            bid = snap.bid if snap.bid else mark
+            ask = snap.ask if snap.ask else mark
+            return Quote(coin=coin, mark=mark, spot=None, bid=bid, ask=ask, ts_ms=snap.ts_ms)
+
+        results = await asyncio.gather(*[_one(c) for c in coins])
+        return [q for q in results if q is not None]
+
     async def get_funding_rate(self, coin: str) -> FundingTick:
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         records = await self._hl_client.funding_history(coin, since_ms=now_ms - 2 * 3600 * 1000)

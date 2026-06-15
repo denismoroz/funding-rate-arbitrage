@@ -266,21 +266,35 @@ class EngineLoop:
     # ── Data fetching ─────────────────────────────────────────────────────────
 
     async def _fetch_quotes(self, now_ms: int) -> list:
-        """Fetch quotes for all coins. Per-coin errors are caught; others still run."""
-        from frab.exchanges.protocol import Quote
-        results: list[Quote] = []
-        for coin in self._coins:
+        """Fetch quotes for all coins. Per-coin errors are caught; others still run.
+
+        Uses the exchange's batched get_quotes() when available (1 all_mids +
+        bounded-parallel l2_book) — far faster than per-coin serial fetch.
+        """
+        from frab.exchanges.protocol import Quote  # noqa: F401  (kept for type parity)
+        results: list = []
+        batch = getattr(self._exchange, "get_quotes", None)
+        if batch is not None:
             try:
-                quote = await self._exchange.get_quote(coin)
-                results.append(quote)
+                results = await batch(self._coins)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:   # noqa: BLE001
-                await self._log_error(
-                    "quote_fetch_failed",
-                    exc,
-                    extra={"coin": coin},
-                )
+            except Exception as exc:  # noqa: BLE001
+                await self._log_error("quotes_batch_failed", exc)
+                results = []
+        else:
+            for coin in self._coins:
+                try:
+                    quote = await self._exchange.get_quote(coin)
+                    results.append(quote)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    await self._log_error(
+                        "quote_fetch_failed",
+                        exc,
+                        extra={"coin": coin},
+                    )
         coin_names = [c for c in self._coins]
         result_map = {r.coin for r in results}
         missed = set(coin_names) - result_map

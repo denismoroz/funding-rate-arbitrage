@@ -47,6 +47,9 @@ def mock_exchange():
     exc = MagicMock()
     exc.name = "hyperliquid"
     exc.get_quote = AsyncMock(side_effect=lambda coin: _make_quote(coin))
+    # Default to the sequential get_quote path; batch-path tests set get_quotes
+    # explicitly. None == "not available" (matches loop's getattr feature-detect).
+    exc.get_quotes = None
     exc.get_funding_rate = AsyncMock(side_effect=lambda coin: _make_funding_tick(coin))
     exc.get_wallet = AsyncMock(return_value=1000.0)
     # Authoritative equity feeds (HL: assetPositions unrealized + spot mids).
@@ -148,6 +151,28 @@ async def test_minute_tick_fetches_quotes_and_calls_strategy_and_ledger(
     assert args[0] == mock_strategy.strategy_id  # strategy_id
     assert "BTC" in args[1]
     assert "ETH" in args[1]
+
+
+@pytest.mark.asyncio
+async def test_fetch_quotes_uses_batch_when_available(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    """When the exchange exposes get_quotes(), _fetch_quotes uses it and does
+    NOT fall back to the per-coin get_quote() path."""
+    coins = ["BTC", "ETH"]
+    mock_exchange.get_quotes = AsyncMock(
+        side_effect=lambda cs: [_make_quote(c) for c in cs]
+    )
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        coins=coins,
+    )
+
+    results = await loop._fetch_quotes(1_700_000_060_000)
+
+    mock_exchange.get_quotes.assert_awaited_once_with(coins)
+    mock_exchange.get_quote.assert_not_awaited()
+    assert {q.coin for q in results} == set(coins)
 
 
 # ─── 2. _hour_tick: funding fetched, saved, strategy called (no wallet refresh) ─

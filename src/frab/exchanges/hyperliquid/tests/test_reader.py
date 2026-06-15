@@ -157,6 +157,75 @@ async def test_get_quote_combines_endpoints():
 
 
 # ---------------------------------------------------------------------------
+# get_quotes (batched)
+# ---------------------------------------------------------------------------
+
+from frab.exchanges.hyperliquid.wire import HLL2Snapshot
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_happy_path(mocker):
+    md = HLExchangeReader(api_url=INFO_URL, client=_make_client())
+    all_mids = mocker.patch.object(
+        md._hl_client, "all_mids", new=mocker.AsyncMock(return_value={"BTC": 100.0, "ETH": 50.0})
+    )
+
+    async def _l2(coin: str) -> HLL2Snapshot:
+        return HLL2Snapshot(bid=99.0, ask=101.0, ts_ms=123)
+
+    l2_book = mocker.patch.object(md._hl_client, "l2_book", new=mocker.AsyncMock(side_effect=_l2))
+
+    quotes = await md.get_quotes(["BTC", "ETH"])
+
+    assert len(quotes) == 2
+    by_coin = {q.coin: q for q in quotes}
+    assert by_coin["BTC"].mark == pytest.approx(100.0)
+    assert by_coin["ETH"].mark == pytest.approx(50.0)
+    assert all(q.bid == pytest.approx(99.0) and q.ask == pytest.approx(101.0) for q in quotes)
+    assert all_mids.call_count == 1
+    assert l2_book.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_drops_coin_on_l2_failure(mocker):
+    md = HLExchangeReader(api_url=INFO_URL, client=_make_client())
+    mocker.patch.object(
+        md._hl_client, "all_mids", new=mocker.AsyncMock(return_value={"BTC": 100.0, "ETH": 50.0})
+    )
+
+    async def _l2(coin: str) -> HLL2Snapshot:
+        if coin == "ETH":
+            raise RuntimeError("boom")
+        return HLL2Snapshot(bid=99.0, ask=101.0, ts_ms=123)
+
+    mocker.patch.object(md._hl_client, "l2_book", new=mocker.AsyncMock(side_effect=_l2))
+
+    quotes = await md.get_quotes(["BTC", "ETH"])
+
+    assert len(quotes) == 1
+    assert quotes[0].coin == "BTC"
+
+
+@pytest.mark.asyncio
+async def test_get_quotes_empty_levels_fall_back_to_mark(mocker):
+    md = HLExchangeReader(api_url=INFO_URL, client=_make_client())
+    mocker.patch.object(
+        md._hl_client, "all_mids", new=mocker.AsyncMock(return_value={"BTC": 100.0})
+    )
+
+    async def _l2(coin: str) -> HLL2Snapshot:
+        return HLL2Snapshot(bid=0.0, ask=0.0, ts_ms=123)
+
+    mocker.patch.object(md._hl_client, "l2_book", new=mocker.AsyncMock(side_effect=_l2))
+
+    quotes = await md.get_quotes(["BTC"])
+
+    assert len(quotes) == 1
+    assert quotes[0].bid == pytest.approx(100.0)
+    assert quotes[0].ask == pytest.approx(100.0)
+
+
+# ---------------------------------------------------------------------------
 # get_meta
 # ---------------------------------------------------------------------------
 
