@@ -10,7 +10,12 @@ import {
 } from "recharts";
 import { tsMsToDate } from "../../lib/api";
 import { formatCurrency } from "../../lib/format";
-import { useXsmomEquity, useXsmomParams, useResetXsmomEquity } from "../../lib/useXsmom";
+import {
+  useXsmomEquity,
+  useXsmomParams,
+  useResetXsmomEquity,
+  useXsmomSummary,
+} from "../../lib/useXsmom";
 import { Skeleton } from "../ui/Skeleton";
 import { ErrorMsg } from "../ui/ErrorMsg";
 
@@ -39,6 +44,7 @@ function XsmomEquityTooltip({
 export function XsmomEquityCard() {
   const { data: rows, isLoading, error } = useXsmomEquity();
   const { data: paramsData } = useXsmomParams();
+  const { data: summary } = useXsmomSummary();
   const resetMutation = useResetXsmomEquity();
 
   const baseline =
@@ -87,23 +93,55 @@ export function XsmomEquityCard() {
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-baseline justify-between">
-        <div className="flex items-baseline gap-x-3">
-          <h2 className="text-sm font-semibold text-gray-700">Equity</h2>
+      <div className="mb-3 flex items-baseline justify-between gap-x-3">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-gray-500">
           {total != null && (
-            <span className="text-xs text-gray-500">
+            <span>
               Total{" "}
               <span className="text-base font-semibold text-gray-900">
                 {formatCurrency(total)}
               </span>
             </span>
           )}
+          {summary && (
+            <>
+              <span className="text-sky-600">
+                free <span className="font-mono">{formatCurrency(summary.free)}</span>
+              </span>
+              <span className="text-amber-600">
+                locked <span className="font-mono">{formatCurrency(summary.locked)}</span>
+              </span>
+              <span className="text-emerald-600">
+                long <span className="font-mono">{formatCurrency(summary.long_total)}</span>
+              </span>
+              <span className="text-rose-600">
+                short <span className="font-mono">{formatCurrency(summary.short_total)}</span>
+              </span>
+              <span
+                className={`font-mono ${
+                  summary.pnl_total == null
+                    ? "text-gray-400"
+                    : summary.pnl_total >= 0
+                      ? "text-green-600"
+                      : "text-red-500"
+                }`}
+              >
+                PnL {summary.pnl_total != null ? formatCurrency(summary.pnl_total) : "—"}
+              </span>
+              <span className="text-gray-600">
+                L <span className="font-mono">{summary.n_long}</span>
+              </span>
+              <span className="text-gray-600">
+                S <span className="font-mono">{summary.n_short}</span>
+              </span>
+            </>
+          )}
         </div>
         <button
           type="button"
           onClick={onReset}
           disabled={resetMutation.isPending}
-          className="rounded border border-gray-300 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+          className="shrink-0 whitespace-nowrap rounded border border-gray-300 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
         >
           {resetMutation.isPending ? "Resetting…" : "Reset start"}
         </button>
