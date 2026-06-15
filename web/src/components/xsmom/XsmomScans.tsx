@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useXsmomScans } from "../../lib/useXsmom";
 import { type XsmomScanRankItem } from "../../lib/api";
 import { formatRelative, formatNumber } from "../../lib/format";
@@ -54,17 +55,28 @@ function ScanRow({ scan, now }: { scan: import("../../lib/api").XsmomScan; now: 
   );
 }
 
+const PAGE_SIZE = 24;
+
 export function XsmomScans() {
   const now = useNow();
-  const { data, isLoading, error } = useXsmomScans(10);
+  const { data, isLoading, error } = useXsmomScans(1000);
+  const [page, setPage] = useState(0);
+
+  const total = data?.length ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageScans = data?.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) ?? [];
+
+  const pagerBtn =
+    "rounded border border-gray-300 bg-gray-50 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50";
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <h2 className="mb-2 text-sm font-semibold text-gray-700">
         Recent Scans
-        {data && data.length > 0 && (
+        {total > 0 && (
           <span className="ml-2 text-[11px] font-normal text-gray-400">
-            (latest {data.length})
+            ({Math.min(PAGE_SIZE, total)} of {total})
           </span>
         )}
       </h2>
@@ -72,16 +84,39 @@ export function XsmomScans() {
       {isLoading && <Skeleton rows={3} />}
       {error instanceof Error && <ErrorMsg message={error.message} />}
 
-      {!isLoading && !error && data?.length === 0 && (
+      {!isLoading && !error && total === 0 && (
         <p className="text-sm text-gray-400">No scans yet</p>
       )}
 
-      {!isLoading && !error && data && data.length > 0 && (
-        <div className="space-y-0.5">
-          {data.map((scan) => (
-            <ScanRow key={scan.id} scan={scan} now={now} />
-          ))}
-        </div>
+      {!isLoading && !error && total > 0 && (
+        <>
+          <div className="space-y-0.5">
+            {pageScans.map((scan) => (
+              <ScanRow key={scan.id} scan={scan} now={now} />
+            ))}
+          </div>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              className={pagerBtn}
+              disabled={safePage === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Prev
+            </button>
+            <span className="text-[11px] text-gray-500">
+              page {safePage + 1} / {pageCount}
+            </span>
+            <button
+              type="button"
+              className={pagerBtn}
+              disabled={safePage >= pageCount - 1}
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            >
+              Next
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

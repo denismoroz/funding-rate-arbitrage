@@ -56,6 +56,25 @@ export function XsmomEquityCard() {
 
   const total = points.length > 0 ? points[points.length - 1].value : undefined;
 
+  const { yDecimals, yDomain } = useMemo(() => {
+    if (points.length === 0) {
+      return { yDecimals: 2, yDomain: ["auto", "auto"] as [string, string] };
+    }
+    const values = points.map((d) => d.value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const sp = max - min;
+    let dec: number;
+    if (sp >= 10) dec = 0;
+    else if (sp >= 1) dec = 2;
+    else if (sp >= 0.01) dec = 3;
+    else dec = 4;
+    const domain: [string, string] = sp < 1
+      ? ["dataMin - 0.001", "dataMax + 0.001"]
+      : ["dataMin - 0.01", "dataMax + 0.01"];
+    return { yDecimals: dec, yDomain: domain };
+  }, [points]);
+
   function onReset() {
     if (
       window.confirm(
@@ -110,9 +129,10 @@ export function XsmomEquityCard() {
               minTickGap={60}
             />
             <YAxis
+              domain={yDomain}
               tickFormatter={(v: number) => {
                 if (Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(2)}k`;
-                return `$${v.toFixed(2)}`;
+                return `$${v.toFixed(yDecimals)}`;
               }}
               tick={{ fontSize: 11 }}
               width={70}

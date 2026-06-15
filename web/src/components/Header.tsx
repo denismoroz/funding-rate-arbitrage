@@ -18,6 +18,7 @@ export type Route =
   | "funding"
   | "journal"
   | "xsmom"
+  | "xsmom-journal"
   | "xsmom-settings";
 
 type Section = "frab" | "xsmom";
@@ -43,6 +44,7 @@ const FRAB_TABS: SubTab[] = [
 
 const XSMOM_TABS: SubTab[] = [
   { label: "Overview", href: "#/xsmom", match: "xsmom" },
+  { label: "Journal", href: "#/xsmom/journal", match: "xsmom-journal" },
   { label: "Settings", href: "#/xsmom/settings", match: "xsmom-settings" },
 ];
 

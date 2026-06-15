@@ -5,6 +5,7 @@ import Funding from "./pages/Funding";
 import Journal from "./pages/Journal";
 import Xsmom from "./pages/Xsmom";
 import XsmomSettingsPage from "./pages/XsmomSettingsPage";
+import XsmomJournalPage from "./pages/XsmomJournalPage";
 import type { Route } from "./components/Header";
 
 function readHash(): Route {
@@ -13,6 +14,7 @@ function readHash(): Route {
   if (hash === "#/funding") return "funding";
   if (hash === "#/journal") return "journal";
   if (hash === "#/xsmom/settings") return "xsmom-settings";
+  if (hash === "#/xsmom/journal") return "xsmom-journal";
   if (hash === "#/xsmom") return "xsmom";
   return "dashboard";
 }
@@ -33,6 +35,7 @@ export default function App() {
   if (route === "funding") return <Funding />;
   if (route === "journal") return <Journal />;
   if (route === "xsmom-settings") return <XsmomSettingsPage />;
+  if (route === "xsmom-journal") return <XsmomJournalPage />;
   if (route === "xsmom") return <Xsmom />;
   return <Dashboard />;
 }

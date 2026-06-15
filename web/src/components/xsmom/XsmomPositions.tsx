@@ -34,8 +34,9 @@ function RebalanceButton() {
 }
 
 export function XsmomPositions() {
-  // Default to "open" status — shows OPENED positions (the live legs)
-  const status = "open";
+  // "active" status — shows all non-terminal positions (NEW, OPENED, CLOSE)
+  // so freshly-created NEW rows appear immediately after Rebalance.
+  const status = "active";
   const { data, isLoading, error } = useXsmomPositions(status);
   const closeAllMutation = useCloseAllXsmom();
 
@@ -49,7 +50,7 @@ export function XsmomPositions() {
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-gray-700">
-          Open Positions
+          Positions
           {data && data.length > 0 && (
             <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-normal text-gray-500">
               {data.length}
@@ -81,7 +82,7 @@ export function XsmomPositions() {
       {error instanceof Error && <ErrorMsg message={error.message} />}
 
       {!isLoading && !error && data?.length === 0 && (
-        <p className="text-sm text-gray-400">No open positions</p>
+        <p className="text-sm text-gray-400">No positions</p>
       )}
 
       {!isLoading && !error && data && data.length > 0 && (

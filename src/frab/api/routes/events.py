@@ -13,6 +13,7 @@ router = APIRouter()
 async def list_events(
     level: str | None = None,
     source: str | None = None,
+    kind_prefix: str | None = None,
     limit: int = 200,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
@@ -21,6 +22,8 @@ async def list_events(
         stmt = stmt.where(Event.level == level)
     if source is not None:
         stmt = stmt.where(Event.source == source)
+    if kind_prefix is not None:
+        stmt = stmt.where(Event.kind.like(f"{kind_prefix}%"))
 
     result = await session.execute(stmt)
     events = result.scalars().all()

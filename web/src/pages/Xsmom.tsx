@@ -5,6 +5,7 @@ import { XsmomSummaryCard } from "../components/xsmom/XsmomSummaryCard";
 import { XsmomEquityCard } from "../components/xsmom/XsmomEquityCard";
 import { XsmomPositions } from "../components/xsmom/XsmomPositions";
 import { XsmomScans } from "../components/xsmom/XsmomScans";
+import { XsmomRecentEvents } from "../components/xsmom/XsmomRecentEvents";
 
 export default function Xsmom() {
   const strategyId = useXsmomStrategyId();
@@ -17,6 +18,7 @@ export default function Xsmom() {
         <XsmomEquityCard />
         <XsmomPositions />
         <XsmomScans />
+        <XsmomRecentEvents />
       </main>
     </div>
   );
