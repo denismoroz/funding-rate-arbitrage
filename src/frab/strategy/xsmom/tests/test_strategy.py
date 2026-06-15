@@ -46,6 +46,8 @@ def _make_strategy(mocker, *, params=None, strategy_id=1) -> tuple[XsmomStrategy
     """Returns (strategy, mock_repo, mock_exchange)."""
     exchange = mocker.AsyncMock()
     xsmom_repo = mocker.AsyncMock()
+    # on_hour_tick now runs a scan; give the shared mock a clean empty panel.
+    xsmom_repo.get_daily_closes = mocker.AsyncMock(return_value={})
     settings = mocker.MagicMock()
     sf = mocker.MagicMock()
 

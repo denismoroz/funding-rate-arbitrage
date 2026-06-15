@@ -10,7 +10,18 @@ Phase C implements:
   - manual_close / close_all helpers
   - reload_params fast path
 
-Phase D will add: scan + rebalance (marked with a clearly-labelled hook below).
+Phase D adds:
+  - History refresh + hourly scan (display-only, runs even when paused)
+  - Weekly rebalance reconcile (KEEP/ADD/DROP/FLIP diff, active only)
+  - manual_rebalance entrypoint (always reconciles, even when paused)
+  - last_rebalance_ms stored in Strategy.params_json
+
+``last_rebalance_ms`` storage
+-------------------------------
+Written to and read from Strategy.params_json["last_rebalance_ms"] via
+session_scope on the StrategyRow.  This avoids a schema migration while
+being durable (survives restarts).  The key is only set after a successful
+reconcile.
 """
 from __future__ import annotations
 
@@ -27,6 +38,9 @@ from frab.repo.xsmom_repo import XsmomRepo, XsmomStateConflict
 from frab.settings import Settings
 from frab.strategy.two_phase.states._helpers import publish_event
 from frab.strategy.xsmom.actions.funding_accrual import XsmomFundingAccrual
+from frab.strategy.xsmom.actions.history_refresh import XsmomHistoryRefresh
+from frab.strategy.xsmom.actions.scan import XsmomScanAction
+from frab.strategy.xsmom.evaluators.rebalance import XsmomRebalance, is_rebalance_due
 from frab.strategy.xsmom.params import XsmomParams
 from frab.strategy.xsmom.state_machine import StateMachine
 from frab.strategy.xsmom.states import STATE_CLASSES, XsmomContext
@@ -91,6 +105,24 @@ class XsmomStrategy:
             xsmom_repo=self.xsmom_repo,
             session_factory=self._sf,
         )
+        self._history_refresh = XsmomHistoryRefresh(
+            exchange=self.exchange,
+            xsmom_repo=self.xsmom_repo,
+            params=params,
+        )
+        self._scan_action = XsmomScanAction(
+            strategy_id=self.strategy_id,
+            xsmom_repo=self.xsmom_repo,
+            params=params,
+        )
+        self._rebalance = XsmomRebalance(
+            strategy_id=self.strategy_id,
+            exchange=self.exchange,
+            xsmom_repo=self.xsmom_repo,
+            params=params,
+            session_factory=self._sf,
+            event_bus=self._bus,
+        )
         ctx = XsmomContext(
             exchange=self.exchange,
             xsmom_repo=self.xsmom_repo,
@@ -123,19 +155,43 @@ class XsmomStrategy:
         await self.advance_all_pending()
 
     async def on_hour_tick(self, *, now_ms: int) -> None:
-        """Hourly: accrue funding; run watchdog; (Phase D: scan + rebalance)."""
-        # Read fresh strategy status from DB (can be edited without restart).
+        """Hourly: refresh history + scan (always); accrue funding; watchdog + rebalance (active only).
+
+        Structure:
+          1. Read strategy status (paused/active).
+          2. Refresh daily candle history (both branches — display needs fresh data).
+          3. Run scan and record an XsmomScan row (both branches — display-only, no trades).
+          4. Accrue funding (both branches — keep existing Phase C behaviour).
+          5. If paused → return.
+          6. Run margin watchdog (active only).
+          7. If rebalance is due → reconcile + persist last_rebalance_ms (active only).
+        """
+        # ── 1. Read status ────────────────────────────────────────────────────
         async with session_scope(self._sf) as session:
             strat_row = await session.get(StrategyRow, self.strategy_id)
             status = strat_row.status if strat_row is not None else "active"
 
-        if status == "paused":
-            logger.info("xsmom paused: skipping exits/entries strategy_id=%s", self.strategy_id)
-            await self._accrue_funding(now_ms=now_ms)
-            return
+        # ── 2 & 3. History refresh + scan (both paused and active) ───────────
+        try:
+            await self._history_refresh.refresh()
+        except Exception:  # noqa: BLE001
+            logger.exception("xsmom history_refresh crashed; continuing")
 
+        scan_summary: dict = {}
+        try:
+            scan_summary = await self._scan_action.scan(now_ms=now_ms)
+        except Exception:  # noqa: BLE001
+            logger.exception("xsmom scan crashed; continuing")
+
+        # ── 4. Accrue funding (both branches) ─────────────────────────────────
         await self._accrue_funding(now_ms=now_ms)
 
+        # ── 5. Paused gate ────────────────────────────────────────────────────
+        if status == "paused":
+            logger.info("xsmom paused: scan+funding ran, skipping watchdog/rebalance strategy_id=%s", self.strategy_id)
+            return
+
+        # ── 6. Margin watchdog (active only) ─────────────────────────────────
         if self._margin_watchdog is not None:
             try:
                 report = await self._margin_watchdog.run_check(now_ms=now_ms)
@@ -144,8 +200,54 @@ class XsmomStrategy:
             except Exception:  # noqa: BLE001
                 logger.exception("xsmom margin_watchdog crashed; skipping this tick")
 
-        # Phase D: scan + rebalance hook
-        # await self._scan_and_rebalance(now_ms=now_ms)
+        # ── 7. Rebalance (active only, when due) ─────────────────────────────
+        last_rebalance_ms = await self._read_last_rebalance_ms()
+        if is_rebalance_due(now_ms, last_rebalance_ms, self.params):
+            scores = scan_summary.get("scores")
+            try:
+                await self._rebalance.reconcile(now_ms=now_ms, scores=scores)
+                await self._persist_last_rebalance_ms(now_ms)
+            except Exception:  # noqa: BLE001
+                logger.exception("xsmom rebalance crashed; skipping this tick")
+
+    async def manual_rebalance(self, *, now_ms: int) -> dict:
+        """Force an immediate reconcile regardless of schedule or pause status.
+
+        Manual button = explicit user intent → always reconciles (even when paused).
+        History is refreshed first so scores are based on up-to-date data.
+        Updates last_rebalance_ms on success.
+
+        Returns the reconcile summary dict.
+        """
+        await self._history_refresh.refresh()
+        scan_summary = await self._scan_action.scan(now_ms=now_ms)
+        scores = scan_summary.get("scores")
+        result = await self._rebalance.reconcile(now_ms=now_ms, scores=scores)
+        await self._persist_last_rebalance_ms(now_ms)
+        return result
+
+    # ── last_rebalance_ms persistence (params_json) ───────────────────────────
+
+    async def _read_last_rebalance_ms(self) -> int | None:
+        """Read last_rebalance_ms from Strategy.params_json. Returns None if never set
+        or if the stored value is missing/malformed (treated as 'never rebalanced')."""
+        async with session_scope(self._sf) as session:
+            row = await session.get(StrategyRow, self.strategy_id)
+            if row is None or not isinstance(row.params_json, dict):
+                return None
+            val = row.params_json.get("last_rebalance_ms")
+            return val if isinstance(val, int) else None
+
+    async def _persist_last_rebalance_ms(self, now_ms: int) -> None:
+        """Write last_rebalance_ms into Strategy.params_json and commit."""
+        async with session_scope(self._sf) as session:
+            row = await session.get(StrategyRow, self.strategy_id)
+            if row is None:
+                logger.warning("xsmom: cannot persist last_rebalance_ms — strategy row missing")
+                return
+            # params_json is a mutable JSON column; reassign to trigger SQLAlchemy dirty detection
+            row.params_json = {**row.params_json, "last_rebalance_ms": now_ms}
+        logger.info("xsmom: last_rebalance_ms=%d persisted strategy_id=%s", now_ms, self.strategy_id)
 
     # ── State machine ─────────────────────────────────────────────────────────
 
