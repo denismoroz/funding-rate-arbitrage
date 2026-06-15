@@ -14,6 +14,7 @@ from frab.api.routes import (
     signals as signals_routes,
     strategies as strategies_routes,
     wallet as wallet_routes,
+    xsmom as xsmom_routes,
 )
 from frab.events.bus import EventBus
 
@@ -40,6 +41,7 @@ def create_app(
     app.include_router(funding_routes.router, prefix="/api/funding", tags=["funding"])
     app.include_router(events_routes.router, prefix="/api/events", tags=["events"])
     app.include_router(alerts_routes.router, prefix="/api/alerts", tags=["alerts"])
+    app.include_router(xsmom_routes.router, prefix="/api/xsmom", tags=["xsmom"])
 
     if event_bus is not None:
         from frab.api.ws import router as ws_router
