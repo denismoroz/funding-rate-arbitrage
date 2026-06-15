@@ -27,7 +27,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from frab.db.models import (
@@ -199,24 +199,33 @@ class Ledger:
         """
         # Alias to avoid clash with domain-level Exchange name
         ws = WalletSnapshotRow
-        ws_newer = WalletSnapshotRow.__table__.alias("ws_newer")
 
-        # Subquery: ws row is the latest for its (exchange_id, coin) if no
-        # newer row exists for the same (exchange_id, coin).
-        not_exists_newer = ~(
-            select(ws_newer.c.id)
-            .where(
-                ws_newer.c.exchange_id == ws.exchange_id,
-                ws_newer.c.coin == ws.coin,
-                ws_newer.c.ts_ms > ws.ts_ms,
+        # Latest ts_ms per (exchange_id, coin) for cash coins via GROUP BY MAX.
+        # This is O(N) with the ix_wallet_snapshots_latest index, vs the previous
+        # correlated NOT-EXISTS which was O(N^2) over the (large, ever-growing)
+        # wallet_snapshots table — that scan alone took ~48s on prod and was the
+        # dominant cost of the minute tick (see ix_wallet_snapshots_latest migration).
+        latest = (
+            select(
+                ws.exchange_id.label("eid"),
+                ws.coin.label("coin"),
+                func.max(ws.ts_ms).label("mt"),
             )
-            .correlate(ws)
-            .exists()
+            .where(ws.coin.in_(list(_CASH_COINS)))
+            .group_by(ws.exchange_id, ws.coin)
+            .subquery()
         )
-
-        stmt = select(func.coalesce(func.sum(ws.balance), 0.0)).where(
-            ws.coin.in_(list(_CASH_COINS)),
-            not_exists_newer,
+        stmt = (
+            select(func.coalesce(func.sum(ws.balance), 0.0))
+            .join(
+                latest,
+                and_(
+                    ws.exchange_id == latest.c.eid,
+                    ws.coin == latest.c.coin,
+                    ws.ts_ms == latest.c.mt,
+                ),
+            )
+            .where(ws.coin.in_(list(_CASH_COINS)))
         )
         result = await session.execute(stmt)
         return float(result.scalar())

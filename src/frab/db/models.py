@@ -193,6 +193,9 @@ class FundingAccrual(Base):
 
 class WalletSnapshot(Base):
     __tablename__ = "wallet_snapshots"
+    __table_args__ = (
+        Index("ix_wallet_snapshots_latest", "exchange_id", "coin", "ts_ms"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     exchange_id: Mapped[int] = mapped_column(ForeignKey("exchanges.id", ondelete="CASCADE"))
