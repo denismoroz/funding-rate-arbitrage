@@ -19,7 +19,7 @@ export function XsmomRecentEvents() {
   const now = useNow();
   const { data, isLoading, error } = useQuery({
     queryKey: ["xsmom-events"],
-    queryFn: () => fetchEvents({ limit: 1000, kindPrefix: "xsmom" }),
+    queryFn: () => fetchEvents({ limit: 1000 }),
   });
   const [page, setPage] = useState(0);
 

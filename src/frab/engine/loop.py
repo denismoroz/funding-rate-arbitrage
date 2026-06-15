@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import traceback
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -192,11 +193,23 @@ class EngineLoop:
 
     async def _minute_tick(self, now_ms: int) -> None:
         """Fetch quotes → persist prices → strategy.on_minute_tick → refresh wallets → ledger.compute_and_save."""
+        _t = time.monotonic()
+        _stage: dict[str, float] = {}
+
+        def _mark(name: str) -> None:
+            nonlocal _t
+            now = time.monotonic()
+            _stage[name] = now - _t
+            _t = now
+
         quotes = await self._fetch_quotes(now_ms)
+        _mark("quotes")
         if quotes:
             await self._save_prices(quotes, now_ms)
+        _mark("save_prices")
 
         await self._strategy.on_minute_tick(now_ms=now_ms)
+        _mark("on_minute_tick")
 
         quote_map = {q.coin: q for q in quotes}
         # Pull authoritative state from the exchange when available
@@ -212,6 +225,7 @@ class EngineLoop:
             except Exception as exc:  # noqa: BLE001
                 await self._log_error("perp_unrealized_fetch_failed", exc)
                 failed_feeds.append("perp_unrealized")
+        _mark("perp_unrealized")
         spot_getter = getattr(self._exchange, "get_spot_mids_by_coin", None)
         if spot_getter is not None:
             try:
@@ -219,6 +233,7 @@ class EngineLoop:
             except Exception as exc:  # noqa: BLE001
                 await self._log_error("spot_mids_fetch_failed", exc)
                 failed_feeds.append("spot_mids")
+        _mark("spot_mids")
 
         # Equity snapshot must be all-or-nothing: it is computed from quotes +
         # perp/spot feeds, and a *partial* input set silently prices the missing
@@ -238,14 +253,28 @@ class EngineLoop:
                     "failed_feeds": failed_feeds,
                 },
             )
+            logger.info(
+                "minute_tick TIMING sid=%s SKIPPED total=%.2fs stages=%s",
+                self._strategy.strategy_id,
+                sum(_stage.values()),
+                {k: round(v, 2) for k, v in _stage.items()},
+            )
             return
 
         await self._refresh_wallet_snapshots(now_ms)
+        _mark("refresh_wallet")
         await self._ledger.compute_and_save(
             self._strategy.strategy_id,
             quote_map,
             perp_unrealized_by_coin=perp_unrealized_by_coin,
             spot_mids_by_coin=spot_mids_by_coin,
+        )
+        _mark("ledger")
+        logger.info(
+            "minute_tick TIMING sid=%s total=%.2fs stages=%s",
+            self._strategy.strategy_id,
+            sum(_stage.values()),
+            {k: round(v, 2) for k, v in _stage.items()},
         )
 
     # ── Hour tick ─────────────────────────────────────────────────────────────
