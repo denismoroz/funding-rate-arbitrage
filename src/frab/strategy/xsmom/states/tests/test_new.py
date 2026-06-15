@@ -141,6 +141,12 @@ async def test_new_happy_path_short(mocker):
     assert perp_req.coin == "BTC"
     assert perp_req.leverage == params.leverage
 
+    # Regression: XSMOM legs must NOT set farb_position_id (it is a FRAB-only FK).
+    # Reusing it collided with the (farb_position_id, instrument) unique index once
+    # the XsmomPosition id overlapped a FarbPosition id, and polluted FRAB equity.
+    assert coll_req.farb_position_id is None
+    assert perp_req.farb_position_id is None
+
     # set_leg called twice
     assert repo.set_leg.await_count == 2
     set_coll = repo.set_leg.await_args_list[0]

@@ -12,12 +12,17 @@ Order of operations (rollback-safe: collateral before perp):
   4. Open PERP leg (directional LONG or SHORT).
   5. Transition to OPENED with enriched state_data.
 
-NOTE on ``farb_position_id`` reuse: the underlying ``positions`` table uses
-``farb_position_id`` as its FK column for both FRAB and XSMOM positions.
-We pass ``farb_position_id=fp.id`` on both OpenRequests (collateral + perp)
-so the position rows are linked to the XsmomPosition.  The column name is
-a legacy artifact; it is acceptable/consistent with how FRAB state handlers
-populate it.
+NOTE on ``farb_position_id``: we deliberately do NOT set it on XSMOM legs.
+The XsmomPosition → leg link is stored on ``xsmom_positions.perp_position_id``
+and ``collateral_position_id`` (via ``repo.set_leg``), so the reverse FK is
+unnecessary. Reusing ``farb_position_id`` here was actively harmful:
+  - it points at an unrelated ``farb_positions`` row (wrong FK target);
+  - it collides with the partial UNIQUE index
+    ``(farb_position_id, instrument)`` once the XsmomPosition id overlaps an
+    existing FarbPosition id → IntegrityError on open;
+  - the Ledger joins ``positions.farb_position_id == farb_positions.id``, so a
+    populated value would fold XSMOM legs into FRAB's equity (double count).
+Leaving it NULL keeps XSMOM legs cleanly out of all FRAB-keyed queries.
 """
 from __future__ import annotations
 
@@ -99,15 +104,13 @@ class NewState(State):
             return None
 
         # ── 3. COLLATERAL lock ────────────────────────────────────────────────
-        # Passing farb_position_id=fp.id links the Position row back to this
-        # XsmomPosition. The column name is a FRAB legacy; it is acceptable to
-        # reuse it for xsmom (see module docstring).
+        # farb_position_id intentionally left unset (see module docstring): the
+        # leg is linked to this XsmomPosition via xsmom_positions.collateral_position_id.
         coll_req = OpenRequest(
             coin="USDC",
             instrument=Instrument.COLLATERAL,
             side=Side.NONE,
             qty=required,
-            farb_position_id=fp.id,
         )
         coll_pos = await self._exchange.open_position(coll_req)
         await self._repo.set_leg(fp.id, collateral_position_id=coll_pos.id)
@@ -120,7 +123,6 @@ class NewState(State):
             instrument=Instrument.PERP,
             side=fp.side,
             qty=rounded_qty,
-            farb_position_id=fp.id,
             leverage=self._params.leverage,
         )
         perp_pos = await self._exchange.open_position(perp_req)
