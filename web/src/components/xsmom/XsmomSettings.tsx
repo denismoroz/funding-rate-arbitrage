@@ -41,8 +41,8 @@ export function XsmomSettings() {
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-gray-700">Settings</h2>
+      <div className="rounded-lg border border-gray-700 bg-gray-800 p-4 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold text-gray-200">Settings</h2>
         <Skeleton rows={4} />
       </div>
     );
@@ -50,8 +50,8 @@ export function XsmomSettings() {
 
   if (error instanceof Error) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-gray-700">Settings</h2>
+      <div className="rounded-lg border border-gray-700 bg-gray-800 p-4 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold text-gray-200">Settings</h2>
         <ErrorMsg message={error.message} />
       </div>
     );
@@ -101,13 +101,13 @@ export function XsmomSettings() {
   };
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-4 text-sm font-semibold text-gray-700">Settings</h2>
+    <div className="rounded-lg border border-gray-700 bg-gray-800 p-4 shadow-sm">
+      <h2 className="mb-4 text-sm font-semibold text-gray-200">Settings</h2>
 
       <form onSubmit={handleSave} className="space-y-5">
         {/* Budget cap */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
+          <label className="block text-xs font-medium text-gray-400 mb-1">
             Budget cap (USDC)
           </label>
           <input
@@ -116,17 +116,17 @@ export function XsmomSettings() {
             step={1}
             value={form.budget_cap}
             onChange={(e) => setForm((f) => f ? { ...f, budget_cap: e.target.value } : f)}
-            className="rounded border border-gray-300 px-2 py-1 text-sm w-36 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            className="rounded border border-gray-700 bg-gray-900 text-gray-100 px-2 py-1 text-sm w-36 focus:outline-none focus:ring-1 focus:ring-indigo-400"
           />
         </div>
 
         {/* Position count */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
+          <label className="block text-xs font-medium text-gray-400 mb-1">
             Number of positions
           </label>
           <div className="flex items-center gap-3">
-            <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+            <label className="inline-flex items-center gap-1.5 text-xs text-gray-300 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={form.n_positions_auto}
@@ -143,7 +143,7 @@ export function XsmomSettings() {
                 onChange={(e) =>
                   setForm((f) => f ? { ...f, n_positions_value: e.target.value } : f)
                 }
-                className="rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                className="rounded border border-gray-700 bg-gray-900 text-gray-100 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
               >
                 {[2, 4, 6, 8, 10].map((n) => (
                   <option key={n} value={String(n)}>
@@ -157,7 +157,7 @@ export function XsmomSettings() {
 
         {/* Universe */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-2">
+          <label className="block text-xs font-medium text-gray-400 mb-2">
             Universe (coins)
           </label>
           <UniverseEditor
@@ -168,10 +168,10 @@ export function XsmomSettings() {
 
         {/* Errors + success */}
         {clientError && (
-          <p className="text-xs text-red-600">{clientError}</p>
+          <p className="text-xs text-red-400">{clientError}</p>
         )}
         {saveNote && (
-          <p className="text-xs text-emerald-600">{saveNote}</p>
+          <p className="text-xs text-emerald-400">{saveNote}</p>
         )}
         {patchMutation.isError && !clientError && (
           <ErrorMsg message={(patchMutation.error as Error).message} />

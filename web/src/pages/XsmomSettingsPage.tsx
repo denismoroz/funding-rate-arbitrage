@@ -7,9 +7,10 @@ export default function XsmomSettingsPage() {
   const strategyId = useXsmomStrategyId();
   const { status } = useLiveEvents(strategyId);
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-900">
       <Header wsStatus={status} route="xsmom-settings" />
-      <main className="mx-auto max-w-7xl space-y-4 p-4">
+      <main className="mx-auto max-w-2xl p-6 space-y-6">
+        <h1 className="text-xl font-bold text-white">XSMOM Settings</h1>
         <XsmomSettings />
       </main>
     </div>
