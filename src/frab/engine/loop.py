@@ -37,8 +37,9 @@ logger = logging.getLogger(__name__)
 
 _STOP_TIMEOUT_S = 30.0
 
-# Retain ~14 days of per-minute wallet snapshots, then prune (keeping the latest
-# row per exchange/coin). Bounds the table that Ledger._compute_cash scans.
+# Keep ~14 days of per-minute wallet snapshots; older rows are downsampled to
+# one per clock-hour (history is preserved, just thinned). Bounds the table that
+# Ledger._compute_cash scans.
 _WALLET_SNAPSHOT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 
 
@@ -307,14 +308,18 @@ class EngineLoop:
             logger.exception("prune_wallet_snapshots_failed")
 
     async def _prune_wallet_snapshots(self, now_ms: int) -> None:
-        """Drop wallet_snapshot rows older than the retention window.
+        """Downsample old wallet_snapshot rows from per-minute to per-hour.
 
         wallet_snapshots gains one row per (exchange_id, coin) every minute per
         EngineLoop and is never cleaned, so it grows unbounded — that growth is
-        what made Ledger._compute_cash's scan expensive. We keep a bounded
-        window and ALWAYS retain the freshest row per (exchange_id, coin) so
-        cash stays computable even if a coin stops updating. Runs hourly;
-        idempotent across the two loops that share the table.
+        what made Ledger._compute_cash's scan expensive. Rather than dropping
+        history (we still want long-term balance statistics), we keep full
+        per-minute resolution for the recent window and thin everything older to
+        a single row per clock-hour: for each old (exchange_id, coin, hour) we
+        keep only the latest row and delete the rest. The freshest row per
+        (exchange_id, coin) is always recent (>= cutoff) so it is never touched
+        and cash stays computable. Runs hourly; idempotent across the two loops
+        that share the table.
         """
         cutoff = now_ms - _WALLET_SNAPSHOT_RETENTION_MS
         async with session_scope(self._sf) as s:
@@ -323,7 +328,8 @@ class EngineLoop:
                     "DELETE FROM wallet_snapshots WHERE ts_ms < :cutoff "
                     "AND ts_ms < (SELECT MAX(w2.ts_ms) FROM wallet_snapshots w2 "
                     "WHERE w2.exchange_id = wallet_snapshots.exchange_id "
-                    "AND w2.coin = wallet_snapshots.coin)"
+                    "AND w2.coin = wallet_snapshots.coin "
+                    "AND w2.ts_ms / 3600000 = wallet_snapshots.ts_ms / 3600000)"
                 ),
                 {"cutoff": cutoff},
             )
