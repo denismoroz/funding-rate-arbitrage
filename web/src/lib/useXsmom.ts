@@ -10,6 +10,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   fetchStrategies,
   fetchEquity,
@@ -94,9 +95,10 @@ export function useCloseXsmomPosition() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["xsmom-positions"] });
       queryClient.invalidateQueries({ queryKey: ["xsmom-summary"] });
+      toast.success("Position closing");
     },
     onError: (err: Error) => {
-      alert(`Close failed: ${err.message}`);
+      toast.error("Close failed", { description: err.message });
     },
   });
 }
@@ -109,9 +111,10 @@ export function useCloseAllXsmom() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["xsmom-positions"] });
       queryClient.invalidateQueries({ queryKey: ["xsmom-summary"] });
+      toast.success("Closing all positions");
     },
     onError: (err: Error) => {
-      alert(`Close-all failed: ${err.message}`);
+      toast.error("Close-all failed", { description: err.message });
     },
   });
 }
@@ -127,7 +130,7 @@ export function useRebalanceXsmom() {
       queryClient.invalidateQueries({ queryKey: ["xsmom-scans"] });
     },
     onError: (err: Error) => {
-      alert(`Rebalance failed: ${err.message}`);
+      toast.error("Rebalance failed", { description: err.message });
     },
   });
 }
@@ -141,7 +144,7 @@ export function usePatchXsmomParams() {
       queryClient.invalidateQueries({ queryKey: ["xsmom-params"] });
     },
     onError: (err: Error) => {
-      alert(`Params update failed: ${err.message}`);
+      toast.error("Params update failed", { description: err.message });
     },
   });
 }
@@ -156,7 +159,7 @@ export function useResetXsmomEquity() {
       queryClient.invalidateQueries({ queryKey: ["xsmom-params"] });
     },
     onError: (err: Error) => {
-      alert(`Reset failed: ${err.message}`);
+      toast.error("Reset failed", { description: err.message });
     },
   });
 }
@@ -183,7 +186,7 @@ export function useToggleXsmom() {
       queryClient.invalidateQueries({ queryKey: ["strategies"] });
     },
     onError: (err: Error) => {
-      alert(err.message);
+      toast.error("Toggle failed", { description: err.message });
     },
   });
 

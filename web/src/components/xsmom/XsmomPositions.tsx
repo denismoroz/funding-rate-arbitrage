@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useXsmomPositions, useCloseAllXsmom, useRebalanceXsmom } from "../../lib/useXsmom";
 import { XsmomPositionRow } from "./XsmomPositionRow";
 import { Skeleton } from "../ui/Skeleton";
@@ -10,13 +11,18 @@ function RebalanceButton() {
     if (!window.confirm("Trigger XSMOM rebalance now? This will open/close/flip positions.")) return;
     rebalanceMutation.mutate(undefined, {
       onSuccess: (result) => {
-        const lines = [
-          `Kept: ${result.kept.length} (${result.kept.join(", ") || "—"})`,
-          `Opened: ${result.opened.length} position(s)`,
-          `Dropped: ${result.dropped.length} position(s)`,
-          `Flipped: ${result.flipped.length} (${result.flipped.join(", ") || "—"})`,
+        const parts = [
+          `kept ${result.kept.length}`,
+          `opened ${result.opened.length}`,
+          `dropped ${result.dropped.length}`,
+          `flipped ${result.flipped.length}`,
         ];
-        alert("Rebalance complete:\n" + lines.join("\n"));
+        const detailBits: string[] = [];
+        if (result.kept.length) detailBits.push(`kept: ${result.kept.join(", ")}`);
+        if (result.flipped.length) detailBits.push(`flipped: ${result.flipped.join(", ")}`);
+        toast.success("Rebalance complete", {
+          description: parts.join(" · ") + (detailBits.length ? `\n${detailBits.join(" · ")}` : ""),
+        });
       },
     });
   };
