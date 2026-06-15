@@ -124,7 +124,7 @@ async def _pause_all_strategies(session_factory) -> int:
 
 
 async def _get_or_create_xsmom_strategy(
-    session_factory, settings: Settings
+    session_factory,
 ) -> tuple[int, XsmomParams]:
     """Return (strategy_id, params) for the xsmom strategy row.
 
@@ -139,11 +139,10 @@ async def _get_or_create_xsmom_strategy(
         )
         row = result.scalar_one_or_none()
         if row is None:
-            params = XsmomParams(
-                budget_cap=settings.xsmom_budget_cap,
-                universe=settings.xsmom_universe_tuple(),
-                leverage=settings.xsmom_leverage,
-            )
+            # Seed from XsmomParams() defaults (like FRAB seeds from TwoPhaseParams()).
+            # budget_cap / universe / leverage are strategy settings — the operator
+            # configures them via the UI (PATCH /api/xsmom/params) before enabling.
+            params = XsmomParams()
             row = StrategyRow(
                 name=_XSMOM_STRATEGY_NAME,
                 version=_XSMOM_STRATEGY_VERSION,
@@ -283,7 +282,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
                 slippage=settings.hl_live_slippage,
             )
             xsmom_strategy_id, xsmom_params = await _get_or_create_xsmom_strategy(
-                session_factory, settings
+                session_factory
             )
             xsmom_repo = XsmomRepo(session_factory)
             xsmom_ledger = Ledger(session_factory)
@@ -316,7 +315,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
                 exchange=xsmom_exchange,
                 ledger=xsmom_ledger,
                 session_factory=session_factory,
-                coins=list(settings.xsmom_universe_tuple()),
+                coins=list(xsmom_params.universe),
                 event_bus=bus,
                 params_loader=XsmomParams.from_dict,
             )

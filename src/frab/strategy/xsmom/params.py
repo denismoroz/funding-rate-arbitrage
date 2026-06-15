@@ -12,8 +12,8 @@ class XsmomParams:
     Set to None to use the auto tercile rule: k = max(1, universe_len // 3) per side.
     """
 
-    budget_cap: float
-    universe: tuple[str, ...]
+    budget_cap: float = 1000.0
+    universe: tuple[str, ...] = ()           # configured via UI (PATCH /api/xsmom/params)
     n_positions: int | None = None          # None → auto tercile; else total even count
     auto: bool = True
     leverage: int = 1

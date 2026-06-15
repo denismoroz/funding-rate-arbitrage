@@ -63,13 +63,10 @@ class Settings(BaseSettings):
     # Target margin_ratio after top-up.
     healthy_ratio: float = Field(default=3.0)
 
-    # --- XSMOM-specific settings ---
+    # --- XSMOM credentials (secrets only; universe/budget/leverage are strategy
+    #     params edited via the UI → stored in the xsmom Strategy row's params_json) ---
     xsmom_hl_private_key: SecretStr | None = Field(default=None)
     xsmom_hl_account_address: str | None = Field(default=None)
-    xsmom_budget_cap: float = Field(default=1000.0, gt=0)
-    xsmom_leverage: int = Field(default=1, ge=1, le=50)
-    # Comma-separated coin list (e.g. "BTC,ETH,SOL"). Empty = no xsmom universe set.
-    xsmom_universe: str = Field(default="")
 
     # --- Local-mode flag ---
     local_mode: bool = Field(default=False)
@@ -212,13 +209,6 @@ class Settings(BaseSettings):
     def universe_tuple(self) -> tuple[str, ...]:
         """Parse hl_universe env string into tuple of coin names. Empty → ()."""
         raw = self.hl_universe.strip()
-        if not raw:
-            return ()
-        return tuple(c.strip().upper() for c in raw.split(",") if c.strip())
-
-    def xsmom_universe_tuple(self) -> tuple[str, ...]:
-        """Parse xsmom_universe env string into tuple of coin names. Empty → ()."""
-        raw = self.xsmom_universe.strip()
         if not raw:
             return ()
         return tuple(c.strip().upper() for c in raw.split(",") if c.strip())

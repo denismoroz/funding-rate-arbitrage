@@ -84,21 +84,19 @@ async def test_pause_all_strategies_empty_db(session_factory):
 
 @pytest.mark.asyncio
 async def test_get_or_create_xsmom_creates_paused_row(session_factory):
-    """First call creates a row with status='paused'."""
-    settings = _make_settings(
-        xsmom_budget_cap=750.0,
-        xsmom_leverage=2,
-        xsmom_universe="BTC,ETH,SOL",
-    )
+    """First call creates a row with status='paused' seeded from XsmomParams() defaults.
 
-    strategy_id, params = await _get_or_create_xsmom_strategy(session_factory, settings)
+    budget_cap/universe/leverage are strategy params (UI-edited), NOT env settings —
+    the row is seeded from dataclass defaults, like FRAB from TwoPhaseParams().
+    """
+    strategy_id, params = await _get_or_create_xsmom_strategy(session_factory)
 
     assert isinstance(strategy_id, int)
     assert strategy_id > 0
     assert isinstance(params, XsmomParams)
-    assert params.budget_cap == 750.0
-    assert params.leverage == 2
-    assert params.universe == ("BTC", "ETH", "SOL")
+    assert params.budget_cap == 1000.0   # XsmomParams default
+    assert params.leverage == 1          # XsmomParams default
+    assert params.universe == ()         # empty until configured via UI
 
     # Row must be paused
     status = await _get_status(session_factory, strategy_id)
@@ -108,10 +106,8 @@ async def test_get_or_create_xsmom_creates_paused_row(session_factory):
 @pytest.mark.asyncio
 async def test_get_or_create_xsmom_idempotent(session_factory):
     """Second call returns the same id (does not create a duplicate row)."""
-    settings = _make_settings(xsmom_budget_cap=500.0)
-
-    id1, params1 = await _get_or_create_xsmom_strategy(session_factory, settings)
-    id2, params2 = await _get_or_create_xsmom_strategy(session_factory, settings)
+    id1, params1 = await _get_or_create_xsmom_strategy(session_factory)
+    id2, params2 = await _get_or_create_xsmom_strategy(session_factory)
 
     assert id1 == id2
     assert params1.budget_cap == params2.budget_cap
@@ -119,17 +115,16 @@ async def test_get_or_create_xsmom_idempotent(session_factory):
 
 @pytest.mark.asyncio
 async def test_get_or_create_xsmom_loads_existing_params(session_factory):
-    """Second call loads XsmomParams from the DB (not re-applying settings defaults)."""
-    settings = _make_settings(xsmom_budget_cap=300.0, xsmom_leverage=3)
+    """Second call loads XsmomParams from the DB (params_json), not dataclass defaults."""
+    id1, _ = await _get_or_create_xsmom_strategy(session_factory)
 
-    id1, _ = await _get_or_create_xsmom_strategy(session_factory, settings)
-
-    # Mutate the row params directly to simulate an out-of-band edit
+    # Mutate the row params directly to simulate a UI edit
     async with session_scope(session_factory) as s:
         row = await s.get(StrategyRow, id1)
-        row.params_json = {**row.params_json, "budget_cap": 999.0}
+        row.params_json = {**row.params_json, "budget_cap": 999.0, "universe": ["BTC", "ETH"]}
 
-    # Second call should load 999.0 from DB, not settings default 300.0
-    id2, params2 = await _get_or_create_xsmom_strategy(session_factory, settings)
+    # Second call should load the edited values from DB, not defaults
+    id2, params2 = await _get_or_create_xsmom_strategy(session_factory)
     assert id2 == id1
     assert params2.budget_cap == 999.0
+    assert params2.universe == ("BTC", "ETH")
