@@ -145,7 +145,7 @@ export function XsmomSettings() {
                 }
                 className="rounded border border-gray-700 bg-gray-900 text-gray-100 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
               >
-                {[2, 4, 6, 8, 10].map((n) => (
+                {[2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22].map((n) => (
                   <option key={n} value={String(n)}>
                     {n}
                   </option>
