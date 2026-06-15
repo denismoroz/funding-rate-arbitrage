@@ -16,7 +16,7 @@ const WS_DOT: Record<WsStatus, string> = {
   closed: "bg-red-500",
 };
 
-export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" | "funding" | "journal" }) {
+export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashboard" | "settings" | "funding" | "journal" | "xsmom" }) {
   const now = useNow();
   const strategyId = useActiveStrategyId();
   const queryClient = useQueryClient();
@@ -66,10 +66,17 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashbo
       <nav className="flex items-center gap-3 text-sm">
         <a
           href="#/"
-          className={route === "dashboard" ? "text-white" : "text-gray-400 hover:text-gray-200"}
+          className={route === "dashboard" ? "text-white font-medium" : "text-gray-400 hover:text-gray-200"}
         >
-          Dashboard
+          FRAB
         </a>
+        <a
+          href="#/xsmom"
+          className={route === "xsmom" ? "text-white font-medium" : "text-gray-400 hover:text-gray-200"}
+        >
+          XSMOM
+        </a>
+        <span className="text-gray-600">·</span>
         <a
           href="#/settings"
           className={route === "settings" ? "text-white" : "text-gray-400 hover:text-gray-200"}
@@ -90,7 +97,7 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: "dashbo
         </a>
       </nav>
 
-      {strategy && (
+      {strategy && route !== "xsmom" && (
         <span className="inline-flex items-center gap-2 text-xs font-medium text-white">
           <span className="text-gray-200">{strategy.name} {strategy.version}</span>
           <span className="text-gray-500">·</span>

@@ -1,0 +1,164 @@
+/**
+ * React-Query hooks for the XSMOM strategy.
+ *
+ * Query key conventions:
+ *   ["xsmom-summary"]
+ *   ["xsmom-positions", status?]   — status is undefined | "active" | "open" | "closed" | "failed"
+ *   ["xsmom-scans", limit]
+ *   ["xsmom-params"]
+ *   ["strategies"]                  — shared with FRAB; used for pause/resume
+ */
+
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  fetchStrategies,
+  fetchXsmomSummary,
+  fetchXsmomPositions,
+  fetchXsmomScans,
+  fetchXsmomParams,
+  closeXsmomPosition,
+  closeAllXsmomPositions,
+  rebalanceXsmom,
+  patchXsmomParams,
+  pauseStrategy,
+  resumeStrategy,
+} from "./api";
+
+// ── Strategy id ───────────────────────────────────────────────────────────────
+
+/** Returns the Strategy row whose name === "xsmom" (for pause/resume). */
+export function useXsmomStrategyId(): number | undefined {
+  const q = useQuery({
+    queryKey: ["strategies"],
+    queryFn: fetchStrategies,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+  return q.data?.find((s) => s.name === "xsmom")?.id;
+}
+
+// ── Queries ───────────────────────────────────────────────────────────────────
+
+export function useXsmomSummary() {
+  return useQuery({
+    queryKey: ["xsmom-summary"],
+    queryFn: fetchXsmomSummary,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+}
+
+export function useXsmomPositions(status?: string) {
+  return useQuery({
+    queryKey: ["xsmom-positions", status],
+    queryFn: () => fetchXsmomPositions(status),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useXsmomScans(limit = 10) {
+  return useQuery({
+    queryKey: ["xsmom-scans", limit],
+    queryFn: () => fetchXsmomScans(limit),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useXsmomParams() {
+  return useQuery({
+    queryKey: ["xsmom-params"],
+    queryFn: fetchXsmomParams,
+    staleTime: 30_000,
+  });
+}
+
+// ── Mutations ─────────────────────────────────────────────────────────────────
+
+/** Close a single XSMOM position; invalidates positions + summary. */
+export function useCloseXsmomPosition() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => closeXsmomPosition(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["xsmom-positions"] });
+      queryClient.invalidateQueries({ queryKey: ["xsmom-summary"] });
+    },
+    onError: (err: Error) => {
+      alert(`Close failed: ${err.message}`);
+    },
+  });
+}
+
+/** Close all open XSMOM positions; invalidates positions + summary. */
+export function useCloseAllXsmom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => closeAllXsmomPositions(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["xsmom-positions"] });
+      queryClient.invalidateQueries({ queryKey: ["xsmom-summary"] });
+    },
+    onError: (err: Error) => {
+      alert(`Close-all failed: ${err.message}`);
+    },
+  });
+}
+
+/** Trigger XSMOM rebalance; invalidates positions + summary + scans. */
+export function useRebalanceXsmom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => rebalanceXsmom(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["xsmom-positions"] });
+      queryClient.invalidateQueries({ queryKey: ["xsmom-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["xsmom-scans"] });
+    },
+    onError: (err: Error) => {
+      alert(`Rebalance failed: ${err.message}`);
+    },
+  });
+}
+
+/** Patch XSMOM params; invalidates params query. */
+export function usePatchXsmomParams() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: { params: Record<string, unknown> }) => patchXsmomParams(patch),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["xsmom-params"] });
+    },
+    onError: (err: Error) => {
+      alert(`Params update failed: ${err.message}`);
+    },
+  });
+}
+
+/** Pause or resume the XSMOM strategy. */
+export function useToggleXsmom() {
+  const queryClient = useQueryClient();
+  const stratId = useXsmomStrategyId();
+  const { data: strategies } = useQuery({
+    queryKey: ["strategies"],
+    queryFn: fetchStrategies,
+    staleTime: 10_000,
+  });
+  const strategy = strategies?.find((s) => s.name === "xsmom");
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (!stratId) throw new Error("XSMOM strategy not found");
+      return strategy?.status === "paused"
+        ? resumeStrategy(stratId)
+        : pauseStrategy(stratId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["strategies"] });
+    },
+    onError: (err: Error) => {
+      alert(err.message);
+    },
+  });
+
+  return { mutation, strategy, stratId };
+}

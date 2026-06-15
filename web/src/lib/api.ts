@@ -350,3 +350,149 @@ export async function manualOpenFarbPosition(coin: string): Promise<ManualOpenRe
   }
   return r.json();
 }
+
+// ── XSMOM Types ───────────────────────────────────────────────────────────────
+
+export type XsmomSummary = {
+  cash: number;
+  long_total: number;
+  short_total: number;
+  pnl_total: number | null;
+  n_long: number;
+  n_short: number;
+};
+
+export type XsmomPerpLeg = {
+  id: number;
+  qty: number;
+  entry_price: number;
+};
+
+export type XsmomPosition = {
+  id: number;
+  strategy_id: number;
+  coin: string;
+  side: "long" | "short";
+  state: "NEW" | "OPENED" | "CLOSE" | "CLOSED" | "FAILED";
+  state_data: Record<string, unknown>;
+  score: number | null;
+  perp_leg: XsmomPerpLeg | null;
+  hours_held: number | null;
+  unrealized_pnl_usdc: number | null;
+  funding_usdc: number;
+  fees_usdc: number;
+  notional: number;
+  required_margin: number;
+  locked_margin_usdc: number;
+  leverage: number | null;
+  opened_at_ms: number;
+  closed_at_ms: number | null;
+};
+
+export type XsmomScanRankItem = {
+  coin: string;
+  score: number;
+  rank: number;
+  leg: "long" | "short" | null;
+};
+
+export type XsmomScan = {
+  id: number;
+  strategy_id: number;
+  ts_ms: number;
+  ranking: XsmomScanRankItem[];
+  n_long: number;
+  n_short: number;
+  note: string | null;
+};
+
+export type XsmomParamsResponse = {
+  params: Record<string, unknown>;
+  universe: string[];
+};
+
+export type XsmomClosePositionResponse = {
+  id: number;
+  coin: string;
+  new_state: string;
+  ts_ms: number;
+};
+
+export type XsmomCloseAllResponse = {
+  closed: { id: number; coin: string }[];
+  ts_ms: number;
+};
+
+export type XsmomRebalanceResponse = {
+  kept: string[];
+  opened: number[];
+  dropped: number[];
+  flipped: string[];
+  ts_ms: number;
+};
+
+export type XsmomParamsPatchResponse = {
+  params_json: Record<string, unknown>;
+  restart_required: boolean;
+};
+
+// ── XSMOM State helpers ───────────────────────────────────────────────────────
+
+/** Map a raw XsmomPosition state to a human-readable label. */
+export function xsmomStateLabel(state: string): string {
+  switch (state) {
+    case "NEW": return "new";
+    case "OPENED": return "opened";
+    case "CLOSE": return "closing";
+    case "CLOSED": return "closed";
+    case "FAILED": return "failed";
+    default: return state.toLowerCase().replace(/_/g, " ");
+  }
+}
+
+/** A position is "open" (holding legs on HL) when in OPENED state. */
+export function isXsmomOpen(state: string): boolean {
+  return state === "OPENED";
+}
+
+// ── XSMOM Fetchers ────────────────────────────────────────────────────────────
+
+export function fetchXsmomSummary(): Promise<XsmomSummary> {
+  return apiFetch<XsmomSummary>("/xsmom/summary");
+}
+
+export function fetchXsmomPositions(status?: string): Promise<XsmomPosition[]> {
+  const params = new URLSearchParams();
+  if (status != null) params.set("status", status);
+  const qs = params.toString();
+  return apiFetch<XsmomPosition[]>(`/xsmom/positions${qs ? `?${qs}` : ""}`);
+}
+
+export function closeXsmomPosition(id: number): Promise<XsmomClosePositionResponse> {
+  return apiPost<XsmomClosePositionResponse>(`/xsmom/positions/${id}/close`);
+}
+
+export function closeAllXsmomPositions(): Promise<XsmomCloseAllResponse> {
+  return apiPost<XsmomCloseAllResponse>("/xsmom/positions/close-all");
+}
+
+export function rebalanceXsmom(): Promise<XsmomRebalanceResponse> {
+  return apiPost<XsmomRebalanceResponse>("/xsmom/rebalance");
+}
+
+export function fetchXsmomScans(limit = 50): Promise<XsmomScan[]> {
+  return apiFetch<XsmomScan[]>(`/xsmom/scans?limit=${limit}`);
+}
+
+export function fetchXsmomParams(): Promise<XsmomParamsResponse> {
+  return apiFetch<XsmomParamsResponse>("/xsmom/params");
+}
+
+export function patchXsmomParams(
+  patch: { params: Record<string, unknown> },
+): Promise<XsmomParamsPatchResponse> {
+  return apiPatchJson<{ params: Record<string, unknown> }, XsmomParamsPatchResponse>(
+    "/xsmom/params",
+    patch,
+  );
+}
