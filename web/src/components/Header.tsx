@@ -185,7 +185,7 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: Route }
     <header className="border-b border-gray-200">
       {/* Level 1 — sections */}
       <div className="flex items-center gap-4 bg-gray-900 px-6 py-2.5">
-        <span className="text-lg font-bold tracking-tight text-white">frab</span>
+        <span className="text-lg font-bold tracking-tight text-white">Mesh</span>
         <nav className="flex items-center gap-2">
           {sectionBtn("FRAB", "#/", section === "frab")}
           {sectionBtn("XSMOM", "#/xsmom", section === "xsmom")}
