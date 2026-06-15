@@ -559,9 +559,37 @@ async def test_patch_params_merges_valid_key(xsmom_client, session_factory, xsmo
     assert resp.status_code == 200
     data = resp.json()
     assert data["restart_required"] is True
+    # No engine loop wired in this fixture → no live reload.
+    assert data["reloaded"] is False
     assert data["params_json"]["budget_cap"] == pytest.approx(1000.0)
     # Original keys preserved
     assert "universe" in data["params_json"]
+
+
+async def test_patch_params_live_reload_when_loop_present(
+    session_factory, xsmom_strategy_id, xsmom_repo
+):
+    """When app.state.xsmom_loop is set, PATCH live-reloads the engine."""
+
+    class _FakeLoop:
+        def __init__(self) -> None:
+            self.reloaded = False
+
+        async def reload_params_from_db(self) -> None:
+            self.reloaded = True
+
+    fake_loop = _FakeLoop()
+    app = _make_xsmom_app(session_factory, strategy_id=xsmom_strategy_id, xsmom_repo=xsmom_repo)
+    app.state.xsmom_loop = fake_loop
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", follow_redirects=True
+    ) as client:
+        resp = await client.patch("/api/xsmom/params", json={"params": {"budget_cap": 1000.0}})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["reloaded"] is True
+    assert data["restart_required"] is False
+    assert fake_loop.reloaded is True
 
 
 async def test_patch_params_unknown_key_422(xsmom_client):

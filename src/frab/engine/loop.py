@@ -133,6 +133,14 @@ class EngineLoop:
             new_params = self._params_loader(dict(row.params_json))
         self._strategy.reload_params(new_params)
 
+    async def reload_params_from_db(self) -> None:
+        """Public: re-read params_json from DB and rebuild strategy internals now.
+
+        Used by the API (e.g. PATCH /xsmom/params) to apply saved params to the
+        running engine immediately, without waiting for the next hourly tick.
+        """
+        await self._reload_strategy_params_from_db()
+
     async def force_hour_tick(self, *, strategy_id: int, now_ms: int) -> None:
         """Force an immediate hour tick: reload params from DB, run on_hour_tick.
 

@@ -90,9 +90,9 @@ export function XsmomSettings() {
 
     patchMutation.mutate({ params }, {
       onSuccess: (result) => {
-        setSaveNote(result.restart_required
-          ? "Saved. Strategy restart required for changes to take effect."
-          : "Saved.");
+        setSaveNote(result.reloaded
+          ? "Saved & applied to the running engine."
+          : "Saved. Will take effect on the next hourly tick.");
       },
       onError: (err: Error) => {
         setClientError(err.message);

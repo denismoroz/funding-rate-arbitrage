@@ -9,6 +9,7 @@ Strategy row (name="xsmom", version="v1").
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -24,6 +25,8 @@ from frab.repo.xsmom_repo import XsmomStateConflict
 from frab.strategy.xsmom.params import XsmomParams
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 _TERMINAL_STATES = {XsmomState.CLOSED, XsmomState.FAILED}
 _TERMINAL_STATE_VALUES = [s.value for s in _TERMINAL_STATES]
@@ -498,7 +501,7 @@ async def patch_xsmom_params(
     Returns {params_json, restart_required: True}.
     Engine picks up the new params on the next hour-tick via EngineLoop params_loader.
     """
-    _strategy, _repo, _exchange, strategy_id, _loop = _xsmom_state(request)
+    _strategy, _repo, _exchange, strategy_id, loop = _xsmom_state(request)
 
     # Key validation
     unknown = sorted(set(body.params.keys()) - _VALID_PARAM_KEYS)
@@ -545,7 +548,19 @@ async def patch_xsmom_params(
     row.params_json = new_params
     session.add(row)
 
+    # Persist now so the engine's separate-session reload sees the new params.
+    await session.commit()
+
+    reloaded = False
+    if loop is not None:
+        try:
+            await loop.reload_params_from_db()
+            reloaded = True
+        except Exception:  # noqa: BLE001
+            logger.exception("xsmom: live param reload failed; will apply on next hour tick")
+
     return {
         "params_json": new_params,
-        "restart_required": True,
+        "restart_required": not reloaded,
+        "reloaded": reloaded,
     }

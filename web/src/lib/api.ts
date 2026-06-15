@@ -435,6 +435,7 @@ export type XsmomRebalanceResponse = {
 export type XsmomParamsPatchResponse = {
   params_json: Record<string, unknown>;
   restart_required: boolean;
+  reloaded?: boolean;
 };
 
 // ── XSMOM State helpers ───────────────────────────────────────────────────────
