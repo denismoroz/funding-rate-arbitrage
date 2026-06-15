@@ -1,7 +1,37 @@
-import { useXsmomPositions, useCloseAllXsmom } from "../../lib/useXsmom";
+import { useXsmomPositions, useCloseAllXsmom, useRebalanceXsmom } from "../../lib/useXsmom";
 import { XsmomPositionRow } from "./XsmomPositionRow";
 import { Skeleton } from "../ui/Skeleton";
 import { ErrorMsg } from "../ui/ErrorMsg";
+
+function RebalanceButton() {
+  const rebalanceMutation = useRebalanceXsmom();
+
+  const handleRebalance = () => {
+    if (!window.confirm("Trigger XSMOM rebalance now? This will open/close/flip positions.")) return;
+    rebalanceMutation.mutate(undefined, {
+      onSuccess: (result) => {
+        const lines = [
+          `Kept: ${result.kept.length} (${result.kept.join(", ") || "—"})`,
+          `Opened: ${result.opened.length} position(s)`,
+          `Dropped: ${result.dropped.length} position(s)`,
+          `Flipped: ${result.flipped.length} (${result.flipped.join(", ") || "—"})`,
+        ];
+        alert("Rebalance complete:\n" + lines.join("\n"));
+      },
+    });
+  };
+
+  return (
+    <button
+      type="button"
+      className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+      disabled={rebalanceMutation.isPending}
+      onClick={handleRebalance}
+    >
+      {rebalanceMutation.isPending ? "Rebalancing…" : "Rebalance"}
+    </button>
+  );
+}
 
 export function XsmomPositions() {
   // Default to "open" status — shows OPENED positions (the live legs)
@@ -26,16 +56,19 @@ export function XsmomPositions() {
             </span>
           )}
         </h2>
-        {data && data.length > 0 && (
-          <button
-            type="button"
-            className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
-            disabled={closeAllMutation.isPending}
-            onClick={handleCloseAll}
-          >
-            {closeAllMutation.isPending ? "Closing…" : "Close ALL"}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <RebalanceButton />
+          {data && data.length > 0 && (
+            <button
+              type="button"
+              className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+              disabled={closeAllMutation.isPending}
+              onClick={handleCloseAll}
+            >
+              {closeAllMutation.isPending ? "Closing…" : "Close ALL"}
+            </button>
+          )}
+        </div>
       </div>
 
       {closeAllMutation.isError && (
