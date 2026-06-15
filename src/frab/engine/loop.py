@@ -21,7 +21,7 @@ import traceback
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
@@ -36,6 +36,10 @@ from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 logger = logging.getLogger(__name__)
 
 _STOP_TIMEOUT_S = 30.0
+
+# Retain ~14 days of per-minute wallet snapshots, then prune (keeping the latest
+# row per exchange/coin). Bounds the table that Ledger._compute_cash scans.
+_WALLET_SNAPSHOT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 
 
 class StrategyIdMismatch(Exception):
@@ -270,10 +274,15 @@ class EngineLoop:
             spot_mids_by_coin=spot_mids_by_coin,
         )
         _mark("ledger")
-        logger.info(
+        # TIMING is a stall diagnostic: keep it quiet (DEBUG) on healthy ticks,
+        # but escalate to WARNING when a tick runs long so a regression like the
+        # old O(N^2) ledger cash scan surfaces in normal logs without spam.
+        _total = sum(_stage.values())
+        logger.log(
+            logging.WARNING if _total >= 30.0 else logging.DEBUG,
             "minute_tick TIMING sid=%s total=%.2fs stages=%s",
             self._strategy.strategy_id,
-            sum(_stage.values()),
+            _total,
             {k: round(v, 2) for k, v in _stage.items()},
         )
 
@@ -291,6 +300,33 @@ class EngineLoop:
             await self._save_funding(funding_ticks, now_ms)
 
         await self._strategy.on_hour_tick(now_ms=now_ms)
+
+        try:
+            await self._prune_wallet_snapshots(now_ms)
+        except Exception:
+            logger.exception("prune_wallet_snapshots_failed")
+
+    async def _prune_wallet_snapshots(self, now_ms: int) -> None:
+        """Drop wallet_snapshot rows older than the retention window.
+
+        wallet_snapshots gains one row per (exchange_id, coin) every minute per
+        EngineLoop and is never cleaned, so it grows unbounded — that growth is
+        what made Ledger._compute_cash's scan expensive. We keep a bounded
+        window and ALWAYS retain the freshest row per (exchange_id, coin) so
+        cash stays computable even if a coin stops updating. Runs hourly;
+        idempotent across the two loops that share the table.
+        """
+        cutoff = now_ms - _WALLET_SNAPSHOT_RETENTION_MS
+        async with session_scope(self._sf) as s:
+            await s.execute(
+                text(
+                    "DELETE FROM wallet_snapshots WHERE ts_ms < :cutoff "
+                    "AND ts_ms < (SELECT MAX(w2.ts_ms) FROM wallet_snapshots w2 "
+                    "WHERE w2.exchange_id = wallet_snapshots.exchange_id "
+                    "AND w2.coin = wallet_snapshots.coin)"
+                ),
+                {"cutoff": cutoff},
+            )
 
     # ── Data fetching ─────────────────────────────────────────────────────────
 
