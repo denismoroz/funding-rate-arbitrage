@@ -63,14 +63,25 @@ class Settings(BaseSettings):
     # Target margin_ratio after top-up.
     healthy_ratio: float = Field(default=3.0)
 
-    @field_validator("hl_account_address")
+    # --- XSMOM-specific settings ---
+    xsmom_hl_private_key: SecretStr | None = Field(default=None)
+    xsmom_hl_account_address: str | None = Field(default=None)
+    xsmom_budget_cap: float = Field(default=1000.0, gt=0)
+    xsmom_leverage: int = Field(default=1, ge=1, le=50)
+    # Comma-separated coin list (e.g. "BTC,ETH,SOL"). Empty = no xsmom universe set.
+    xsmom_universe: str = Field(default="")
+
+    # --- Local-mode flag ---
+    local_mode: bool = Field(default=False)
+
+    @field_validator("hl_account_address", "xsmom_hl_account_address")
     @classmethod
     def _validate_eth_address(cls, v: str | None) -> str | None:
         if v is None:
             return v
         if not _ETH_ADDR_RE.match(v):
             raise ValueError(
-                f"hl_account_address must be a 42-char hex Ethereum address starting with 0x, got: {v!r}"
+                f"account_address must be a 42-char hex Ethereum address starting with 0x, got: {v!r}"
             )
         return v
 
@@ -204,6 +215,17 @@ class Settings(BaseSettings):
         if not raw:
             return ()
         return tuple(c.strip().upper() for c in raw.split(",") if c.strip())
+
+    def xsmom_universe_tuple(self) -> tuple[str, ...]:
+        """Parse xsmom_universe env string into tuple of coin names. Empty → ()."""
+        raw = self.xsmom_universe.strip()
+        if not raw:
+            return ()
+        return tuple(c.strip().upper() for c in raw.split(",") if c.strip())
+
+    def has_xsmom_credentials(self) -> bool:
+        """True when both xsmom HL credentials are configured."""
+        return self.xsmom_hl_private_key is not None and self.xsmom_hl_account_address is not None
 
     def model_post_init(self, __context: object) -> None:
         if not self.db_url:

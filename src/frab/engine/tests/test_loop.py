@@ -588,3 +588,97 @@ async def test_hour_tick_continues_on_reload_params_db_error(
 
     # on_hour_tick still called despite reload failure
     mock_strategy.on_hour_tick.assert_awaited_once_with(now_ms=now_ms)
+
+
+# ─── 12. params_loader: custom loader used by _reload_strategy_params_from_db ─
+
+@pytest.fixture
+async def strategy_db_custom_loader(db_session_factory):
+    """Session factory with a strategy row seeded for params_loader tests."""
+    async with session_scope(db_session_factory) as s:
+        s.add(ExchangeRow(
+            name="hyperliquid",
+            funding_interval_h=1,
+            spot_taker_bps=7.0,
+            perp_taker_bps=3.5,
+        ))
+        strat = StrategyRow(
+            name="xsmom_test",
+            version="v1",
+            params_json={"budget_cap": 500.0, "universe": ["BTC", "ETH"], "leverage": 2},
+        )
+        s.add(strat)
+        await s.flush()
+    return db_session_factory
+
+
+@pytest.mark.asyncio
+async def test_params_loader_custom_loader_used(
+    mock_exchange, mock_ledger, strategy_db_custom_loader,
+):
+    """EngineLoop with a custom params_loader passes the loader output to
+    strategy.reload_params — not TwoPhaseParams."""
+    received_params: list = []
+
+    sentinel = object()
+
+    def custom_loader(d: dict) -> object:
+        received_params.append(d)
+        return sentinel  # distinctive sentinel to confirm it's the loader's output
+
+    mock_strategy = MagicMock()
+    mock_strategy.strategy_id = 1
+    mock_strategy.on_hour_tick = AsyncMock()
+    mock_strategy.reload_params = MagicMock()
+
+    loop = EngineLoop(
+        strategy=mock_strategy,
+        exchange=mock_exchange,
+        ledger=mock_ledger,
+        session_factory=strategy_db_custom_loader,
+        coins=["BTC", "ETH"],
+        params_loader=custom_loader,
+    )
+    loop._exchange_id_cache = 1
+    loop._save_funding = AsyncMock()
+
+    await loop._reload_strategy_params_from_db()
+
+    # The custom loader was called with the params dict from the DB row
+    assert len(received_params) == 1
+    assert received_params[0]["budget_cap"] == 500.0
+    assert received_params[0]["leverage"] == 2
+
+    # strategy.reload_params received the sentinel (loader output), not TwoPhaseParams
+    mock_strategy.reload_params.assert_called_once_with(sentinel)
+
+
+@pytest.mark.asyncio
+async def test_default_params_loader_unchanged(
+    mock_exchange, mock_ledger, strategy_db_session_factory,
+):
+    """EngineLoop with no params_loader kwarg defaults to TwoPhaseParams.from_dict.
+
+    Behaviorally identical to existing FRAB wiring.
+    """
+    mock_strategy = MagicMock()
+    mock_strategy.strategy_id = 1
+    mock_strategy.on_hour_tick = AsyncMock()
+    mock_strategy.reload_params = MagicMock()
+
+    loop = EngineLoop(
+        strategy=mock_strategy,
+        exchange=mock_exchange,
+        ledger=mock_ledger,
+        session_factory=strategy_db_session_factory,
+        coins=["BTC"],
+        # no params_loader → default = TwoPhaseParams.from_dict
+    )
+    loop._exchange_id_cache = 1
+    loop._save_funding = AsyncMock()
+
+    await loop._reload_strategy_params_from_db()
+
+    mock_strategy.reload_params.assert_called_once()
+    called_arg = mock_strategy.reload_params.call_args[0][0]
+    assert isinstance(called_arg, TwoPhaseParams)

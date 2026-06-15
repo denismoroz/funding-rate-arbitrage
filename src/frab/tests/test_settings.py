@@ -239,3 +239,93 @@ def test_forced_close_trigger_above_top_up_raises():
     with pytest.raises(ValidationError):
         # forced_close_trigger == top_up_trigger
         Settings(forced_close_trigger=2.0, top_up_trigger=2.0, healthy_ratio=3.0, **_CREDS)
+
+
+# ---------------------------------------------------------------------------
+# Phase E: xsmom settings tests
+# ---------------------------------------------------------------------------
+
+def test_xsmom_defaults():
+    """xsmom fields must have correct defaults."""
+    s = Settings(**_CREDS)
+    assert s.xsmom_hl_private_key is None
+    assert s.xsmom_hl_account_address is None
+    assert s.xsmom_budget_cap == 1000.0
+    assert s.xsmom_leverage == 1
+    assert s.xsmom_universe == ""
+    assert s.local_mode is False
+
+
+def test_xsmom_universe_tuple_parses_csv():
+    s = Settings(xsmom_universe="BTC, ETH , SOL", **_CREDS)
+    assert s.xsmom_universe_tuple() == ("BTC", "ETH", "SOL")
+
+
+def test_xsmom_universe_tuple_empty():
+    s = Settings(xsmom_universe="", **_CREDS)
+    assert s.xsmom_universe_tuple() == ()
+
+
+def test_xsmom_universe_tuple_whitespace():
+    s = Settings(xsmom_universe="   ", **_CREDS)
+    assert s.xsmom_universe_tuple() == ()
+
+
+def test_has_xsmom_credentials_false_when_missing():
+    s = Settings(**_CREDS)
+    assert s.has_xsmom_credentials() is False
+
+
+def test_has_xsmom_credentials_false_when_only_key():
+    s = Settings(xsmom_hl_private_key="0x" + "a" * 64, **_CREDS)
+    assert s.has_xsmom_credentials() is False
+
+
+def test_has_xsmom_credentials_true_when_both_set():
+    s = Settings(
+        xsmom_hl_private_key="0x" + "a" * 64,
+        xsmom_hl_account_address="0x" + "c" * 40,
+        **_CREDS,
+    )
+    assert s.has_xsmom_credentials() is True
+
+
+def test_xsmom_bad_account_address_rejected():
+    """xsmom_hl_account_address must be a valid Ethereum address."""
+    with pytest.raises(ValidationError):
+        Settings(xsmom_hl_account_address="not-an-address", **_CREDS)
+
+
+def test_xsmom_budget_cap_zero_raises():
+    with pytest.raises(ValidationError):
+        Settings(xsmom_budget_cap=0.0, **_CREDS)
+
+
+def test_xsmom_leverage_out_of_range_raises():
+    with pytest.raises(ValidationError):
+        Settings(xsmom_leverage=0, **_CREDS)
+    with pytest.raises(ValidationError):
+        Settings(xsmom_leverage=51, **_CREDS)
+
+
+def test_xsmom_fields_from_env(monkeypatch):
+    monkeypatch.setenv("FRAB_HL_PRIVATE_KEY", "0x" + "a" * 64)
+    monkeypatch.setenv("FRAB_HL_ACCOUNT_ADDRESS", "0x" + "b" * 40)
+    monkeypatch.setenv("FRAB_XSMOM_HL_PRIVATE_KEY", "0x" + "d" * 64)
+    monkeypatch.setenv("FRAB_XSMOM_HL_ACCOUNT_ADDRESS", "0x" + "e" * 40)
+    monkeypatch.setenv("FRAB_XSMOM_BUDGET_CAP", "500.0")
+    monkeypatch.setenv("FRAB_XSMOM_LEVERAGE", "3")
+    monkeypatch.setenv("FRAB_XSMOM_UNIVERSE", "BTC,ETH")
+    monkeypatch.setenv("FRAB_LOCAL_MODE", "true")
+    s = Settings(_env_file=None)
+    assert s.xsmom_budget_cap == 500.0
+    assert s.xsmom_leverage == 3
+    assert s.xsmom_universe_tuple() == ("BTC", "ETH")
+    assert s.local_mode is True
+    assert s.has_xsmom_credentials() is True
+
+
+def test_xsmom_creds_not_required_for_frab_only_boot():
+    """Settings is valid without xsmom creds — xsmom engine is optional."""
+    s = Settings(**_CREDS)
+    assert s.has_xsmom_credentials() is False  # should not raise

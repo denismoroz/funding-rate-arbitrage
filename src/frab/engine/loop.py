@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -70,6 +71,7 @@ class EngineLoop:
         event_bus: EventBus | None = None,
         minute_interval_s: float = 60.0,
         wallet_coins: list[tuple[str, WalletKind]] | None = None,
+        params_loader: Callable[[dict], object] = TwoPhaseParams.from_dict,
     ) -> None:
         self._strategy = strategy
         self._exchange = exchange
@@ -87,6 +89,7 @@ class EngineLoop:
         else:
             self._wallet_coins = list(wallet_coins)
 
+        self._params_loader = params_loader
         self._task: asyncio.Task | None = None
         self._last_hour: int | None = None
         self._exchange_id_cache: int | None = None
@@ -127,7 +130,7 @@ class EngineLoop:
             row = (await s.execute(
                 select(Strategy).where(Strategy.id == self._strategy.strategy_id)
             )).scalar_one()
-            new_params = TwoPhaseParams.from_dict(dict(row.params_json))
+            new_params = self._params_loader(dict(row.params_json))
         self._strategy.reload_params(new_params)
 
     async def force_hour_tick(self, *, strategy_id: int, now_ms: int) -> None:

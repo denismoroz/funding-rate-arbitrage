@@ -1,6 +1,7 @@
 """Top-level app builder: wires DB + event bus + exchange + engine into FastAPI.
 
 Step 8: real HLExchange, TwoPhaseStrategy, EngineLoop wired into lifespan.
+Phase E: second engine (XSMOM) wired in alongside FRAB.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from datetime import UTC, datetime
 from typing import AsyncIterator
 
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from frab.api.app import create_app
 from frab.db.models import Exchange, Strategy as StrategyRow
@@ -21,8 +22,12 @@ from frab.events.bus import EventBus, EventDbSink
 from frab.exchanges.hyperliquid.exchange import HLExchange
 from frab.ledger.ledger import Ledger
 from frab.repo.farb_repo import FarbRepo
+from frab.repo.xsmom_repo import XsmomRepo
 from frab.settings import Settings, get_settings
 from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
+from frab.strategy.xsmom.params import XsmomParams
+from frab.strategy.xsmom.strategy import XsmomStrategy
+from frab.strategy.xsmom.protection.margin_watchdog import XsmomMarginWatchdog
 from frab.exchanges.hyperliquid.tokens import (  # noqa: E402
     MAINNET_SPOT_TOKEN_MAP,
     select_spot_token_map as _select_spot_token_map,
@@ -37,6 +42,9 @@ EXCHANGE_NAME = "hyperliquid"
 
 _STRATEGY_NAME = "two_phase"
 _STRATEGY_VERSION = "v2"
+
+_XSMOM_STRATEGY_NAME = "xsmom"
+_XSMOM_STRATEGY_VERSION = "v1"
 
 
 def _select_coins(settings: Settings, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -98,6 +106,63 @@ async def _get_or_create_strategy(session_factory) -> tuple[int, TwoPhaseParams]
             params = TwoPhaseParams.from_dict(dict(row.params_json))
             logger.info(
                 "Loaded existing strategy row id=%s name=%s version=%s status=%s",
+                strategy_id, row.name, row.version, row.status,
+            )
+    return strategy_id, params
+
+
+async def _pause_all_strategies(session_factory) -> int:
+    """Set status='paused' on ALL strategy rows. Returns the count updated.
+
+    Used in local_mode to ensure no strategy starts trading on boot.
+    """
+    async with session_scope(session_factory) as s:
+        result = await s.execute(
+            update(StrategyRow).values(status="paused")
+        )
+        return result.rowcount
+
+
+async def _get_or_create_xsmom_strategy(
+    session_factory, settings: Settings
+) -> tuple[int, XsmomParams]:
+    """Return (strategy_id, params) for the xsmom strategy row.
+
+    Creates the row with status='paused' and default params if absent.
+    """
+    async with session_scope(session_factory) as s:
+        result = await s.execute(
+            select(StrategyRow).where(
+                StrategyRow.name == _XSMOM_STRATEGY_NAME,
+                StrategyRow.version == _XSMOM_STRATEGY_VERSION,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            params = XsmomParams(
+                budget_cap=settings.xsmom_budget_cap,
+                universe=settings.xsmom_universe_tuple(),
+                leverage=settings.xsmom_leverage,
+            )
+            row = StrategyRow(
+                name=_XSMOM_STRATEGY_NAME,
+                version=_XSMOM_STRATEGY_VERSION,
+                params_json=params.to_dict(),
+                status="paused",
+                started_at_ms=int(datetime.now(UTC).timestamp() * 1000),
+            )
+            s.add(row)
+            await s.flush()
+            strategy_id = row.id
+            logger.info(
+                "Created xsmom strategy row id=%s name=%s version=%s status=paused",
+                strategy_id, _XSMOM_STRATEGY_NAME, _XSMOM_STRATEGY_VERSION,
+            )
+        else:
+            strategy_id = row.id
+            params = XsmomParams.from_dict(dict(row.params_json))
+            logger.info(
+                "Loaded existing xsmom strategy row id=%s name=%s version=%s status=%s",
                 strategy_id, row.name, row.version, row.status,
             )
     return strategy_id, params
@@ -174,6 +239,18 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             margin_watchdog=margin_watchdog,
         )
 
+        # ── local_mode: pause ALL strategies before any loop starts ─────────
+        # Loops are still started (background schedulers run), but on_hour_tick
+        # reads status from DB and skips trading when paused — so "started but
+        # paused" satisfies the requirement: loops run, no entries/rebalance
+        # until UI toggle enables a strategy.
+        if settings.local_mode:
+            n_paused = await _pause_all_strategies(session_factory)
+            logger.info(
+                "local_mode=true: paused %d strategy row(s); loops will start but no trading until UI toggle",
+                n_paused,
+            )
+
         # ── Build and start engine loop ───────────────────────────────────
         engine_loop = EngineLoop(
             strategy=strategy,
@@ -193,6 +270,69 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         except Exception:
             logger.exception("backfill_fill_fees failed at startup")
 
+        # ── XSMOM engine (only if xsmom credentials are configured) ──────
+        if settings.has_xsmom_credentials():
+            xsmom_exchange = HLExchange(
+                api_url=_hl_info_url(settings),
+                timeout_s=settings.hl_request_timeout_s,
+                private_key=settings.xsmom_hl_private_key.get_secret_value(),
+                account_address=settings.xsmom_hl_account_address,
+                network=settings.hl_network,
+                session_factory=session_factory,
+                spot_token_map=_select_spot_token_map(settings.hl_network),
+                slippage=settings.hl_live_slippage,
+            )
+            xsmom_strategy_id, xsmom_params = await _get_or_create_xsmom_strategy(
+                session_factory, settings
+            )
+            xsmom_repo = XsmomRepo(session_factory)
+            xsmom_ledger = Ledger(session_factory)
+
+            xsmom_margin_mgr = MarginManager(
+                top_up_trigger=settings.top_up_trigger,
+                forced_close_trigger=settings.forced_close_trigger,
+                healthy_ratio=settings.healthy_ratio,
+            )
+            xsmom_watchdog = XsmomMarginWatchdog(
+                strategy_id=xsmom_strategy_id,
+                exchange=xsmom_exchange,
+                xsmom_repo=xsmom_repo,
+                margin_manager=xsmom_margin_mgr,
+                settings=settings,
+                event_bus=bus,
+            )
+            xsmom_strategy = XsmomStrategy(
+                strategy_id=xsmom_strategy_id,
+                exchange=xsmom_exchange,
+                xsmom_repo=xsmom_repo,
+                session_factory=session_factory,
+                params=xsmom_params,
+                settings=settings,
+                event_bus=bus,
+                margin_watchdog=xsmom_watchdog,
+            )
+            xsmom_loop = EngineLoop(
+                strategy=xsmom_strategy,
+                exchange=xsmom_exchange,
+                ledger=xsmom_ledger,
+                session_factory=session_factory,
+                coins=list(settings.xsmom_universe_tuple()),
+                event_bus=bus,
+                params_loader=XsmomParams.from_dict,
+            )
+            await xsmom_loop.start()
+
+            app.state.xsmom_exchange = xsmom_exchange
+            app.state.xsmom_repo = xsmom_repo
+            app.state.xsmom_strategy = xsmom_strategy
+            app.state.xsmom_loop = xsmom_loop
+            app.state.xsmom_strategy_id = xsmom_strategy_id
+            app.state.xsmom_ledger = xsmom_ledger
+            app.state.xsmom_margin_watchdog = xsmom_watchdog
+            logger.info("xsmom engine started (strategy_id=%s)", xsmom_strategy_id)
+        else:
+            logger.info("xsmom credentials not set; skipping xsmom engine")
+
         # ── Stash on app.state ────────────────────────────────────────────
         app.state.exchange = exchange
         app.state.farb_repo = farb_repo
@@ -204,6 +344,14 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         try:
             yield
         finally:
+            # Stop xsmom engine first (if it was built)
+            xsmom_loop_state = getattr(app.state, "xsmom_loop", None)
+            if xsmom_loop_state is not None:
+                await xsmom_loop_state.stop()
+            xsmom_exchange_state = getattr(app.state, "xsmom_exchange", None)
+            if xsmom_exchange_state is not None:
+                await xsmom_exchange_state.aclose()
+
             await engine_loop.stop()
             await exchange.aclose()
             await sink.stop()
