@@ -630,6 +630,22 @@ async def test_patch_params_persisted_to_db(xsmom_client, session_factory, xsmom
         assert strat.params_json["leverage"] == 2
 
 
+# ── POST /api/xsmom/equity/reset ──────────────────────────────────────────────
+
+async def test_reset_equity_sets_baseline(xsmom_client, session_factory, xsmom_strategy_id):
+    """POST /equity/reset returns int baseline; GET /params surfaces it under params."""
+    resp = await xsmom_client.post("/api/xsmom/equity/reset")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data["equity_baseline_ms"], int)
+    baseline = data["equity_baseline_ms"]
+
+    params_resp = await xsmom_client.get("/api/xsmom/params")
+    assert params_resp.status_code == 200
+    params = params_resp.json()["params"]
+    assert params["equity_baseline_ms"] == baseline
+
+
 # ── GET /api/xsmom/summary ────────────────────────────────────────────────────
 
 async def test_summary_with_open_positions(xsmom_client, session_factory, xsmom_strategy_id):

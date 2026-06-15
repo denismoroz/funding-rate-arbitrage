@@ -12,6 +12,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchStrategies,
+  fetchEquity,
   fetchXsmomSummary,
   fetchXsmomPositions,
   fetchXsmomScans,
@@ -20,6 +21,7 @@ import {
   closeAllXsmomPositions,
   rebalanceXsmom,
   patchXsmomParams,
+  resetXsmomEquity,
   pauseStrategy,
   resumeStrategy,
 } from "./api";
@@ -69,6 +71,16 @@ export function useXsmomParams() {
     queryKey: ["xsmom-params"],
     queryFn: fetchXsmomParams,
     staleTime: 30_000,
+  });
+}
+
+export function useXsmomEquity() {
+  const strategyId = useXsmomStrategyId();
+  return useQuery({
+    queryKey: ["xsmom-equity", strategyId],
+    queryFn: () => fetchEquity(strategyId!, { limit: 2000 }),
+    enabled: !!strategyId,
+    refetchInterval: 60_000,
   });
 }
 
@@ -130,6 +142,21 @@ export function usePatchXsmomParams() {
     },
     onError: (err: Error) => {
       alert(`Params update failed: ${err.message}`);
+    },
+  });
+}
+
+/** Reset the XSMOM equity chart start to now; invalidates equity + params. */
+export function useResetXsmomEquity() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => resetXsmomEquity(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["xsmom-equity"] });
+      queryClient.invalidateQueries({ queryKey: ["xsmom-params"] });
+    },
+    onError: (err: Error) => {
+      alert(`Reset failed: ${err.message}`);
     },
   });
 }

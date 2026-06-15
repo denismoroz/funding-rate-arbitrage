@@ -462,6 +462,21 @@ async def get_xsmom_params(
     }
 
 
+@router.post("/equity/reset")
+async def reset_xsmom_equity(request: Request, session: AsyncSession = Depends(get_session)) -> dict:
+    """Set equity_baseline_ms = now in the xsmom Strategy row's params_json (clip the equity chart start)."""
+    _strategy, _repo, _exchange, strategy_id, _loop = _xsmom_state(request)
+    row = await session.get(Strategy, strategy_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="xsmom strategy row not found")
+    now = _now_ms()
+    current = dict(row.params_json) if row.params_json else {}
+    current["equity_baseline_ms"] = now
+    row.params_json = current
+    session.add(row)
+    return {"equity_baseline_ms": now}
+
+
 class PatchXsmomParamsBody(BaseModel):
     params: dict
 

@@ -496,3 +496,7 @@ export function patchXsmomParams(
     patch,
   );
 }
+
+export function resetXsmomEquity(): Promise<{ equity_baseline_ms: number }> {
+  return apiPost<{ equity_baseline_ms: number }>("/xsmom/equity/reset");
+}
