@@ -51,78 +51,73 @@ export function XsmomPositionRow({ position }: { position: XsmomPosition }) {
   const fundingClass = position.funding_usdc >= 0 ? "text-green-600" : "text-red-500";
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
-        {/* Coin + badges */}
-        <span className="font-semibold text-gray-900 text-sm w-16 shrink-0">
-          {position.coin}
-        </span>
+    <tr className="border-b border-gray-50 hover:bg-gray-50">
+      {/* Coin */}
+      <td className="py-1 pr-3 font-medium text-gray-900">{position.coin}</td>
+
+      {/* Side */}
+      <td className="py-1 pr-3">
         <SideBadge side={position.side} />
+      </td>
+
+      {/* State */}
+      <td className="py-1 pr-3">
         <StateBadge state={position.state} />
+      </td>
 
-        {/* Score */}
-        {position.score != null && (
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-mono text-slate-600">
-            score {formatNumber(position.score, 3)}
-          </span>
-        )}
+      {/* Score */}
+      <td className="py-1 pr-3 text-right font-mono text-slate-600">
+        {position.score != null ? formatNumber(position.score, 3) : "—"}
+      </td>
 
-        {/* Leverage */}
-        {position.leverage != null && (
-          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-            {position.leverage}×
-          </span>
-        )}
+      {/* Leverage */}
+      <td className="py-1 pr-3 text-right">
+        {position.leverage != null ? `${position.leverage}×` : "—"}
+      </td>
 
-        {/* Time held */}
-        {position.hours_held != null && (
-          <span className="text-xs text-gray-500">
-            {formatHoursAsDH(position.hours_held)}
-            <span className="ml-1 text-gray-400 text-[10px]">
-              ({formatRelative(position.opened_at_ms, now)})
-            </span>
-          </span>
-        )}
+      {/* Held */}
+      <td
+        className="py-1 pr-3 text-right text-gray-600"
+        title={formatRelative(position.opened_at_ms, now)}
+      >
+        {position.hours_held != null ? formatHoursAsDH(position.hours_held) : "—"}
+      </td>
 
-        {/* Notional */}
-        <span className="text-xs text-gray-600">
-          <span className="text-gray-400">notional </span>
-          {formatCurrency(position.notional)}
-        </span>
+      {/* Perp qty */}
+      <td className="py-1 pr-3 text-right font-mono">
+        {position.perp_leg ? formatQty(position.perp_leg.qty) : "—"}
+      </td>
 
-        {/* Perp leg: qty + entry */}
-        {position.perp_leg && (
-          <span className="text-xs text-gray-600 font-mono">
-            {formatQty(position.perp_leg.qty)} @ {formatCurrency(position.perp_leg.entry_price)}
-          </span>
-        )}
+      {/* Entry */}
+      <td className="py-1 pr-3 text-right font-mono">
+        {position.perp_leg ? formatCurrency(position.perp_leg.entry_price) : "—"}
+      </td>
 
-        <span className="flex-1" />
+      {/* Notional */}
+      <td className="py-1 pr-3 text-right">{formatCurrency(position.notional)}</td>
 
-        {/* PnL */}
-        <span className={`font-mono text-xs ${pnlClass}`}>
-          pnl {pnl != null ? formatCurrencyPrecise(pnl) : "—"}
-        </span>
+      {/* PnL */}
+      <td className={`py-1 pr-3 text-right font-mono ${pnlClass}`}>
+        {pnl != null ? formatCurrencyPrecise(pnl) : "—"}
+      </td>
 
-        {/* Funding */}
-        <span className={`font-mono text-xs ${fundingClass}`}>
-          funding ${position.funding_usdc.toFixed(6)}
-        </span>
+      {/* Funding */}
+      <td className={`py-1 pr-3 text-right font-mono ${fundingClass}`}>
+        {formatCurrencyPrecise(position.funding_usdc)}
+      </td>
 
-        {/* Fees */}
-        <span className="font-mono text-xs text-gray-500">
-          fees ${position.fees_usdc.toFixed(6)}
-        </span>
+      {/* Fees */}
+      <td className="py-1 pr-3 text-right font-mono text-gray-500">
+        {formatCurrencyPrecise(position.fees_usdc)}
+      </td>
 
-        {/* Locked margin */}
-        {position.locked_margin_usdc > 0 && (
-          <span className="text-xs text-gray-500">
-            <span className="text-gray-400">locked </span>
-            {formatCurrency(position.locked_margin_usdc)}
-          </span>
-        )}
+      {/* Locked margin */}
+      <td className="py-1 pr-3 text-right text-gray-500">
+        {position.locked_margin_usdc > 0 ? formatCurrency(position.locked_margin_usdc) : "—"}
+      </td>
 
-        {/* Close button — only when OPENED */}
+      {/* Close button — only when OPENED */}
+      <td className="py-1">
         {isXsmomOpen(position.state) && (
           <button
             type="button"
@@ -133,7 +128,7 @@ export function XsmomPositionRow({ position }: { position: XsmomPosition }) {
             {closeMutation.isPending ? "…" : "Close"}
           </button>
         )}
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }

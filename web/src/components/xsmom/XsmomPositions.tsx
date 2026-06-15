@@ -86,10 +86,32 @@ export function XsmomPositions() {
       )}
 
       {!isLoading && !error && data && data.length > 0 && (
-        <div className="space-y-3">
-          {data.map((p) => (
-            <XsmomPositionRow key={p.id} position={p} />
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-100 text-left text-gray-500">
+                <th className="pb-1 pr-3">Coin</th>
+                <th className="pb-1 pr-3">Side</th>
+                <th className="pb-1 pr-3">State</th>
+                <th className="pb-1 pr-3 text-right">Score</th>
+                <th className="pb-1 pr-3 text-right">Lev</th>
+                <th className="pb-1 pr-3 text-right">Held</th>
+                <th className="pb-1 pr-3 text-right">Perp qty</th>
+                <th className="pb-1 pr-3 text-right">Entry</th>
+                <th className="pb-1 pr-3 text-right">Notional</th>
+                <th className="pb-1 pr-3 text-right">PnL</th>
+                <th className="pb-1 pr-3 text-right">Funding</th>
+                <th className="pb-1 pr-3 text-right">Fees</th>
+                <th className="pb-1 pr-3 text-right">Locked</th>
+                <th className="pb-1"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((p) => (
+                <XsmomPositionRow key={p.id} position={p} />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
