@@ -45,7 +45,9 @@ export function XsmomSummaryCard() {
 
       {!isLoading && !error && data && (
         <div className="flex flex-wrap gap-6">
-          <StatCell label="Cash" value={formatCurrency(data.cash)} className="text-sky-600" />
+          <StatCell label="Total" value={formatCurrency(data.cash)} className="text-gray-900" />
+          <StatCell label="Free" value={formatCurrency(data.free)} className="text-sky-600" />
+          <StatCell label="Locked" value={formatCurrency(data.locked)} className="text-amber-600" />
           <StatCell label="Long total" value={formatCurrency(data.long_total)} className="text-emerald-600" />
           <StatCell label="Short total" value={formatCurrency(data.short_total)} className="text-rose-600" />
           <StatCell

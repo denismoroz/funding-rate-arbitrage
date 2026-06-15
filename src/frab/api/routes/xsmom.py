@@ -254,6 +254,7 @@ async def get_xsmom_summary(
 
     long_total = 0.0
     short_total = 0.0
+    locked = 0.0
     pnl_total: float | None = 0.0
     pnl_available = True
 
@@ -266,6 +267,12 @@ async def get_xsmom_summary(
             long_total += notional
         else:
             short_total += notional
+
+        # Locked margin: prefer live HL margin_used, fallback to reserved required_margin.
+        coin_margin = margin_used_by_coin.get(row.coin) if margin_used_by_coin else None
+        if coin_margin is None:
+            coin_margin = float(sd.get("required_margin") or 0.0)
+        locked += coin_margin
 
         # PnL: prefer HL, fallback DB
         if unrealized_pnl_by_coin:
@@ -290,6 +297,8 @@ async def get_xsmom_summary(
 
     return {
         "cash": cash,
+        "locked": locked,
+        "free": max(cash - locked, 0.0),
         "long_total": long_total,
         "short_total": short_total,
         "pnl_total": pnl_total,

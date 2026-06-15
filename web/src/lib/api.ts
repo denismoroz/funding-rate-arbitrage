@@ -356,6 +356,8 @@ export async function manualOpenFarbPosition(coin: string): Promise<ManualOpenRe
 
 export type XsmomSummary = {
   cash: number;
+  locked: number;
+  free: number;
   long_total: number;
   short_total: number;
   pnl_total: number | null;
