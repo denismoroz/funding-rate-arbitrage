@@ -4,14 +4,15 @@ import Settings from "./pages/Settings";
 import Funding from "./pages/Funding";
 import Journal from "./pages/Journal";
 import Xsmom from "./pages/Xsmom";
-
-type Route = "dashboard" | "settings" | "funding" | "journal" | "xsmom";
+import XsmomSettingsPage from "./pages/XsmomSettingsPage";
+import type { Route } from "./components/Header";
 
 function readHash(): Route {
   const hash = window.location.hash;
   if (hash === "#/settings") return "settings";
   if (hash === "#/funding") return "funding";
   if (hash === "#/journal") return "journal";
+  if (hash === "#/xsmom/settings") return "xsmom-settings";
   if (hash === "#/xsmom") return "xsmom";
   return "dashboard";
 }
@@ -31,6 +32,7 @@ export default function App() {
   if (route === "settings") return <Settings />;
   if (route === "funding") return <Funding />;
   if (route === "journal") return <Journal />;
+  if (route === "xsmom-settings") return <XsmomSettingsPage />;
   if (route === "xsmom") return <Xsmom />;
   return <Dashboard />;
 }
