@@ -3,6 +3,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Default candidate universe = the frozen, backtest-validated HL set
+# (research/cross_sectional/crypto/universe.json, snapshot 2026-06-12, 34 coins:
+# vol≥$1M, ≥547d history, fresh ≤5d). Starting on the exact validated universe keeps
+# live == backtest risk. Operators narrow/override it via the UI (PATCH /api/xsmom/params).
+DEFAULT_XSMOM_UNIVERSE: tuple[str, ...] = (
+    "AAVE", "ADA", "APT", "ARB", "ATOM", "AVAX", "BCH", "BNB", "BTC", "CRV",
+    "DOGE", "DOT", "EIGEN", "ENA", "ETH", "HMSTR", "INJ", "JTO", "JUP", "LINK",
+    "LTC", "NEAR", "PENDLE", "PYTH", "SOL", "SUI", "TAO", "TON", "TRX", "UNI",
+    "WLD", "XLM", "XRP", "ZRO",
+)
+
 
 @dataclass(frozen=True)
 class XsmomParams:
@@ -13,7 +24,7 @@ class XsmomParams:
     """
 
     budget_cap: float = 1000.0
-    universe: tuple[str, ...] = ()           # configured via UI (PATCH /api/xsmom/params)
+    universe: tuple[str, ...] = DEFAULT_XSMOM_UNIVERSE   # backtest-validated default; edit via UI
     n_positions: int | None = None          # None → auto tercile; else total even count
     auto: bool = True
     leverage: int = 1
