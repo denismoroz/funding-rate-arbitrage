@@ -208,7 +208,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
 
         # ── Build service layer ───────────────────────────────────────────
         farb_repo = FarbRepo(session_factory)
-        ledger = Ledger(session_factory)
+        ledger = Ledger(session_factory, account=settings.hl_account_address)
 
         from frab.engine.margin_manager import MarginManager
         from frab.engine.margin_watchdog import MarginWatchdog
@@ -285,7 +285,9 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
                 session_factory
             )
             xsmom_repo = XsmomRepo(session_factory)
-            xsmom_ledger = Ledger(session_factory)
+            xsmom_ledger = Ledger(
+                session_factory, account=settings.xsmom_hl_account_address
+            )
 
             xsmom_margin_mgr = MarginManager(
                 top_up_trigger=settings.top_up_trigger,

@@ -141,6 +141,7 @@ async def _insert_wallet_snapshot(
     coin: str,
     balance: float,
     ts_ms: int = _NOW_MS,
+    account: str | None = None,
 ) -> None:
     async with session_scope(session_factory) as s:
         ws = WalletSnapshotRow(
@@ -149,6 +150,7 @@ async def _insert_wallet_snapshot(
             ts_ms=ts_ms,
             balance=balance,
             source="test",
+            account=account,
         )
         s.add(ws)
 
@@ -353,6 +355,56 @@ async def test_cash_latest_wallet_snapshot_wins(session_factory, strategy_id, ex
 
     # Only the latest (2000.0) should count
     assert snap.cash == pytest.approx(2000.0)
+
+
+# ---------------------------------------------------------------------------
+# Account-scoped cash — two wallets under one exchange_id must not cross-count.
+# Regression for the equity "bump" where FRAB cash absorbed XSMOM's USDC because
+# both wrote (exchange_id=1, USDC) and MAX(ts_ms) picked whichever wrote last.
+# ---------------------------------------------------------------------------
+
+
+async def test_cash_scoped_to_account_ignores_other_wallet(
+    session_factory, strategy_id, exchange_id
+):
+    acct = "0xFRAB"
+    other = "0xXSMOM"
+    # This strategy's wallet.
+    await _insert_wallet_snapshot(
+        session_factory, exchange_id, "USDC", balance=66.0,
+        ts_ms=_NOW_MS - 1000, account=acct.lower(),
+    )
+    # A DIFFERENT wallet under the SAME exchange_id, written more recently —
+    # without scoping this would win the MAX(ts_ms) and spike cash.
+    await _insert_wallet_snapshot(
+        session_factory, exchange_id, "USDC", balance=254.0,
+        ts_ms=_NOW_MS, account=other.lower(),
+    )
+
+    # Account passed mixed-case → Ledger normalises to lower for matching.
+    ledger = Ledger(session_factory, account=acct)
+    snap = await ledger.compute_equity(strategy_id=strategy_id, quotes={})
+
+    assert snap.cash == pytest.approx(66.0)
+
+
+async def test_cash_unscoped_ledger_keeps_global_behaviour(
+    session_factory, strategy_id, exchange_id
+):
+    # account=None (legacy / single-account) → latest row wins regardless of account.
+    await _insert_wallet_snapshot(
+        session_factory, exchange_id, "USDC", balance=66.0,
+        ts_ms=_NOW_MS - 1000, account="0xfrab",
+    )
+    await _insert_wallet_snapshot(
+        session_factory, exchange_id, "USDC", balance=254.0,
+        ts_ms=_NOW_MS, account="0xxsmom",
+    )
+
+    ledger = Ledger(session_factory)
+    snap = await ledger.compute_equity(strategy_id=strategy_id, quotes={})
+
+    assert snap.cash == pytest.approx(254.0)
 
 
 # ---------------------------------------------------------------------------

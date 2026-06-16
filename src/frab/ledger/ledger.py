@@ -74,8 +74,18 @@ class Ledger:
     compute_equity is read-only.  save_snapshot is the only write method.
     """
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        account: str | None = None,
+    ) -> None:
         self._sf = session_factory
+        # HL account address this strategy's cash belongs to. When set, cash is
+        # summed only from wallet_snapshots tagged with this account — so two
+        # strategies sharing an exchange_id (different wallets) don't cross-count
+        # each other's USDC. None → legacy global behaviour (all accounts).
+        self._account = account.lower() if account else None
 
     # ------------------------------------------------------------------
     # Public API
@@ -212,9 +222,10 @@ class Ledger:
                 func.max(ws.ts_ms).label("mt"),
             )
             .where(ws.coin.in_(list(_CASH_COINS)))
-            .group_by(ws.exchange_id, ws.coin)
-            .subquery()
         )
+        if self._account is not None:
+            latest = latest.where(ws.account == self._account)
+        latest = latest.group_by(ws.exchange_id, ws.coin).subquery()
         stmt = (
             select(func.coalesce(func.sum(ws.balance), 0.0))
             .join(
@@ -227,6 +238,8 @@ class Ledger:
             )
             .where(ws.coin.in_(list(_CASH_COINS)))
         )
+        if self._account is not None:
+            stmt = stmt.where(ws.account == self._account)
         result = await session.execute(stmt)
         return float(result.scalar())
 
@@ -247,6 +260,8 @@ class Ledger:
         """
         ws = WalletSnapshotRow
         stmt = select(func.max(ws.ts_ms)).where(ws.coin.in_(list(_CASH_COINS)))
+        if self._account is not None:
+            stmt = stmt.where(ws.account == self._account)
         result = await session.execute(stmt)
         val = result.scalar()
         return int(val) if val is not None else None

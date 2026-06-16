@@ -195,6 +195,7 @@ class WalletSnapshot(Base):
     __tablename__ = "wallet_snapshots"
     __table_args__ = (
         Index("ix_wallet_snapshots_latest", "exchange_id", "coin", "ts_ms"),
+        Index("ix_wallet_snapshots_account_latest", "account", "coin", "ts_ms"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -203,6 +204,10 @@ class WalletSnapshot(Base):
     ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     balance: Mapped[float]
     source: Mapped[str] = mapped_column(String, nullable=False)
+    # HL account address (lower-cased) that this balance belongs to. Distinguishes
+    # multiple wallets that share an exchange_id so a strategy-scoped Ledger can
+    # sum only its own wallet's cash. NULL on rows written before this column.
+    account: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class EquitySnapshot(Base):

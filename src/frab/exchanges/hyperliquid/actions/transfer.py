@@ -93,4 +93,5 @@ class TransferAction(HLAction):
                 ts_ms=now_ms,
                 balance=total_balance,
                 source="hl_account_total",
+                account=(self._address.lower() if self._address else None),
             ))

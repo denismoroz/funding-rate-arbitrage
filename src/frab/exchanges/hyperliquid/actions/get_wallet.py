@@ -90,6 +90,7 @@ class GetWalletAction(HLAction):
                 ts_ms=now_ms,
                 balance=total_balance,
                 source="hl_account_total",
+                account=self._address.lower(),
             ))
 
         return balance
