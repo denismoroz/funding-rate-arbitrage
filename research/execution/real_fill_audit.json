@@ -1,0 +1,1241 @@
+{
+  "test": "real_fill_audit",
+  "description": "Realized execution cost per leg from the live prod DB, to calibrate maker_model 8.5bps (=3.5 fee + 5.0 slippage). READ-ONLY copy of prod DB. INDICATIVE \u2014 ~11d, FRAB-only.",
+  "source_db": "/tmp/frab_prod_audit.db",
+  "data_notes": {
+    "slippage_bps_column": "PLACEHOLDER in DB (only 100/200); reconstructed from prices.mark instead.",
+    "prices_spot_null": "prices.spot is always NULL; mark used for BOTH spot and perp legs (spot slip measured vs perp mark).",
+    "spot_vs_perp": "positions.instrument (SPOT/PERP) via fills.position_id. No market-type column in prices; coins not prefixed.",
+    "frab_legs": "SPOT leg = LONG/buy, PERP leg = SHORT/sell (funding carry).",
+    "is_paper": "0 for all fills (real fills only)."
+  },
+  "assumptions_under_test": {
+    "research_costs_bps_per_leg": 8.5,
+    "maker_model_taker_fee_bps": 3.5,
+    "maker_model_implied_slippage_bps": 5.0
+  },
+  "coverage": {
+    "n_fills_total": 44,
+    "n_perp": 22,
+    "n_spot": 22,
+    "n_paper": 0,
+    "n_distinct_coins": 5,
+    "coins": [
+      "BTC",
+      "ETH",
+      "HYPE",
+      "PURR",
+      "SOL"
+    ],
+    "date_range_utc": {
+      "start": "2026-05-29 02:52:01",
+      "end": "2026-06-08 19:01:07",
+      "span_days": 10.67
+    },
+    "n_fills_with_mark_match": 42,
+    "mark_match_window_ms": 3600000,
+    "mark_match_gap_ms_distribution": {
+      "n": 42,
+      "median": 4122.0,
+      "mean": 5041.4048,
+      "p25": 3073.0,
+      "p75": 6647.75,
+      "min": 1477.0,
+      "max": 13224.0
+    },
+    "strategy": "FRAB two_phase (funding-arb) only; XSMOM not live"
+  },
+  "by_instrument": {
+    "perp": {
+      "n_fills": 22,
+      "fee_bps": {
+        "n": 22,
+        "median": 4.3195,
+        "mean": 4.1334,
+        "p25": 4.3193,
+        "p75": 4.3198,
+        "min": 3.5,
+        "max": 4.32
+      },
+      "slippage_bps": {
+        "n": 21,
+        "median": 0.2045,
+        "mean": 0.5438,
+        "p25": 0.0,
+        "p75": 0.247,
+        "min": -2.7532,
+        "max": 10.5468
+      },
+      "total_bps": {
+        "n": 21,
+        "median": 4.3877,
+        "mean": 4.6683,
+        "p25": 3.7469,
+        "p75": 4.5664,
+        "min": 1.5664,
+        "max": 14.8665
+      }
+    },
+    "spot": {
+      "n_fills": 22,
+      "fee_bps": {
+        "n": 22,
+        "median": 6.72,
+        "mean": 6.4429,
+        "p25": 6.7191,
+        "p75": 7.0,
+        "min": 0.0922,
+        "max": 7.0
+      },
+      "slippage_bps": {
+        "n": 21,
+        "median": -4.9426,
+        "mean": -2.0887,
+        "p25": -6.6593,
+        "p75": 5.2299,
+        "min": -31.7417,
+        "max": 12.0937
+      },
+      "total_bps": {
+        "n": 21,
+        "median": 1.7764,
+        "mean": 4.6567,
+        "p25": 0.2564,
+        "p75": 11.9499,
+        "min": -24.7417,
+        "max": 19.0937
+      }
+    }
+  },
+  "by_coin": {
+    "BTC": {
+      "instruments": [
+        "PERP",
+        "SPOT"
+      ],
+      "is_spot_present": true,
+      "n_fills": 14,
+      "perp": {
+        "n": 7,
+        "fee_bps": {
+          "n": 7,
+          "median": 4.3195,
+          "mean": 4.2025,
+          "p25": 4.3194,
+          "p75": 4.3197,
+          "min": 3.5,
+          "max": 4.3198
+        },
+        "slippage_bps": {
+          "n": 7,
+          "median": 0.0679,
+          "mean": -0.3529,
+          "p25": -0.0682,
+          "p75": 0.0736,
+          "min": -2.7532,
+          "max": 0.2045
+        },
+        "total_bps": {
+          "n": 7,
+          "median": 4.3877,
+          "mean": 3.8496,
+          "p25": 3.8417,
+          "p75": 4.3931,
+          "min": 1.5664,
+          "max": 4.5238
+        }
+      },
+      "spot": {
+        "n": 7,
+        "fee_bps": {
+          "n": 7,
+          "median": 6.72,
+          "mean": 6.7994,
+          "p25": 6.7189,
+          "p75": 6.86,
+          "min": 6.7182,
+          "max": 7.0
+        },
+        "slippage_bps": {
+          "n": 7,
+          "median": 2.2862,
+          "mean": 0.6351,
+          "p25": -5.3037,
+          "p75": 4.8255,
+          "min": -8.2496,
+          "max": 11.3656
+        },
+        "total_bps": {
+          "n": 7,
+          "median": 9.0044,
+          "mean": 7.4345,
+          "p25": 1.5557,
+          "p75": 11.6854,
+          "min": -1.5309,
+          "max": 18.0856
+        }
+      }
+    },
+    "ETH": {
+      "instruments": [
+        "PERP",
+        "SPOT"
+      ],
+      "is_spot_present": true,
+      "n_fills": 18,
+      "perp": {
+        "n": 9,
+        "fee_bps": {
+          "n": 9,
+          "median": 4.3198,
+          "mean": 4.0466,
+          "p25": 3.5,
+          "p75": 4.3199,
+          "min": 3.5,
+          "max": 4.32
+        },
+        "slippage_bps": {
+          "n": 9,
+          "median": 0.2468,
+          "mean": 0.0822,
+          "p25": 0.2466,
+          "p75": 0.247,
+          "min": -0.743,
+          "max": 0.2482
+        },
+        "total_bps": {
+          "n": 9,
+          "median": 4.0726,
+          "mean": 4.1288,
+          "p25": 3.7469,
+          "p75": 4.5664,
+          "min": 3.577,
+          "max": 4.5681
+        }
+      },
+      "spot": {
+        "n": 9,
+        "fee_bps": {
+          "n": 9,
+          "median": 6.72,
+          "mean": 6.6241,
+          "p25": 6.7194,
+          "p75": 7.0,
+          "min": 4.7385,
+          "max": 7.0
+        },
+        "slippage_bps": {
+          "n": 9,
+          "median": -4.2116,
+          "mean": 0.5192,
+          "p25": -6.6593,
+          "p75": 8.1399,
+          "min": -8.6405,
+          "max": 12.0937
+        },
+        "total_bps": {
+          "n": 9,
+          "median": 2.5078,
+          "mean": 7.1432,
+          "p25": 0.3407,
+          "p75": 13.9027,
+          "min": -1.6405,
+          "max": 19.0937
+        }
+      }
+    },
+    "HYPE": {
+      "instruments": [
+        "PERP",
+        "SPOT"
+      ],
+      "is_spot_present": true,
+      "n_fills": 2,
+      "perp": {
+        "n": 1,
+        "fee_bps": {
+          "n": 1,
+          "median": 4.3194,
+          "mean": 4.3194,
+          "p25": 4.3194,
+          "p75": 4.3194,
+          "min": 4.3194,
+          "max": 4.3194
+        },
+        "slippage_bps": {
+          "n": 0,
+          "median": null,
+          "mean": null,
+          "p25": null,
+          "p75": null,
+          "min": null,
+          "max": null
+        },
+        "total_bps": {
+          "n": 0,
+          "median": null,
+          "mean": null,
+          "p25": null,
+          "p75": null,
+          "min": null,
+          "max": null
+        }
+      },
+      "spot": {
+        "n": 1,
+        "fee_bps": {
+          "n": 1,
+          "median": 0.0922,
+          "mean": 0.0922,
+          "p25": 0.0922,
+          "p75": 0.0922,
+          "min": 0.0922,
+          "max": 0.0922
+        },
+        "slippage_bps": {
+          "n": 0,
+          "median": null,
+          "mean": null,
+          "p25": null,
+          "p75": null,
+          "min": null,
+          "max": null
+        },
+        "total_bps": {
+          "n": 0,
+          "median": null,
+          "mean": null,
+          "p25": null,
+          "p75": null,
+          "min": null,
+          "max": null
+        }
+      }
+    },
+    "PURR": {
+      "instruments": [
+        "PERP",
+        "SPOT"
+      ],
+      "is_spot_present": true,
+      "n_fills": 2,
+      "perp": {
+        "n": 1,
+        "fee_bps": {
+          "n": 1,
+          "median": 4.3194,
+          "mean": 4.3194,
+          "p25": 4.3194,
+          "p75": 4.3194,
+          "min": 4.3194,
+          "max": 4.3194
+        },
+        "slippage_bps": {
+          "n": 1,
+          "median": 0.0,
+          "mean": 0.0,
+          "p25": -0.0,
+          "p75": -0.0,
+          "min": -0.0,
+          "max": -0.0
+        },
+        "total_bps": {
+          "n": 1,
+          "median": 4.3194,
+          "mean": 4.3194,
+          "p25": 4.3194,
+          "p75": 4.3194,
+          "min": 4.3194,
+          "max": 4.3194
+        }
+      },
+      "spot": {
+        "n": 1,
+        "fee_bps": {
+          "n": 1,
+          "median": 7.0,
+          "mean": 7.0,
+          "p25": 7.0,
+          "p75": 7.0,
+          "min": 7.0,
+          "max": 7.0
+        },
+        "slippage_bps": {
+          "n": 1,
+          "median": -31.7417,
+          "mean": -31.7417,
+          "p25": -31.7417,
+          "p75": -31.7417,
+          "min": -31.7417,
+          "max": -31.7417
+        },
+        "total_bps": {
+          "n": 1,
+          "median": -24.7417,
+          "mean": -24.7417,
+          "p25": -24.7417,
+          "p75": -24.7417,
+          "min": -24.7417,
+          "max": -24.7417
+        }
+      }
+    },
+    "SOL": {
+      "instruments": [
+        "PERP",
+        "SPOT"
+      ],
+      "is_spot_present": true,
+      "n_fills": 8,
+      "perp": {
+        "n": 4,
+        "fee_bps": {
+          "n": 4,
+          "median": 4.3196,
+          "mean": 4.1148,
+          "p25": 4.1146,
+          "p75": 4.3198,
+          "min": 3.5,
+          "max": 4.3198
+        },
+        "slippage_bps": {
+          "n": 4,
+          "median": 2.4718,
+          "mean": 3.2873,
+          "p25": 1.2403,
+          "p75": 4.5187,
+          "min": -2.3413,
+          "max": 10.5468
+        },
+        "total_bps": {
+          "n": 4,
+          "median": 6.3815,
+          "mean": 7.4021,
+          "p25": 4.9453,
+          "p75": 8.8383,
+          "min": 1.9786,
+          "max": 14.8665
+        }
+      },
+      "spot": {
+        "n": 4,
+        "fee_bps": {
+          "n": 4,
+          "median": 6.86,
+          "mean": 6.86,
+          "p25": 6.72,
+          "p75": 7.0,
+          "min": 6.72,
+          "max": 7.0
+        },
+        "slippage_bps": {
+          "n": 4,
+          "median": -6.3835,
+          "mean": -5.3096,
+          "p25": -6.6109,
+          "p75": -5.0822,
+          "min": -7.0529,
+          "max": -1.4186
+        },
+        "total_bps": {
+          "n": 4,
+          "median": 0.4765,
+          "mean": 1.5504,
+          "p25": 0.1791,
+          "p75": 1.8478,
+          "min": -0.0529,
+          "max": 5.3014
+        }
+      }
+    }
+  },
+  "by_fill_side": {
+    "long": {
+      "n_fills": 22,
+      "fee_bps": {
+        "n": 22,
+        "median": 6.7184,
+        "mean": 5.4138,
+        "p25": 4.3196,
+        "p75": 7.0,
+        "min": 0.0922,
+        "max": 7.0
+      },
+      "slippage_bps": {
+        "n": 21,
+        "median": -4.2116,
+        "mean": -3.9709,
+        "p25": -6.6593,
+        "p75": 0.2467,
+        "min": -31.7417,
+        "max": 10.5468
+      },
+      "total_bps": {
+        "n": 21,
+        "median": 1.7764,
+        "mean": 1.6964,
+        "p25": 0.3407,
+        "p75": 3.747,
+        "min": -24.7417,
+        "max": 14.8665
+      }
+    },
+    "short": {
+      "n_fills": 22,
+      "fee_bps": {
+        "n": 22,
+        "median": 4.3198,
+        "mean": 5.1625,
+        "p25": 4.3195,
+        "p75": 6.72,
+        "min": 3.5,
+        "max": 7.0
+      },
+      "slippage_bps": {
+        "n": 21,
+        "median": 0.2469,
+        "mean": 2.426,
+        "p25": 0.0677,
+        "p75": 5.2299,
+        "min": -6.4636,
+        "max": 12.0937
+      },
+      "total_bps": {
+        "n": 21,
+        "median": 4.5677,
+        "mean": 7.6286,
+        "p25": 4.3874,
+        "p75": 11.9499,
+        "min": 0.2564,
+        "max": 19.0937
+      }
+    }
+  },
+  "headline_perp": {
+    "fee_bps_median": 4.3195,
+    "slippage_bps_median": 0.2045,
+    "total_bps_median": 4.3877,
+    "vs_research_8.5": "8.5bps is TOO HIGH (real cost lower) \u2014 research is conservative"
+  },
+  "headline_spot_context": {
+    "fee_bps_median": 6.72,
+    "slippage_bps_median": -4.9426,
+    "total_bps_median": 1.7764,
+    "note": "Do NOT extrapolate to perp-only research books. The spot slippage_bps is CONTAMINATED by the spot-vs-perp BASIS: spot LONG legs fill systematically BELOW the perp mark (negative 'slippage') because prices.mark is the PERP mark and spot trades below perp under positive funding. So spot total (1.7764 bps) UNDERSTATES true spot exec cost; the spot FEE median (~6.7-7.0 bps) is the reliable spot number."
+  },
+  "caveats": [
+    "~11 days live, FRAB-only, 44 fills (22 perp/22 spot) -> INDICATIVE, NOT definitive. Tiny sample.",
+    "Slippage via nearest prices.mark is an APPROXIMATION (no order-book snapshot at fill time). Match-gap distribution reported (median ~4s).",
+    "prices.spot is NULL; spot-leg slippage is measured vs the PERP mark, so spot 'slippage' is dominated by the spot-vs-perp BASIS, not exec quality. Perp slippage is clean (perp fills vs perp mark).",
+    "Perp fee shows ~3.5 (true base taker) and ~4.32 (HL rounding on micro ~$12 notionals) \u2014 at larger live size the realized perp fee -> 3.5.",
+    "Does NOT measure passive fill-rate (never posted maker orders). A live post-only A/B test is still required to price maker fill-rate.",
+    "Do NOT extrapolate spot costs to the perp-only research books (XSMOM/trend)."
+  ],
+  "verdict": "CALIBRATION (10.67d, FRAB-only, 44 fills / 22 perp \u2014 INDICATIVE, NOT definitive). Realized perp fee median = 4.3195 bps vs assumed taker fee 3.5 bps (note: micro ~$12 notionals; some fills land at exactly 3.5 bps, others ~4.32 from HL fee rounding at tiny size \u2014 base perp taker IS 3.5). Realized perp slippage median = 0.2045 bps vs assumed implied slippage 5.0 bps (nearest-mark approximation, median match gap 4122.0 ms). Realized perp TOTAL cost/leg median = 4.3877 bps vs research baseline 8.5 bps. VERDICT: 8.5bps is TOO HIGH (real cost lower) \u2014 research is conservative. maker_model defaults: taker_fee=3.5 (CONFIRMED); implied_slippage=5.0 (realized perp slippage 0.2045 bps). Maker-switch implication: spread_capture is the maker prize and it is bounded by REAL slippage; if realized slippage << 5bps the maker upside is SMALLER than maker_model assumes; if >= 5bps the prize is bigger. Spot context (do NOT apply to perp-only research books): fee 6.72 bps, slippage -4.9426 bps, total 1.7764 bps. CAVEATS: nearest-mark is an approximation vs the PERP mark (prices.spot is NULL); does NOT measure passive fill-rate (we have never posted maker orders \u2014 still needs a live post-only A/B).",
+  "per_fill": [
+    {
+      "fill_id": 1,
+      "coin": "BTC",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780023121478,
+      "qty": 0.00016,
+      "price": 73276.0,
+      "fee": 0.007877170000000001,
+      "notional_usdc": 11.7242,
+      "fee_bps": 6.7188,
+      "mark": 73336.5,
+      "mark_gap_ms": 1477,
+      "slippage_bps": -8.2496,
+      "total_bps": -1.5309
+    },
+    {
+      "fill_id": 2,
+      "coin": "BTC",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780023123652,
+      "qty": 0.00016,
+      "price": 73335.0,
+      "fee": 0.005068,
+      "notional_usdc": 11.7336,
+      "fee_bps": 4.3192,
+      "mark": 73336.5,
+      "mark_gap_ms": 3651,
+      "slippage_bps": 0.2045,
+      "total_bps": 4.5238
+    },
+    {
+      "fill_id": 3,
+      "coin": "BTC",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780045143197,
+      "qty": 0.00016,
+      "price": 73615.0,
+      "fee": 0.005088,
+      "notional_usdc": 11.7784,
+      "fee_bps": 4.3198,
+      "mark": 73614.5,
+      "mark_gap_ms": 3196,
+      "slippage_bps": 0.0679,
+      "total_bps": 4.3877
+    },
+    {
+      "fill_id": 4,
+      "coin": "BTC",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780045145315,
+      "qty": 0.00015,
+      "price": 73576.0,
+      "fee": 0.00741646,
+      "notional_usdc": 11.0364,
+      "fee_bps": 6.72,
+      "mark": 73614.5,
+      "mark_gap_ms": 5314,
+      "slippage_bps": 5.2299,
+      "total_bps": 11.9499
+    },
+    {
+      "fill_id": 5,
+      "coin": "BTC",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780059603545,
+      "qty": 0.00016,
+      "price": 73217.0,
+      "fee": 0.008200304,
+      "notional_usdc": 11.7147,
+      "fee_bps": 7.0,
+      "mark": 73258.5,
+      "mark_gap_ms": 3544,
+      "slippage_bps": -5.6649,
+      "total_bps": 1.3351
+    },
+    {
+      "fill_id": 6,
+      "coin": "BTC",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780059607892,
+      "qty": 0.00016,
+      "price": 73258.0,
+      "fee": 0.005063,
+      "notional_usdc": 11.7213,
+      "fee_bps": 4.3195,
+      "mark": 73258.5,
+      "mark_gap_ms": 7891,
+      "slippage_bps": 0.0683,
+      "total_bps": 4.3877
+    },
+    {
+      "fill_id": 7,
+      "coin": "BTC",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780125362318,
+      "qty": 0.00016,
+      "price": 73512.0,
+      "fee": 0.004116672000000001,
+      "notional_usdc": 11.7619,
+      "fee_bps": 3.5,
+      "mark": 73513.5,
+      "mark_gap_ms": 2318,
+      "slippage_bps": -0.204,
+      "total_bps": 3.296
+    },
+    {
+      "fill_id": 8,
+      "coin": "BTC",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780125365857,
+      "qty": 0.00016,
+      "price": 73481.0,
+      "fee": 0.008229872000000001,
+      "notional_usdc": 11.757,
+      "fee_bps": 7.0,
+      "mark": 73513.5,
+      "mark_gap_ms": 5857,
+      "slippage_bps": 4.421,
+      "total_bps": 11.421
+    },
+    {
+      "fill_id": 9,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780128062841,
+      "qty": 0.0059,
+      "price": 2013.7,
+      "fee": 0.0079823068,
+      "notional_usdc": 11.8808,
+      "fee_bps": 6.7186,
+      "mark": 2014.75,
+      "mark_gap_ms": 2831,
+      "slippage_bps": -5.2116,
+      "total_bps": 1.5071
+    },
+    {
+      "fill_id": 10,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780128065353,
+      "qty": 0.0059,
+      "price": 2014.7,
+      "fee": 0.005135,
+      "notional_usdc": 11.8867,
+      "fee_bps": 4.3199,
+      "mark": 2014.75,
+      "mark_gap_ms": 5343,
+      "slippage_bps": 0.2482,
+      "total_bps": 4.5681
+    },
+    {
+      "fill_id": 11,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780144262845,
+      "qty": 0.0059,
+      "price": 2018.6,
+      "fee": 0.005145,
+      "notional_usdc": 11.9097,
+      "fee_bps": 4.32,
+      "mark": 2018.75,
+      "mark_gap_ms": 2844,
+      "slippage_bps": -0.743,
+      "total_bps": 3.577
+    },
+    {
+      "fill_id": 12,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780144264896,
+      "qty": 0.0058,
+      "price": 2017.3,
+      "fee": 0.00786262,
+      "notional_usdc": 11.7003,
+      "fee_bps": 6.72,
+      "mark": 2018.75,
+      "mark_gap_ms": 4895,
+      "slippage_bps": 7.1827,
+      "total_bps": 13.9027
+    },
+    {
+      "fill_id": 13,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780144383020,
+      "qty": 0.0129,
+      "price": 2017.4,
+      "fee": 0.0174868232,
+      "notional_usdc": 26.0245,
+      "fee_bps": 6.7194,
+      "mark": 2018.25,
+      "mark_gap_ms": 3018,
+      "slippage_bps": -4.2116,
+      "total_bps": 2.5078
+    },
+    {
+      "fill_id": 14,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780144384859,
+      "qty": 0.0129,
+      "price": 2018.2,
+      "fee": 0.011247,
+      "notional_usdc": 26.0348,
+      "fee_bps": 4.32,
+      "mark": 2018.25,
+      "mark_gap_ms": 4857,
+      "slippage_bps": 0.2477,
+      "total_bps": 4.5677
+    },
+    {
+      "fill_id": 15,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780159142185,
+      "qty": 0.0129,
+      "price": 2027.1,
+      "fee": 0.011296,
+      "notional_usdc": 26.1496,
+      "fee_bps": 4.3198,
+      "mark": 2027.05,
+      "mark_gap_ms": 2183,
+      "slippage_bps": 0.2467,
+      "total_bps": 4.5664
+    },
+    {
+      "fill_id": 16,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780159144186,
+      "qty": 0.0129,
+      "price": 2025.4,
+      "fee": 0.01755778,
+      "notional_usdc": 26.1277,
+      "fee_bps": 6.72,
+      "mark": 2027.05,
+      "mark_gap_ms": 4184,
+      "slippage_bps": 8.1399,
+      "total_bps": 14.8599
+    },
+    {
+      "fill_id": 17,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780159203027,
+      "qty": 0.0128,
+      "price": 2025.9,
+      "fee": 0.018152064000000002,
+      "notional_usdc": 25.9315,
+      "fee_bps": 7.0,
+      "mark": 2027.25,
+      "mark_gap_ms": 3026,
+      "slippage_bps": -6.6593,
+      "total_bps": 0.3407
+    },
+    {
+      "fill_id": 18,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780159206471,
+      "qty": 0.0128,
+      "price": 2027.2,
+      "fee": 0.011209,
+      "notional_usdc": 25.9482,
+      "fee_bps": 4.3198,
+      "mark": 2027.25,
+      "mark_gap_ms": 6470,
+      "slippage_bps": 0.2466,
+      "total_bps": 4.5664
+    },
+    {
+      "fill_id": 19,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780159442476,
+      "qty": 0.0128,
+      "price": 2025.9,
+      "fee": 0.009076032000000001,
+      "notional_usdc": 25.9315,
+      "fee_bps": 3.5,
+      "mark": 2025.85,
+      "mark_gap_ms": 2476,
+      "slippage_bps": 0.2468,
+      "total_bps": 3.7468
+    },
+    {
+      "fill_id": 20,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780159446910,
+      "qty": 0.0128,
+      "price": 2023.4,
+      "fee": 0.018129664,
+      "notional_usdc": 25.8995,
+      "fee_bps": 7.0,
+      "mark": 2025.85,
+      "mark_gap_ms": 6910,
+      "slippage_bps": 12.0937,
+      "total_bps": 19.0937
+    },
+    {
+      "fill_id": 21,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780159803032,
+      "qty": 0.0078,
+      "price": 2023.6,
+      "fee": 0.011048856,
+      "notional_usdc": 15.7841,
+      "fee_bps": 7.0,
+      "mark": 2025.35,
+      "mark_gap_ms": 3032,
+      "slippage_bps": -8.6405,
+      "total_bps": -1.6405
+    },
+    {
+      "fill_id": 22,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780159806981,
+      "qty": 0.0078,
+      "price": 2025.3,
+      "fee": 0.005529068999999999,
+      "notional_usdc": 15.7973,
+      "fee_bps": 3.5,
+      "mark": 2025.35,
+      "mark_gap_ms": 6981,
+      "slippage_bps": 0.2469,
+      "total_bps": 3.7469
+    },
+    {
+      "fill_id": 23,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780160882481,
+      "qty": 0.0078,
+      "price": 2024.0,
+      "fee": 0.005525519999999999,
+      "notional_usdc": 15.7872,
+      "fee_bps": 3.5,
+      "mark": 2023.95,
+      "mark_gap_ms": 2481,
+      "slippage_bps": 0.247,
+      "total_bps": 3.747
+    },
+    {
+      "fill_id": 24,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780160886311,
+      "qty": 0.0078,
+      "price": 2022.1,
+      "fee": 0.00747368,
+      "notional_usdc": 15.7724,
+      "fee_bps": 4.7385,
+      "mark": 2023.95,
+      "mark_gap_ms": 6311,
+      "slippage_bps": 9.1405,
+      "total_bps": 13.879
+    },
+    {
+      "fill_id": 25,
+      "coin": "ETH",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780161003487,
+      "qty": 0.0078,
+      "price": 2023.3,
+      "fee": 0.011047218,
+      "notional_usdc": 15.7817,
+      "fee_bps": 7.0,
+      "mark": 2024.75,
+      "mark_gap_ms": 3485,
+      "slippage_bps": -7.1614,
+      "total_bps": -0.1614
+    },
+    {
+      "fill_id": 26,
+      "coin": "ETH",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780161007661,
+      "qty": 0.0078,
+      "price": 2024.8,
+      "fee": 0.006822,
+      "notional_usdc": 15.7934,
+      "fee_bps": 4.3195,
+      "mark": 2024.75,
+      "mark_gap_ms": 7659,
+      "slippage_bps": -0.2469,
+      "total_bps": 4.0726
+    },
+    {
+      "fill_id": 27,
+      "coin": "BTC",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780161010732,
+      "qty": 0.00021,
+      "price": 73811.0,
+      "fee": 0.0104147321,
+      "notional_usdc": 15.5003,
+      "fee_bps": 6.719,
+      "mark": 73847.5,
+      "mark_gap_ms": 10730,
+      "slippage_bps": -4.9426,
+      "total_bps": 1.7764
+    },
+    {
+      "fill_id": 28,
+      "coin": "BTC",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780161013226,
+      "qty": 0.00021,
+      "price": 73847.0,
+      "fee": 0.006699,
+      "notional_usdc": 15.5079,
+      "fee_bps": 4.3197,
+      "mark": 73847.5,
+      "mark_gap_ms": 13224,
+      "slippage_bps": 0.0677,
+      "total_bps": 4.3874
+    },
+    {
+      "fill_id": 29,
+      "coin": "SOL",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780197963966,
+      "qty": 0.16,
+      "price": 83.236,
+      "fee": 0.009322432,
+      "notional_usdc": 13.3178,
+      "fee_bps": 7.0,
+      "mark": 83.2885,
+      "mark_gap_ms": 3963,
+      "slippage_bps": -6.3034,
+      "total_bps": 0.6966
+    },
+    {
+      "fill_id": 30,
+      "coin": "SOL",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780197968964,
+      "qty": 0.16,
+      "price": 83.308,
+      "fee": 0.005758,
+      "notional_usdc": 13.3293,
+      "fee_bps": 4.3198,
+      "mark": 83.2885,
+      "mark_gap_ms": 8961,
+      "slippage_bps": -2.3413,
+      "total_bps": 1.9786
+    },
+    {
+      "fill_id": 31,
+      "coin": "SOL",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780335903501,
+      "qty": 0.16,
+      "price": 81.153,
+      "fee": 0.005609,
+      "notional_usdc": 12.9845,
+      "fee_bps": 4.3198,
+      "mark": 81.0675,
+      "mark_gap_ms": 3501,
+      "slippage_bps": 10.5468,
+      "total_bps": 14.8665
+    },
+    {
+      "fill_id": 32,
+      "coin": "SOL",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780335906707,
+      "qty": 0.15,
+      "price": 81.079,
+      "fee": 0.00817276,
+      "notional_usdc": 12.1618,
+      "fee_bps": 6.72,
+      "mark": 81.0675,
+      "mark_gap_ms": 6707,
+      "slippage_bps": -1.4186,
+      "total_bps": 5.3014
+    },
+    {
+      "fill_id": 33,
+      "coin": "HYPE",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780336984228,
+      "qty": 0.19,
+      "price": 72.902,
+      "fee": 0.00012767,
+      "notional_usdc": 13.8514,
+      "fee_bps": 0.0922,
+      "mark": null,
+      "mark_gap_ms": null,
+      "slippage_bps": null,
+      "total_bps": null
+    },
+    {
+      "fill_id": 34,
+      "coin": "HYPE",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780336986567,
+      "qty": 0.19,
+      "price": 72.951,
+      "fee": 0.005987,
+      "notional_usdc": 13.8607,
+      "fee_bps": 4.3194,
+      "mark": null,
+      "mark_gap_ms": null,
+      "slippage_bps": null,
+      "total_bps": null
+    },
+    {
+      "fill_id": 35,
+      "coin": "BTC",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780365423728,
+      "qty": 0.00021,
+      "price": 70808.0,
+      "fee": 0.006423,
+      "notional_usdc": 14.8697,
+      "fee_bps": 4.3195,
+      "mark": 70827.5,
+      "mark_gap_ms": 3713,
+      "slippage_bps": -2.7532,
+      "total_bps": 1.5664
+    },
+    {
+      "fill_id": 36,
+      "coin": "BTC",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780365426426,
+      "qty": 0.00021,
+      "price": 70747.0,
+      "fee": 0.00998381,
+      "notional_usdc": 14.8569,
+      "fee_bps": 6.72,
+      "mark": 70827.5,
+      "mark_gap_ms": 6411,
+      "slippage_bps": 11.3656,
+      "total_bps": 18.0856
+    },
+    {
+      "fill_id": 37,
+      "coin": "SOL",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780365724065,
+      "qty": 0.22,
+      "price": 80.052,
+      "fee": 0.012328008000000001,
+      "notional_usdc": 17.6114,
+      "fee_bps": 7.0,
+      "mark": 80.1085,
+      "mark_gap_ms": 4060,
+      "slippage_bps": -7.0529,
+      "total_bps": -0.0529
+    },
+    {
+      "fill_id": 38,
+      "coin": "SOL",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780365728307,
+      "qty": 0.23,
+      "price": 80.089,
+      "fee": 0.006447164500000001,
+      "notional_usdc": 18.4205,
+      "fee_bps": 3.5,
+      "mark": 80.1085,
+      "mark_gap_ms": 8302,
+      "slippage_bps": 2.4342,
+      "total_bps": 5.9342
+    },
+    {
+      "fill_id": 39,
+      "coin": "PURR",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780375323244,
+      "qty": 77.0,
+      "price": 0.14446,
+      "fee": 0.007786394000000001,
+      "notional_usdc": 11.1234,
+      "fee_bps": 7.0,
+      "mark": 0.14492,
+      "mark_gap_ms": 3244,
+      "slippage_bps": -31.7417,
+      "total_bps": -24.7417
+    },
+    {
+      "fill_id": 40,
+      "coin": "PURR",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780375328099,
+      "qty": 77.0,
+      "price": 0.14492,
+      "fee": 0.00482,
+      "notional_usdc": 11.1588,
+      "fee_bps": 4.3194,
+      "mark": 0.14492,
+      "mark_gap_ms": 8099,
+      "slippage_bps": -0.0,
+      "total_bps": 4.3194
+    },
+    {
+      "fill_id": 41,
+      "coin": "SOL",
+      "instrument": "PERP",
+      "fill_side": "long",
+      "ts_ms": 1780906742413,
+      "qty": 0.23,
+      "price": 65.769,
+      "fee": 0.006534,
+      "notional_usdc": 15.1269,
+      "fee_bps": 4.3195,
+      "mark": 65.7525,
+      "mark_gap_ms": 2406,
+      "slippage_bps": 2.5094,
+      "total_bps": 6.8289
+    },
+    {
+      "fill_id": 42,
+      "coin": "SOL",
+      "instrument": "SPOT",
+      "fill_side": "short",
+      "ts_ms": 1780906744968,
+      "qty": 0.22,
+      "price": 65.795,
+      "fee": 0.00972713,
+      "notional_usdc": 14.4749,
+      "fee_bps": 6.72,
+      "mark": 65.7525,
+      "mark_gap_ms": 4961,
+      "slippage_bps": -6.4636,
+      "total_bps": 0.2564
+    },
+    {
+      "fill_id": 43,
+      "coin": "BTC",
+      "instrument": "SPOT",
+      "fill_side": "long",
+      "ts_ms": 1780945264081,
+      "qty": 0.00033,
+      "price": 63439.0,
+      "fee": 0.0140644263,
+      "notional_usdc": 20.9349,
+      "fee_bps": 6.7182,
+      "mark": 63424.5,
+      "mark_gap_ms": 4059,
+      "slippage_bps": 2.2862,
+      "total_bps": 9.0044
+    },
+    {
+      "fill_id": 44,
+      "coin": "BTC",
+      "instrument": "PERP",
+      "fill_side": "short",
+      "ts_ms": 1780945267186,
+      "qty": 0.00033,
+      "price": 63424.0,
+      "fee": 0.009041,
+      "notional_usdc": 20.9299,
+      "fee_bps": 4.3197,
+      "mark": 63424.5,
+      "mark_gap_ms": 7164,
+      "slippage_bps": 0.0788,
+      "total_bps": 4.3985
+    }
+  ]
+}
