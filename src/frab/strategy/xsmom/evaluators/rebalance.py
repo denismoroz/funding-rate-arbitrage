@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from frab.db.models import Strategy as StrategyRow
 from frab.db.session import session_scope
 from frab.domain import Side, XsmomState
-from frab.exchanges.protocol import Exchange
+from frab.exchanges.protocol import Exchange, WalletKind
 from frab.repo.xsmom_repo import XsmomRepo, XsmomStateConflict
 from frab.strategy.two_phase.states._helpers import publish_event
 from frab.strategy.xsmom.evaluators.signal import compute_scores
@@ -132,7 +132,42 @@ class XsmomRebalance:
         # ── 2. Build target book ──────────────────────────────────────────────
         universe = self._params.universe
         universe_len = len(universe)
-        k = self._params.compute_k(universe_len)
+
+        # Fetch live wallet balance (best-effort; None on failure)
+        wallet: float | None = None
+        try:
+            wallet = await self._exchange.get_wallet("USDC", WalletKind.SPOT)
+        except Exception:  # noqa: BLE001
+            logger.warning("xsmom reconcile: failed to fetch wallet balance; sizing with wallet=None")
+
+        # Compute envelope sizing breakdown — single source of truth
+        breakdown = self._params.sizing_breakdown(universe_len, wallet)
+        k = breakdown["k"]
+        notional = breakdown["per_leg"]
+        required_margin = self._params.compute_required_margin(notional)
+
+        # Guard: if even k=1 can't produce a valid leg, skip opening
+        if not breakdown["min_leg_ok"]:
+            await publish_event(
+                self._bus,
+                level="WARNING",
+                kind="xsmom.sizing_warning",
+                message=(
+                    f"book too small to place valid legs: book={breakdown['book']:.2f} "
+                    f"per_leg={breakdown['per_leg']:.2f} < min={breakdown['min_leg']:.2f} "
+                    f"— skipping rebalance open step"
+                ),
+                payload={
+                    "strategy_id": self._strategy_id,
+                    **breakdown,
+                },
+            )
+            logger.warning(
+                "xsmom reconcile strategy_id=%s: book too small (per_leg=%.2f < min=%.2f)"
+                " — skipping open step",
+                self._strategy_id, breakdown["per_leg"], breakdown["min_leg"],
+            )
+            return {"kept": [], "opened": [], "dropped": [], "flipped": []}
 
         # Rank coins that have a finite score; handle degenerate case where
         # fewer than 2k coins have scores: take min(k, available // 2) per side.
@@ -167,9 +202,6 @@ class XsmomRebalance:
         opened: list[int] = []   # new xsmom_position ids created
         dropped: list[int] = []  # xsmom_position ids transitioned to CLOSE
         flipped: list[str] = []  # coins that had FLIP (old dropped + new opened)
-
-        notional = self._params.compute_notional_per_position(k if effective_k > 0 else 1)
-        required_margin = self._params.compute_required_margin(notional)
 
         # Process target coins first
         for coin, target_side in target.items():
@@ -259,12 +291,17 @@ class XsmomRebalance:
                 "strategy_id": self._strategy_id,
                 "k": k,
                 "effective_k": effective_k,
+                "per_leg": notional,
+                "book": breakdown["book"],
+                "reserve": breakdown["reserve"],
                 **{kk: vv for kk, vv in summary.items()},
             },
         )
         logger.info(
-            "xsmom reconcile strategy_id=%s k=%d kept=%d opened=%d dropped=%d flipped=%d",
+            "xsmom reconcile strategy_id=%s k=%d kept=%d opened=%d dropped=%d flipped=%d"
+            " book=%.2f per_leg=%.2f",
             self._strategy_id, k,
             len(kept), len(opened), len(dropped), len(flipped),
+            breakdown["book"], notional,
         )
         return summary

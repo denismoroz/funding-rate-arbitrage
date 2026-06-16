@@ -1,6 +1,8 @@
 """Unit tests for XsmomParams."""
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from frab.strategy.xsmom.params import XsmomParams
@@ -163,3 +165,158 @@ class TestSerialization:
         p1 = _make_params(budget_cap=100.0)
         p2 = _make_params(budget_cap=200.0)
         assert p1 != p2
+
+
+# ── sizing_breakdown ─────────────────────────────────────────────────────────
+
+class TestSizingBreakdown:
+    """Tests for the envelope sizing formula (single source of truth)."""
+
+    # ── reserve floor vs 8% ────────────────────────────────────────────────
+
+    def test_reserve_uses_8_pct_when_above_floor(self):
+        """budget=1000 → 8% = 80 > 20 → reserve=80."""
+        p = _make_params(budget_cap=1000.0)
+        bd = p.sizing_breakdown(6, wallet=1000.0)
+        assert bd["reserve"] == pytest.approx(80.0)
+
+    def test_reserve_uses_floor_when_8pct_below_20(self):
+        """budget=200 → 8% = 16 < 20 → reserve=20."""
+        p = _make_params(budget_cap=200.0)
+        bd = p.sizing_breakdown(6, wallet=200.0)
+        assert bd["reserve"] == pytest.approx(20.0)
+
+    def test_reserve_exactly_at_crossover(self):
+        """budget=250 → 8% = 20 == 20 → reserve=20."""
+        p = _make_params(budget_cap=250.0)
+        bd = p.sizing_breakdown(6, wallet=250.0)
+        assert bd["reserve"] == pytest.approx(20.0)
+
+    def test_reserve_just_above_crossover(self):
+        """budget=260 → 8% = 20.8 > 20 → reserve=20.8."""
+        p = _make_params(budget_cap=260.0)
+        bd = p.sizing_breakdown(6, wallet=260.0)
+        assert bd["reserve"] == pytest.approx(20.8)
+
+    # ── wallet cap (effective) ─────────────────────────────────────────────
+
+    def test_effective_capped_by_wallet_below_budget(self):
+        """wallet < budget → effective = wallet, book shrinks."""
+        p = _make_params(budget_cap=1000.0)
+        bd = p.sizing_breakdown(6, wallet=400.0)
+        assert bd["effective"] == pytest.approx(400.0)
+        assert bd["book"] == pytest.approx(400.0 - 80.0)  # reserve = 8% of budget = 80
+
+    def test_effective_uses_budget_when_wallet_exceeds(self):
+        """wallet > budget → effective = budget_cap."""
+        p = _make_params(budget_cap=500.0)
+        bd = p.sizing_breakdown(6, wallet=2000.0)
+        assert bd["effective"] == pytest.approx(500.0)
+        assert bd["book"] == pytest.approx(500.0 - 40.0)  # 8% of 500
+
+    def test_effective_equals_budget_when_wallet_none(self):
+        """wallet=None (preview mode) → effective = budget_cap."""
+        p = _make_params(budget_cap=1000.0)
+        bd = p.sizing_breakdown(6, wallet=None)
+        assert bd["effective"] == pytest.approx(1000.0)
+
+    # ── book and per_side ──────────────────────────────────────────────────
+
+    def test_book_is_effective_minus_reserve(self):
+        """budget=1000, wallet=1000 → book = 1000 - 80 = 920."""
+        p = _make_params(budget_cap=1000.0)
+        bd = p.sizing_breakdown(6, wallet=1000.0)
+        assert bd["book"] == pytest.approx(920.0)
+        assert bd["per_side"] == pytest.approx(460.0)
+        assert bd["long"] == pytest.approx(460.0)
+        assert bd["short"] == pytest.approx(460.0)
+
+    def test_book_floor_is_zero(self):
+        """When wallet is tiny, book doesn't go negative."""
+        p = _make_params(budget_cap=1000.0)
+        bd = p.sizing_breakdown(6, wallet=10.0)
+        assert bd["book"] >= 0.0
+
+    # ── min-leg clamp reduces k ────────────────────────────────────────────
+
+    def test_min_leg_clamp_reduces_k(self):
+        """Very small book → k is reduced so each leg stays >= MIN_LEG."""
+        # budget=100, reserve=20, book=80, per_side=40
+        # auto k=6//3=2, max_k=floor(40/12)=3, so k=min(2,3)=2, per_leg=20 >= 12 → ok
+        # Let's use budget=50, wallet=50, reserve=20, book=30, per_side=15
+        # auto k=2, max_k=floor(15/12)=1 → k=min(2,1)=1, per_leg=15 >= 12 → ok
+        p = _make_params(budget_cap=50.0, n_positions=None)
+        bd = p.sizing_breakdown(6, wallet=50.0)
+        assert bd["k"] == 1   # clamped from k_req=2
+        assert bd["k_requested"] == 2
+        assert bd["per_leg"] >= 12.0
+        assert bd["min_leg_ok"] is True
+
+    def test_min_leg_ok_false_when_book_too_small(self):
+        """When even k=1 gives per_leg < MIN_LEG, min_leg_ok is False."""
+        # budget=30, wallet=30, reserve=20, book=10, per_side=5 → per_leg=5 < 12
+        p = _make_params(budget_cap=30.0)
+        bd = p.sizing_breakdown(6, wallet=30.0)
+        assert bd["min_leg_ok"] is False
+        assert bd["per_leg"] < bd["min_leg"]
+
+    def test_k_requested_exposed(self):
+        """k_requested reflects compute_k before the min-leg clamp."""
+        p = _make_params(budget_cap=1000.0, n_positions=None)
+        bd = p.sizing_breakdown(6, wallet=1000.0)
+        assert bd["k_requested"] == p.compute_k(6)
+
+    # ── free computation ───────────────────────────────────────────────────
+
+    def test_free_is_wallet_minus_book(self):
+        """free = wallet - book (non-negative)."""
+        p = _make_params(budget_cap=500.0)
+        # wallet=2000, effective=500, reserve=40, book=460
+        bd = p.sizing_breakdown(6, wallet=2000.0)
+        assert bd["free"] == pytest.approx(2000.0 - bd["book"])
+
+    def test_free_is_none_when_wallet_none(self):
+        """wallet=None → free=None (preview mode)."""
+        p = _make_params(budget_cap=1000.0)
+        bd = p.sizing_breakdown(6, wallet=None)
+        assert bd["free"] is None
+
+    def test_free_floor_is_zero(self):
+        """free never goes negative even if wallet is tiny."""
+        p = _make_params(budget_cap=1000.0)
+        bd = p.sizing_breakdown(6, wallet=5.0)
+        # book = max(0, effective - reserve) → effective = min(1000, 5)=5
+        # reserve = max(20, 0.08*1000) = 80; book = max(0, 5-80) = 0 → free=5-0=5
+        assert bd["free"] is not None
+        assert bd["free"] >= 0.0
+
+    # ── min_leg constant exposed ───────────────────────────────────────────
+
+    def test_min_leg_constant(self):
+        """min_leg key is present and equals the spec value of 12.0."""
+        p = _make_params(budget_cap=1000.0)
+        bd = p.sizing_breakdown(6, wallet=1000.0)
+        assert bd["min_leg"] == pytest.approx(12.0)
+
+    # ── happy-path nominal check ───────────────────────────────────────────
+
+    def test_nominal_1000_budget_6_coins(self):
+        """budget=1000, wallet=1000, 6-coin universe → sensible breakdown."""
+        p = _make_params(budget_cap=1000.0, n_positions=None)
+        bd = p.sizing_breakdown(6, wallet=1000.0)
+        # reserve = 8% of 1000 = 80; book = 920; per_side = 460
+        # auto k = 6//3 = 2; max_k = floor(460/12) = 38 → k=2
+        # per_leg = 460/2 = 230
+        assert bd["reserve"] == pytest.approx(80.0)
+        assert bd["book"] == pytest.approx(920.0)
+        assert bd["k"] == 2
+        assert bd["per_leg"] == pytest.approx(230.0)
+        assert bd["min_leg_ok"] is True
+        assert bd["free"] == pytest.approx(80.0)  # wallet - book = 1000 - 920 = 80 (= reserve)
+
+    def test_manual_n_positions_respected(self):
+        """Manual n_positions=4 → k=2 regardless of universe size."""
+        p = _make_params(budget_cap=1000.0, n_positions=4)
+        bd = p.sizing_breakdown(20, wallet=1000.0)
+        assert bd["k_requested"] == 2  # n_positions=4 → k=4//2=2
+        assert bd["k"] == 2

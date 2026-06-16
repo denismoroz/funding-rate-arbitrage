@@ -1,8 +1,8 @@
 """Reconcile tests for XsmomRebalance — KEEP / ADD / DROP / FLIP against a real DB.
 
 Uses the in-memory SQLite engine + a real XsmomRepo so the keep-no-churn guarantee
-is exercised end-to-end at the persistence layer. The exchange is a stub that only
-needs get_quote (reconcile never calls open/close — the state machine does).
+is exercised end-to-end at the persistence layer. The exchange is a stub that needs
+get_quote (for ADD sizing) and get_wallet (for envelope sizing).
 Scores are injected directly so no daily-price history is required.
 """
 from __future__ import annotations
@@ -21,9 +21,17 @@ _UNIVERSE = ("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")
 # Scores descending: top-2 (AAA,BBB) → LONG, bottom-2 (EEE,FFF) → SHORT, CCC/DDD idle.
 _SCORES = {"AAA": 5.0, "BBB": 4.0, "CCC": 3.0, "DDD": 2.0, "EEE": 1.0, "FFF": 0.0}
 
+# Wallet large enough that effective = budget_cap (wallet not the binding constraint).
+_WALLET = 5000.0
+
 
 def _params() -> XsmomParams:
     return XsmomParams(budget_cap=1000.0, universe=_UNIVERSE)
+
+
+def _expected_breakdown() -> dict:
+    """Expected sizing for _params() + wallet=_WALLET."""
+    return _params().sizing_breakdown(len(_UNIVERSE), _WALLET)
 
 
 class _StubQuote:
@@ -33,12 +41,15 @@ class _StubQuote:
 
 
 class _StubExchange:
-    """Only get_quote is exercised by reconcile (for ADD sizing)."""
+    """Stub for reconcile: get_quote for ADD sizing, get_wallet for envelope calc."""
 
     name = "stub"
 
     async def get_quote(self, coin: str):
         return _StubQuote(mark=100.0)
+
+    async def get_wallet(self, coin: str, kind) -> float:  # noqa: ANN001
+        return _WALLET
 
 
 def _rebalance(strategy_id: int, repo: XsmomRepo) -> XsmomRebalance:
@@ -79,13 +90,19 @@ async def test_reconcile_adds_new_target_coin(session_factory, strategy_id):
     # Nothing held; BBB is a target LONG → a NEW row must be created.
     summary = await _rebalance(strategy_id, repo).reconcile(now_ms=_NOW_MS, scores=_SCORES)
 
+    bd = _expected_breakdown()
+    # k=2, per_leg = (budget - reserve) / 2 / k
+    expected_notional = bd["per_leg"]
+    expected_qty = expected_notional / 100.0  # stub mark = 100.0
+    expected_margin = _params().compute_required_margin(expected_notional)
+
     new_rows = await repo.list_in_state(strategy_id, XsmomState.NEW)
     bbb = next((r for r in new_rows if r.coin == "BBB"), None)
     assert bbb is not None
     assert bbb.side == Side.LONG
-    assert bbb.target_qty == pytest.approx((1000.0 / 2 / 2) / 100.0)  # notional/k/price
-    assert bbb.state_data["notional"] == pytest.approx(1000.0 / 2 / 2)
-    assert bbb.state_data["required_margin"] == pytest.approx((1000.0 / 2 / 2) / 1 * 3.0)
+    assert bbb.target_qty == pytest.approx(expected_qty)
+    assert bbb.state_data["notional"] == pytest.approx(expected_notional)
+    assert bbb.state_data["required_margin"] == pytest.approx(expected_margin)
     assert bbb.id in summary["opened"]
 
 

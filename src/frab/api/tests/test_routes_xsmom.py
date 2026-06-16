@@ -724,3 +724,67 @@ async def test_summary_empty_when_no_positions(xsmom_client):
     assert data["n_short"] == 0
     assert data["long_total"] == pytest.approx(0.0)
     assert data["short_total"] == pytest.approx(0.0)
+
+
+# ── POST /api/xsmom/params/preview ───────────────────────────────────────────
+
+async def test_preview_returns_sizing_breakdown(xsmom_client):
+    """POST /params/preview returns a valid sizing breakdown dict (wallet=None branch)."""
+    body = {
+        "budget_cap": 1000.0,
+        "n_positions": None,
+        "universe": ["BTC", "ETH", "SOL", "ADA", "DOGE", "XRP"],
+    }
+    resp = await xsmom_client.post("/api/xsmom/params/preview", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # All expected keys are present
+    required_keys = {
+        "reserve", "effective", "book", "per_side", "long", "short",
+        "k_requested", "k", "per_leg", "min_leg", "min_leg_ok", "free", "wallet",
+    }
+    assert required_keys.issubset(data.keys())
+
+    # Numeric values are sensible
+    assert data["reserve"] == pytest.approx(80.0)       # 8% of 1000
+    assert data["effective"] == pytest.approx(1000.0)   # wallet=None → budget_cap
+    assert data["book"] == pytest.approx(920.0)
+    assert data["per_side"] == pytest.approx(460.0)
+    assert data["k_requested"] == 2                      # 6 coins → auto tercile k=2
+    assert data["k"] == 2
+    assert data["per_leg"] == pytest.approx(230.0)
+    assert data["min_leg_ok"] is True
+    assert data["wallet"] is None                        # no live exchange in test
+    assert data["free"] is None
+
+
+async def test_preview_503_when_not_configured(unconfigured_client):
+    """POST /params/preview returns 503 when xsmom is not configured."""
+    body = {"budget_cap": 500.0, "n_positions": None, "universe": ["BTC"]}
+    resp = await unconfigured_client.post("/api/xsmom/params/preview", json=body)
+    assert resp.status_code == 503
+
+
+async def test_preview_small_budget_min_leg_not_ok(xsmom_client):
+    """Small budget yields min_leg_ok=False."""
+    body = {
+        "budget_cap": 30.0,
+        "n_positions": None,
+        "universe": ["BTC", "ETH", "SOL", "ADA", "DOGE", "XRP"],
+    }
+    resp = await xsmom_client.post("/api/xsmom/params/preview", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["min_leg_ok"] is False
+    assert data["per_leg"] < data["min_leg"]
+
+
+async def test_preview_wallet_none_when_no_exchange(xsmom_client):
+    """Without a live exchange, wallet and free are null."""
+    body = {"budget_cap": 500.0, "n_positions": 4, "universe": ["BTC", "ETH", "SOL", "ADA"]}
+    resp = await xsmom_client.post("/api/xsmom/params/preview", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["wallet"] is None
+    assert data["free"] is None

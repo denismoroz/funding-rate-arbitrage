@@ -489,6 +489,54 @@ async def reset_xsmom_equity(request: Request, session: AsyncSession = Depends(g
     return {"equity_baseline_ms": now}
 
 
+class PreviewParamsBody(BaseModel):
+    budget_cap: float
+    n_positions: int | None = None
+    universe: list[str] = []
+
+
+@router.post("/params/preview")
+async def preview_xsmom_params(
+    body: PreviewParamsBody,
+    request: Request,
+) -> dict:
+    """Preview the sizing breakdown for candidate XSMOM params without saving.
+
+    Reads the live USDC spot wallet balance the same way ``GET /xsmom/summary``
+    does (best-effort, no extra round-trip beyond the cached exchange handle).
+    When the exchange is unavailable, returns sizing with wallet=None
+    (envelope calc uses budget_cap as the effective capital ceiling).
+
+    Body:
+        budget_cap  — candidate total capital envelope.
+        n_positions — total position count (even int) or null for auto tercile.
+        universe    — list of ticker strings; universe_len = len(universe).
+
+    Returns the ``sizing_breakdown`` dict extended with ``wallet``.
+    """
+    _strategy, _repo, exchange, _strategy_id, _loop = _xsmom_state(request)
+
+    # Build a temporary params object to run sizing_breakdown
+    candidate: dict = {
+        "budget_cap": body.budget_cap,
+        "n_positions": body.n_positions,
+        "universe": body.universe,
+    }
+    params = XsmomParams.from_dict(candidate)
+    universe_len = len(body.universe)
+
+    # Fetch live wallet (best-effort; reuses the same exchange handle as summary)
+    wallet: float | None = None
+    if exchange is not None:
+        try:
+            wallet = await exchange.get_wallet("USDC", WalletKind.SPOT)
+        except Exception:  # noqa: BLE001
+            wallet = None
+
+    breakdown = params.sizing_breakdown(universe_len, wallet)
+    return {**breakdown, "wallet": wallet}
+
+
 class PatchXsmomParamsBody(BaseModel):
     params: dict
 

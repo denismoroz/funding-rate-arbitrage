@@ -25,6 +25,9 @@ import {
   resetXsmomEquity,
   pauseStrategy,
   resumeStrategy,
+  previewXsmomSizing,
+  type XsmomPreviewBody,
+  type XsmomSizingBreakdown,
 } from "./api";
 
 // ── Strategy id ───────────────────────────────────────────────────────────────
@@ -161,6 +164,31 @@ export function useResetXsmomEquity() {
     onError: (err: Error) => {
       toast.error("Reset failed", { description: err.message });
     },
+  });
+}
+
+// Re-export types needed by consumers
+export type { XsmomPreviewBody, XsmomSizingBreakdown };
+
+/**
+ * Query hook for the XSMOM sizing preview endpoint.
+ *
+ * Enabled only when ``body`` is non-null.  The queryKey encodes all inputs so
+ * React Query re-fetches automatically whenever budget_cap, n_positions, or
+ * universe changes.  Callers should debounce ``body`` to avoid excessive calls.
+ */
+export function useXsmomSizingPreview(body: XsmomPreviewBody | null) {
+  return useQuery({
+    queryKey: [
+      "xsmom-sizing-preview",
+      body?.budget_cap,
+      body?.n_positions,
+      body?.universe,
+    ],
+    queryFn: () => previewXsmomSizing(body!),
+    enabled: body !== null,
+    staleTime: 10_000,
+    retry: false,
   });
 }
 

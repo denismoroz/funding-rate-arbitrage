@@ -1,8 +1,80 @@
 import { useState, useEffect } from "react";
-import { useXsmomParams, usePatchXsmomParams } from "../../lib/useXsmom";
+import { useXsmomParams, usePatchXsmomParams, useXsmomSizingPreview } from "../../lib/useXsmom";
+import type { XsmomPreviewBody, XsmomSizingBreakdown } from "../../lib/useXsmom";
 import { UniverseEditor } from "./UniverseEditor";
 import { Skeleton } from "../ui/Skeleton";
 import { ErrorMsg } from "../ui/ErrorMsg";
+
+// ── Simple debounce hook ──────────────────────────────────────────────────────
+
+function useDebounced<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState<T>(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+// ── Sizing calculator sub-component ──────────────────────────────────────────
+
+function fmt(n: number) {
+  return n.toFixed(2);
+}
+
+function SizingCalculator({ data }: { data: XsmomSizingBreakdown }) {
+  const legOk = data.min_leg_ok;
+  return (
+    <div className="rounded border border-indigo-800 bg-indigo-950/40 px-4 py-3 text-xs space-y-1.5">
+      <div className="font-semibold text-indigo-300 mb-1">Sizing preview</div>
+
+      {/* Reserve */}
+      <div className="flex justify-between text-indigo-200">
+        <span className="text-indigo-400">Buffer (reserve)</span>
+        <span>
+          ${fmt(data.reserve)}
+          {" "}
+          <span className="text-indigo-500">
+            ({data.effective > 0 ? ((data.reserve / data.effective) * 100).toFixed(0) : "—"}%)
+          </span>
+        </span>
+      </div>
+
+      {/* Book */}
+      <div className="flex justify-between text-indigo-200">
+        <span className="text-indigo-400">Positions (book)</span>
+        <span>
+          ${fmt(data.book)}
+          {" — "}
+          <span className="text-indigo-300">long ${fmt(data.long)}</span>
+          {" / "}
+          <span className="text-indigo-300">short ${fmt(data.short)}</span>
+        </span>
+      </div>
+
+      {/* Per leg */}
+      <div className="flex justify-between">
+        <span className="text-indigo-400">per leg (k={data.k})</span>
+        <span className={legOk ? "text-emerald-400" : "text-red-400"}>
+          ${fmt(data.per_leg)}
+          {" "}
+          {legOk
+            ? <span title="Above minimum order size">✓</span>
+            : <span title={`Below HL minimum ~$${fmt(data.min_leg)} — book too small`}>⚠ below min ${fmt(data.min_leg)}</span>
+          }
+        </span>
+      </div>
+
+      {/* Wallet / free */}
+      {data.wallet !== null && (
+        <div className="flex justify-between text-indigo-400 pt-0.5 border-t border-indigo-900">
+          <span>wallet {fmt(data.wallet)} USDC</span>
+          <span>free ≈ ${data.free !== null ? fmt(data.free) : "—"}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Local form state mirroring the editable params */
 type FormState = {
@@ -38,6 +110,27 @@ export function XsmomSettings() {
       setForm(toFormState(data.params, data.universe));
     }
   }, [data]);
+
+  // Build preview body from current form values (null when form not yet ready)
+  const rawPreviewBody: XsmomPreviewBody | null = form
+    ? {
+        budget_cap: parseFloat(form.budget_cap),
+        n_positions: form.n_positions_auto
+          ? null
+          : parseInt(form.n_positions_value, 10),
+        universe: form.universe,
+      }
+    : null;
+  // Only pass a well-formed body to the hook
+  const validPreviewBody: XsmomPreviewBody | null =
+    rawPreviewBody !== null &&
+    isFinite(rawPreviewBody.budget_cap) &&
+    rawPreviewBody.budget_cap > 0 &&
+    (rawPreviewBody.n_positions === null || (isFinite(rawPreviewBody.n_positions) && rawPreviewBody.n_positions > 0))
+      ? rawPreviewBody
+      : null;
+  const debouncedPreviewBody = useDebounced(validPreviewBody, 300);
+  const { data: previewData } = useXsmomSizingPreview(debouncedPreviewBody);
 
   if (isLoading) {
     return (
@@ -165,6 +258,11 @@ export function XsmomSettings() {
             onChange={(next) => setForm((f) => f ? { ...f, universe: next } : f)}
           />
         </div>
+
+        {/* Sizing calculator */}
+        {previewData && (
+          <SizingCalculator data={previewData} />
+        )}
 
         {/* Errors + success */}
         {clientError && (

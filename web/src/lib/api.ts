@@ -8,6 +8,27 @@ async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function apiPostJson<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg: string;
+    try {
+      const json = (await res.json()) as unknown;
+      msg = typeof json === "object" && json !== null && "detail" in json
+        ? String((json as Record<string, unknown>).detail)
+        : JSON.stringify(json);
+    } catch {
+      msg = res.statusText;
+    }
+    throw new Error(`${res.status}: ${msg}`);
+  }
+  return res.json() as Promise<TRes>;
+}
+
 async function apiPatchJson<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PATCH",
@@ -509,4 +530,37 @@ export function patchXsmomParams(
 
 export function resetXsmomEquity(): Promise<{ equity_baseline_ms: number }> {
   return apiPost<{ equity_baseline_ms: number }>("/xsmom/equity/reset");
+}
+
+// ── XSMOM Sizing Preview ──────────────────────────────────────────────────────
+
+export type XsmomSizingBreakdown = {
+  reserve: number;
+  effective: number;
+  book: number;
+  per_side: number;
+  long: number;
+  short: number;
+  k_requested: number;
+  k: number;
+  per_leg: number;
+  min_leg: number;
+  min_leg_ok: boolean;
+  free: number | null;
+  wallet: number | null;
+};
+
+export type XsmomPreviewBody = {
+  budget_cap: number;
+  n_positions: number | null;
+  universe: string[];
+};
+
+export function previewXsmomSizing(
+  body: XsmomPreviewBody,
+): Promise<XsmomSizingBreakdown> {
+  return apiPostJson<XsmomPreviewBody, XsmomSizingBreakdown>(
+    "/xsmom/params/preview",
+    body,
+  );
 }

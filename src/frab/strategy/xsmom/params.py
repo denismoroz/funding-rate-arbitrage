@@ -1,6 +1,7 @@
 """XsmomParams — tunable parameters for the XSMOM cross-sectional momentum strategy."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 # Default candidate universe = the frozen, backtest-validated HL set
@@ -98,3 +99,78 @@ class XsmomParams:
         margin = (notional / leverage) * margin_buffer_factor
         """
         return (notional / self.leverage) * self.margin_buffer_factor
+
+    def sizing_breakdown(
+        self,
+        universe_len: int,
+        wallet: float | None,
+    ) -> dict:
+        """Compute the full envelope sizing breakdown.
+
+        This is the SINGLE SOURCE OF TRUTH for position sizing.  Both the live
+        rebalancer and the preview API must call this method so the two can
+        never drift apart.
+
+        Parameters
+        ----------
+        universe_len:
+            Number of coins currently in the candidate universe.
+        wallet:
+            Live USDC spot balance of the XSMOM wallet.  When None (pure param
+            preview without a live balance) ``effective`` is set to
+            ``budget_cap`` and ``free`` is returned as None.
+
+        Returns
+        -------
+        dict with keys:
+            reserve       — USDC kept as safety buffer (not deployed).
+            effective     — min(budget_cap, wallet); the capital actually at play.
+            book          — gross notional deployed (effective - reserve).
+            per_side      — book / 2  (== long notional == short notional).
+            long          — alias for per_side.
+            short         — alias for per_side.
+            k_requested   — compute_k(universe_len) before min-leg clamp.
+            k             — actual legs per side (possibly reduced by min-leg floor).
+            per_leg       — notional per individual position.
+            min_leg       — hard minimum per-leg notional (~HL $10 min + slippage).
+            min_leg_ok    — False when book is too small for even k=1 valid leg.
+            free          — wallet - book when wallet is known, else None.
+        """
+        _MIN_LEG = 12.0  # HL ~$10 min order + slippage buffer
+
+        # ── capital envelope ──────────────────────────────────────────────────
+        reserve = max(20.0, 0.08 * self.budget_cap)
+        effective = min(self.budget_cap, wallet) if wallet is not None else self.budget_cap
+        book = max(0.0, effective - reserve)
+        per_side = book / 2.0
+
+        # ── k with min-leg clamp ──────────────────────────────────────────────
+        k_req = self.compute_k(universe_len)
+        max_k = math.floor(per_side / _MIN_LEG) if per_side > 0 else 0
+        if max_k >= 1:
+            k = max(1, min(k_req, max_k))
+        else:
+            k = 1  # clamp to 1 even if book too small; min_leg_ok will flag it
+
+        per_leg = per_side / k if k > 0 else 0.0
+        min_leg_ok = per_leg >= _MIN_LEG
+
+        # ── free capital ──────────────────────────────────────────────────────
+        free: float | None = None
+        if wallet is not None:
+            free = max(0.0, wallet - book)
+
+        return {
+            "reserve": reserve,
+            "effective": effective,
+            "book": book,
+            "per_side": per_side,
+            "long": per_side,
+            "short": per_side,
+            "k_requested": k_req,
+            "k": k,
+            "per_leg": per_leg,
+            "min_leg": _MIN_LEG,
+            "min_leg_ok": min_leg_ok,
+            "free": free,
+        }
