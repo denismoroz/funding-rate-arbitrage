@@ -1,0 +1,886 @@
+{
+  "test": "cross_exchange_spread_validation",
+  "task": "Task C of research/cross_exchange/PLAN.md",
+  "description": "CPCV+DSR+PBO validation of the cross-exchange funding-SPREAD carry menu (trailing-direction books across HL-Binance / HL-Bybit / Binance-Bybit on the lookback×rebalance grid) through the shared validation harness. Committed = HL-Binance|trail_lb90_rb21 (Task B best NET-Sharpe deployable causal config). FRAMING: the absolute Sharpe is a funding-accrual smoothness artifact (no basis risk modelled); we validate the EDGE SIGN's OOS + deflation survival, not the magnitude.",
+  "committed_config": {
+    "pair": "HL-Binance",
+    "venue_a": "HL",
+    "venue_b": "Binance",
+    "kind": "causal_trailing_direction",
+    "lookback_periods": 90,
+    "rebalance_periods": 21,
+    "core_coins": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "AVAX",
+      "LINK",
+      "AAVE",
+      "DOGE",
+      "ARB",
+      "OP",
+      "MATIC"
+    ],
+    "taker_a_bps": 3.5,
+    "taker_b_bps": 5.0,
+    "slip_bps": 0.2
+  },
+  "menu": [
+    "HL-Binance|trail_lb90_rb21",
+    "HL-Binance|trail_lb90_rb63",
+    "HL-Binance|trail_lb180_rb21",
+    "HL-Binance|trail_lb180_rb63",
+    "HL-Binance|trail_lb270_rb21",
+    "HL-Binance|trail_lb270_rb63",
+    "HL-Bybit|trail_lb90_rb21",
+    "HL-Bybit|trail_lb90_rb63",
+    "HL-Bybit|trail_lb180_rb21",
+    "HL-Bybit|trail_lb180_rb63",
+    "HL-Bybit|trail_lb270_rb21",
+    "HL-Bybit|trail_lb270_rb63",
+    "Binance-Bybit|trail_lb90_rb21",
+    "Binance-Bybit|trail_lb90_rb63",
+    "Binance-Bybit|trail_lb180_rb21",
+    "Binance-Bybit|trail_lb180_rb63",
+    "Binance-Bybit|trail_lb270_rb21",
+    "Binance-Bybit|trail_lb270_rb63"
+  ],
+  "committed_pick": "HL-Binance|trail_lb90_rb21",
+  "provenance_check": {
+    "passed": true,
+    "len_rebuilt": 1078,
+    "len_csv": 1078,
+    "len_json": 1078,
+    "sum_rebuilt": 0.27343149003666667,
+    "sum_csv": 0.273431490036658,
+    "sum_json": 0.27343149003666667,
+    "max_abs_elementwise_diff": 9.999054535747565e-17,
+    "sum_diff": 8.659739592076221e-15
+  },
+  "serial_smoothness_committed": {
+    "lag1_autocorr": 0.7978424947254243,
+    "n": 1057,
+    "n_eff": 118.85383936698017,
+    "note": "n_eff = n·(1-ρ)/(1+ρ); the high ρ (smooth funding accrual, no basis MTM) means the absolute Sharpe/DSR are optimistic — treat as a SIGN test."
+  },
+  "cpcv_params": {
+    "n_groups": 6,
+    "k": 2,
+    "purge_days": 90,
+    "embargo_days": 7,
+    "purge_rationale": "purge = max menu lookback in days = 90 (lb270 = 90d rolling window; committed lb90 = 30d, but a menu-wide purge must cover the slowest member). Signal causal (rolling.shift(1)) + carry lagged 1 period."
+  },
+  "pbo_S": 16,
+  "n_configs_in_menu": 18,
+  "common_window": {
+    "start": "2023-06-01",
+    "end": "2026-05-13",
+    "n_days": 1078
+  },
+  "per_book": {
+    "HL-Binance|trail_lb90_rb21": {
+      "pair": "HL-Binance",
+      "committed": true,
+      "is_sharpe_daily": 13.587920379176433,
+      "is_ann_pct": 9.258116313857451,
+      "is_vol_ann_pct": 0.6813490258631165,
+      "is_maxdd_pct": 0.3467214070326574,
+      "is_calmar": 26.701888392444825,
+      "is_hit_pct": 86.92022263450835,
+      "is_n_days": 1078,
+      "turn_per_yr": 62.00030940594059,
+      "dsr_n18": 1.0,
+      "dsr_n18_sr_hat": 0.7108943005511155,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 18.190660207727667,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 18.190660207727667,
+          "iqr_lo": 15.581287971068635,
+          "iqr_hi": 20.19213854730041,
+          "mean": 17.36236098038451
+        },
+        "ann_pct": {
+          "median": 6.392929106587745,
+          "iqr_lo": 5.760061605499999,
+          "iqr_hi": 11.873293696185186,
+          "mean": 9.189015367025773
+        },
+        "maxdd_pct": {
+          "median": 0.07681194707598316,
+          "iqr_lo": 0.04905548834484019,
+          "iqr_hi": 0.08474529228049699,
+          "mean": 0.11704906778871216
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Binance|trail_lb90_rb63": {
+      "pair": "HL-Binance",
+      "committed": false,
+      "is_sharpe_daily": 11.37028587589636,
+      "is_ann_pct": 8.14616633889456,
+      "is_vol_ann_pct": 0.7164434058921466,
+      "is_maxdd_pct": 1.606306774407673,
+      "is_calmar": 5.071363993903633,
+      "is_hit_pct": 86.5491651205937,
+      "is_n_days": 1078,
+      "turn_per_yr": 52.51392326732673,
+      "dsr_n18": 0.9875158135110808,
+      "dsr_n18_sr_hat": 0.5948718567117103,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 17.686043960698026,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 17.686043960698026,
+          "iqr_lo": 10.535548821504193,
+          "iqr_hi": 20.433392948703208,
+          "mean": 16.206723430809983
+        },
+        "ann_pct": {
+          "median": 5.764585917451254,
+          "iqr_lo": 5.288562880861111,
+          "iqr_hi": 6.788579801185185,
+          "mean": 8.02773641855873
+        },
+        "maxdd_pct": {
+          "median": 0.13056844899335118,
+          "iqr_lo": 0.024923346000005342,
+          "iqr_hi": 0.15488333123869769,
+          "mean": 0.3903240695569452
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Binance|trail_lb180_rb21": {
+      "pair": "HL-Binance",
+      "committed": false,
+      "is_sharpe_daily": 12.112688313756653,
+      "is_ann_pct": 8.332849281067823,
+      "is_vol_ann_pct": 0.6879438375050084,
+      "is_maxdd_pct": 1.050978773512401,
+      "is_calmar": 7.928656116639923,
+      "is_hit_pct": 86.17810760667903,
+      "is_n_days": 1078,
+      "turn_per_yr": 37.60674504950495,
+      "dsr_n18": 0.9999981540817778,
+      "dsr_n18_sr_hat": 0.6337129484360144,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 19.346834262598318,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 19.346834262598318,
+          "iqr_lo": 12.965742142574323,
+          "iqr_hi": 20.594875381007245,
+          "mean": 16.702640955414143
+        },
+        "ann_pct": {
+          "median": 6.140060867847223,
+          "iqr_lo": 5.156762168089506,
+          "iqr_hi": 6.402581201805556,
+          "mean": 8.172164024619509
+        },
+        "maxdd_pct": {
+          "median": 0.058838088425317014,
+          "iqr_lo": 0.0424021645564987,
+          "iqr_hi": 0.08052934957279989,
+          "mean": 0.25003702787684867
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Binance|trail_lb180_rb63": {
+      "pair": "HL-Binance",
+      "committed": false,
+      "is_sharpe_daily": 10.623809462896658,
+      "is_ann_pct": 7.683561779599052,
+      "is_vol_ann_pct": 0.7232397951444504,
+      "is_maxdd_pct": 1.6661499513675349,
+      "is_calmar": 4.6115667880268365,
+      "is_hit_pct": 85.06493506493507,
+      "is_n_days": 1078,
+      "turn_per_yr": 34.89634900990099,
+      "dsr_n18": 0.8647440993304099,
+      "dsr_n18_sr_hat": 0.5558176223116781,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 15.59617464121392,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 15.59617464121392,
+          "iqr_lo": 12.506299680823215,
+          "iqr_hi": 20.62091014570932,
+          "mean": 15.178843219437455
+        },
+        "ann_pct": {
+          "median": 5.523535557652778,
+          "iqr_lo": 3.708367266229051,
+          "iqr_hi": 6.323950759441341,
+          "mean": 7.500258732074119
+        },
+        "maxdd_pct": {
+          "median": 0.05883808842529481,
+          "iqr_lo": 0.05173634021427009,
+          "iqr_hi": 0.08052934957279989,
+          "mean": 0.37747119988483263
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Binance|trail_lb270_rb21": {
+      "pair": "HL-Binance",
+      "committed": false,
+      "is_sharpe_daily": 11.067925011118845,
+      "is_ann_pct": 7.704980490343227,
+      "is_vol_ann_pct": 0.6961540200717657,
+      "is_maxdd_pct": 2.0115223449994057,
+      "is_calmar": 3.8304225202855022,
+      "is_hit_pct": 85.2504638218924,
+      "is_n_days": 1078,
+      "turn_per_yr": 28.12035891089109,
+      "dsr_n18": 0.9621428394221255,
+      "dsr_n18_sr_hat": 0.5790529080071352,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 17.003906202116944,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 17.003906202116944,
+          "iqr_lo": 14.595102964760256,
+          "iqr_hi": 20.247797707994902,
+          "mean": 16.526138976071916
+        },
+        "ann_pct": {
+          "median": 6.085539323375,
+          "iqr_lo": 4.33416434198324,
+          "iqr_hi": 6.458870175638891,
+          "mean": 7.520451858712675
+        },
+        "maxdd_pct": {
+          "median": 0.05154836609609914,
+          "iqr_lo": 0.015436371420984862,
+          "iqr_hi": 0.08052934957279989,
+          "mean": 0.4303790518278343
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Binance|trail_lb270_rb63": {
+      "pair": "HL-Binance",
+      "committed": false,
+      "is_sharpe_daily": 10.119163350725596,
+      "is_ann_pct": 6.71200415335807,
+      "is_vol_ann_pct": 0.6632963537323255,
+      "is_maxdd_pct": 2.478629491197082,
+      "is_calmar": 2.7079497670773023,
+      "is_hit_pct": 83.02411873840445,
+      "is_n_days": 1078,
+      "turn_per_yr": 25.409962871287128,
+      "dsr_n18": 0.6149494191837824,
+      "dsr_n18_sr_hat": 0.5294154919689458,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 16.084485324854132,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 16.084485324854132,
+          "iqr_lo": 15.768841774542702,
+          "iqr_hi": 20.8191863752842,
+          "mean": 16.47945451022967
+        },
+        "ann_pct": {
+          "median": 5.453054927569443,
+          "iqr_lo": 4.3786541430446935,
+          "iqr_hi": 6.111027626089386,
+          "mean": 6.548651765939201
+        },
+        "maxdd_pct": {
+          "median": 0.05154836609608804,
+          "iqr_lo": 0.014722811000011937,
+          "iqr_hi": 0.22015456472155304,
+          "mean": 0.5098417908961688
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Bybit|trail_lb90_rb21": {
+      "pair": "HL-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 12.042581729525699,
+      "is_ann_pct": 8.356504720502473,
+      "is_vol_ann_pct": 0.6939130585274921,
+      "is_maxdd_pct": 0.36590496253403604,
+      "is_calmar": 22.837910321386147,
+      "is_hit_pct": 84.60111317254174,
+      "is_n_days": 1078,
+      "turn_per_yr": 65.38830445544555,
+      "dsr_n18": 0.9998393737702768,
+      "dsr_n18_sr_hat": 0.6300451045150809,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 12.66963243531123,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 12.66963243531123,
+          "iqr_lo": 8.628649672184226,
+          "iqr_hi": 17.32006064073023,
+          "mean": 14.20914083988252
+        },
+        "ann_pct": {
+          "median": 5.553375097392924,
+          "iqr_lo": 3.7474364142901235,
+          "iqr_hi": 11.040396995,
+          "mean": 8.291368064650298
+        },
+        "maxdd_pct": {
+          "median": 0.10254329860970302,
+          "iqr_lo": 0.07788421076966312,
+          "iqr_hi": 0.1254489860102681,
+          "mean": 0.13990162482111979
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Bybit|trail_lb90_rb63": {
+      "pair": "HL-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 10.213817304358088,
+      "is_ann_pct": 7.444541289162543,
+      "is_vol_ann_pct": 0.7288696348608139,
+      "is_maxdd_pct": 1.602444529236391,
+      "is_calmar": 4.645740400580401,
+      "is_hit_pct": 83.48794063079778,
+      "is_n_days": 1078,
+      "turn_per_yr": 51.836324257425744,
+      "dsr_n18": 0.6826123412740672,
+      "dsr_n18_sr_hat": 0.5343676078398253,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 12.116012630313557,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 12.116012630313557,
+          "iqr_lo": 7.495769718998187,
+          "iqr_hi": 15.974675747555006,
+          "mean": 13.082245981858104
+        },
+        "ann_pct": {
+          "median": 5.218248455555555,
+          "iqr_lo": 3.1606127292283945,
+          "iqr_hi": 7.185011365222224,
+          "mean": 7.346534145760577
+        },
+        "maxdd_pct": {
+          "median": 0.10254329860971412,
+          "iqr_lo": 0.09161778748418836,
+          "iqr_hi": 0.13878481632424444,
+          "mean": 0.394056684552818
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Bybit|trail_lb180_rb21": {
+      "pair": "HL-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 10.787661928612957,
+      "is_ann_pct": 7.604613151581117,
+      "is_vol_ann_pct": 0.7049361763377854,
+      "is_maxdd_pct": 1.0118647031053918,
+      "is_calmar": 7.515444632313705,
+      "is_hit_pct": 82.3747680890538,
+      "is_n_days": 1078,
+      "turn_per_yr": 43.70513613861386,
+      "dsr_n18": 0.9411340026554336,
+      "dsr_n18_sr_hat": 0.5643900734858455,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 13.093237976685597,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 13.093237976685597,
+          "iqr_lo": 8.167423871896487,
+          "iqr_hi": 16.08812460431337,
+          "mean": 13.251074814512867
+        },
+        "ann_pct": {
+          "median": 4.980709730501393,
+          "iqr_lo": 4.569108011820988,
+          "iqr_hi": 6.675648307308643,
+          "mean": 7.450071858357856
+        },
+        "maxdd_pct": {
+          "median": 0.09009844453102822,
+          "iqr_lo": 0.06962656858862104,
+          "iqr_hi": 0.09161778748422167,
+          "mean": 0.2613136469914781
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Bybit|trail_lb180_rb63": {
+      "pair": "HL-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 9.513930836633493,
+      "is_ann_pct": 6.859904504827871,
+      "is_vol_ann_pct": 0.7210378783093244,
+      "is_maxdd_pct": 1.5855732625162822,
+      "is_calmar": 4.326450670555141,
+      "is_hit_pct": 81.91094619666049,
+      "is_n_days": 1078,
+      "turn_per_yr": 39.63954207920792,
+      "dsr_n18": 0.27149168375048294,
+      "dsr_n18_sr_hat": 0.4977508712786693,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 10.764264677455795,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 10.764264677455795,
+          "iqr_lo": 8.209027788289578,
+          "iqr_hi": 15.753737014077613,
+          "mean": 12.169704285621899
+        },
+        "ann_pct": {
+          "median": 4.607596210909935,
+          "iqr_lo": 3.192933077436376,
+          "iqr_hi": 6.1611086107592605,
+          "mean": 6.695906342933576
+        },
+        "maxdd_pct": {
+          "median": 0.09161778748419946,
+          "iqr_lo": 0.08023783657840067,
+          "iqr_hi": 0.10686383685333256,
+          "mean": 0.37855307906312546
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Bybit|trail_lb270_rb21": {
+      "pair": "HL-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 9.382873135235581,
+      "is_ann_pct": 6.719739958166357,
+      "is_vol_ann_pct": 0.7161708211668834,
+      "is_maxdd_pct": 1.9201006601463955,
+      "is_calmar": 3.4996810832063456,
+      "is_hit_pct": 80.24118738404454,
+      "is_n_days": 1078,
+      "turn_per_yr": 34.21875,
+      "dsr_n18": 0.1961602042411697,
+      "dsr_n18_sr_hat": 0.4908941801613231,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 10.642764512878273,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 10.642764512878273,
+          "iqr_lo": 8.03275778112668,
+          "iqr_hi": 15.462923903916025,
+          "mean": 11.629720663727737
+        },
+        "ann_pct": {
+          "median": 4.428570536443824,
+          "iqr_lo": 2.982309530633147,
+          "iqr_hi": 6.416960474814815,
+          "mean": 6.558345826494968
+        },
+        "maxdd_pct": {
+          "median": 0.10111249406764555,
+          "iqr_lo": 0.09161778748417726,
+          "iqr_hi": 0.21089107667252582,
+          "mean": 0.4687762180508321
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "HL-Bybit|trail_lb270_rb63": {
+      "pair": "HL-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 8.594465167529322,
+      "is_ann_pct": 6.048034684220779,
+      "is_vol_ann_pct": 0.70371274609045,
+      "is_maxdd_pct": 2.348623374239378,
+      "is_calmar": 2.5751402930576246,
+      "is_hit_pct": 77.55102040816327,
+      "is_n_days": 1078,
+      "turn_per_yr": 30.153155940594058,
+      "dsr_n18": 0.019105578832013574,
+      "dsr_n18_sr_hat": 0.44964616610831193,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 1.0,
+      "dsr_n1": 1.0,
+      "oos_median_sharpe_honest": 9.057951588057808,
+      "oos_frac_sharpe_pos": 1.0,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 9.057951588057808,
+          "iqr_lo": 7.76716414292287,
+          "iqr_hi": 16.912832413383658,
+          "mean": 11.022828834868573
+        },
+        "ann_pct": {
+          "median": 4.214849344707521,
+          "iqr_lo": 3.0320275196461823,
+          "iqr_hi": 6.183627961685185,
+          "mean": 5.89401520030221
+        },
+        "maxdd_pct": {
+          "median": 0.18229848291971829,
+          "iqr_lo": 0.07591249370193509,
+          "iqr_hi": 0.215499090524518,
+          "mean": 0.5292605650922999
+        },
+        "frac_sharpe_pos": 1.0
+      }
+    },
+    "Binance-Bybit|trail_lb90_rb21": {
+      "pair": "Binance-Bybit",
+      "committed": false,
+      "is_sharpe_daily": -0.5384456600554755,
+      "is_ann_pct": -0.19819328823953825,
+      "is_vol_ann_pct": 0.368084103824179,
+      "is_maxdd_pct": 0.8103594656961532,
+      "is_calmar": -0.2445745334377959,
+      "is_hit_pct": 64.47124304267162,
+      "is_n_days": 1078,
+      "turn_per_yr": 120.27382425742574,
+      "dsr_n18": 1.0214959206437998e-89,
+      "dsr_n18_sr_hat": -0.028170458775761617,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 0.1506237459834841,
+      "dsr_n1": 0.1506237459834841,
+      "oos_median_sharpe_honest": -0.6574562753606877,
+      "oos_frac_sharpe_pos": 0.28,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": -0.6574562753606877,
+          "iqr_lo": -1.63492286089381,
+          "iqr_hi": 0.19582910088761765,
+          "mean": -0.4307211410114375
+        },
+        "ann_pct": {
+          "median": -0.1631044754810677,
+          "iqr_lo": -0.4956969919753089,
+          "iqr_hi": 0.06222734043209879,
+          "mean": -0.20349182854203213
+        },
+        "maxdd_pct": {
+          "median": 0.3101396054509653,
+          "iqr_lo": 0.18694218879012903,
+          "iqr_hi": 0.43829346818676784,
+          "mean": 0.3616899870330252
+        },
+        "frac_sharpe_pos": 0.28
+      }
+    },
+    "Binance-Bybit|trail_lb90_rb63": {
+      "pair": "Binance-Bybit",
+      "committed": false,
+      "is_sharpe_daily": -0.33547089666280794,
+      "is_ann_pct": -0.12830415141208007,
+      "is_vol_ann_pct": 0.3824598577355653,
+      "is_maxdd_pct": 0.8465685404169476,
+      "is_calmar": -0.15155790144161083,
+      "is_hit_pct": 62.98701298701299,
+      "is_n_days": 1078,
+      "turn_per_yr": 89.1042698019802,
+      "dsr_n18": 1.6251022957520735e-80,
+      "dsr_n18_sr_hat": -0.017551202964350678,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 0.2671853111876709,
+      "dsr_n1": 0.2671853111876709,
+      "oos_median_sharpe_honest": -0.19422758645446242,
+      "oos_frac_sharpe_pos": 0.44,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": -0.19422758645446242,
+          "iqr_lo": -0.8922804571736807,
+          "iqr_hi": 0.8831187100930393,
+          "mean": -0.12453159655330646
+        },
+        "ann_pct": {
+          "median": -0.06109140185185198,
+          "iqr_lo": -0.4294746814814815,
+          "iqr_hi": 0.2209231036623215,
+          "mean": -0.12218509707362996
+        },
+        "maxdd_pct": {
+          "median": 0.2753247294936645,
+          "iqr_lo": 0.18616508731541526,
+          "iqr_hi": 0.3453190469811185,
+          "mean": 0.3387200026554633
+        },
+        "frac_sharpe_pos": 0.44
+      }
+    },
+    "Binance-Bybit|trail_lb180_rb21": {
+      "pair": "Binance-Bybit",
+      "committed": false,
+      "is_sharpe_daily": -0.04978245129531295,
+      "is_ann_pct": -0.01611974984539273,
+      "is_vol_ann_pct": 0.3238038591102968,
+      "is_maxdd_pct": 0.745920509711806,
+      "is_calmar": -0.021610546479839735,
+      "is_hit_pct": 60.667903525046384,
+      "is_n_days": 1078,
+      "turn_per_yr": 75.55228960396039,
+      "dsr_n18": 1.1778676102561061e-67,
+      "dsr_n18_sr_hat": -0.0026045237170757157,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 0.46544772683744046,
+      "dsr_n1": 0.46544772683744046,
+      "oos_median_sharpe_honest": -0.05797953316501502,
+      "oos_frac_sharpe_pos": 0.48,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": -0.05797953316501502,
+          "iqr_lo": -0.8938564097683664,
+          "iqr_hi": 1.8141597258906312,
+          "mean": 0.31000202167477847
+        },
+        "ann_pct": {
+          "median": -0.026570328071804452,
+          "iqr_lo": -0.2254469702160494,
+          "iqr_hi": 0.34421833643699556,
+          "mean": -0.007565034093042577
+        },
+        "maxdd_pct": {
+          "median": 0.3619757311017602,
+          "iqr_lo": 0.11099798901038627,
+          "iqr_hi": 0.3868661024929665,
+          "mean": 0.2952508661454165
+        },
+        "frac_sharpe_pos": 0.48
+      }
+    },
+    "Binance-Bybit|trail_lb180_rb63": {
+      "pair": "Binance-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 0.16399233453432308,
+      "is_ann_pct": 0.053555623840445335,
+      "is_vol_ann_pct": 0.32657394623061675,
+      "is_maxdd_pct": 0.7204440070447293,
+      "is_calmar": 0.07433696903126615,
+      "is_hit_pct": 60.29684601113172,
+      "is_n_days": 1078,
+      "turn_per_yr": 59.289913366336634,
+      "dsr_n18": 2.0473417726218112e-57,
+      "dsr_n18_sr_hat": 0.008579768846245487,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 0.6057098452733064,
+      "dsr_n1": 0.6057098452733064,
+      "oos_median_sharpe_honest": 0.10884869612800327,
+      "oos_frac_sharpe_pos": 0.56,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.10884869612800327,
+          "iqr_lo": -0.4555629383867707,
+          "iqr_hi": 1.897523299121289,
+          "mean": 0.32987706596636585
+        },
+        "ann_pct": {
+          "median": 0.02228689999999994,
+          "iqr_lo": -0.24100890293209873,
+          "iqr_hi": 0.37696683426443206,
+          "mean": 0.05945586868657701
+        },
+        "maxdd_pct": {
+          "median": 0.35277473438318774,
+          "iqr_lo": 0.130416218233409,
+          "iqr_hi": 0.3686309665739351,
+          "mean": 0.2914143219733014
+        },
+        "frac_sharpe_pos": 0.56
+      }
+    },
+    "Binance-Bybit|trail_lb270_rb21": {
+      "pair": "Binance-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 0.41385420010574053,
+      "is_ann_pct": 0.12424058256029684,
+      "is_vol_ann_pct": 0.30020374936041033,
+      "is_maxdd_pct": 0.5121517079714977,
+      "is_calmar": 0.24258550860326544,
+      "is_hit_pct": 58.25602968460112,
+      "is_n_days": 1078,
+      "turn_per_yr": 55.90191831683168,
+      "dsr_n18": 1.1471251167996286e-45,
+      "dsr_n18_sr_hat": 0.021652069183830742,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 0.7311852701441427,
+      "dsr_n1": 0.7311852701441427,
+      "oos_median_sharpe_honest": 0.6278167760661393,
+      "oos_frac_sharpe_pos": 0.64,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.6278167760661393,
+          "iqr_lo": -0.5071137982975685,
+          "iqr_hi": 2.9103268186827793,
+          "mean": 1.1254530278436494
+        },
+        "ann_pct": {
+          "median": 0.12613528055555556,
+          "iqr_lo": -0.14612869025450026,
+          "iqr_hi": 0.4363030105524519,
+          "mean": 0.13013941896174963
+        },
+        "maxdd_pct": {
+          "median": 0.13560207753184894,
+          "iqr_lo": 0.07599022218900409,
+          "iqr_hi": 0.3857698282033306,
+          "mean": 0.23569996511871907
+        },
+        "frac_sharpe_pos": 0.64
+      }
+    },
+    "Binance-Bybit|trail_lb270_rb63": {
+      "pair": "Binance-Bybit",
+      "committed": false,
+      "is_sharpe_daily": 0.4584605822730385,
+      "is_ann_pct": 0.13795303287981858,
+      "is_vol_ann_pct": 0.3009048939297031,
+      "is_maxdd_pct": 0.5030520591384424,
+      "is_calmar": 0.27423212046102213,
+      "is_hit_pct": 57.14285714285714,
+      "is_n_days": 1078,
+      "turn_per_yr": 47.09313118811881,
+      "dsr_n18": 4.700599184299563e-44,
+      "dsr_n18_sr_hat": 0.023985790751667825,
+      "dsr_n18_sr_star": 0.5181843318335939,
+      "dsr_n18_psr_vs_zero": 0.7496088987284512,
+      "dsr_n1": 0.7496088987284512,
+      "oos_median_sharpe_honest": 0.757904793521782,
+      "oos_frac_sharpe_pos": 0.68,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.757904793521782,
+          "iqr_lo": -0.5233940573641119,
+          "iqr_hi": 2.329917290933289,
+          "mean": 1.0400714040130246
+        },
+        "ann_pct": {
+          "median": 0.14851302499999997,
+          "iqr_lo": -0.1491418094351335,
+          "iqr_hi": 0.43100087716049384,
+          "mean": 0.14219424993866842
+        },
+        "maxdd_pct": {
+          "median": 0.1121382669663995,
+          "iqr_lo": 0.08467322698255675,
+          "iqr_hi": 0.34111033116694944,
+          "mean": 0.21626115379435973
+        },
+        "frac_sharpe_pos": 0.68
+      }
+    }
+  },
+  "committed_summary": {
+    "is_sharpe_daily_INFLATED_BY_SMOOTHNESS": 13.587920379176433,
+    "is_ann_pct": 9.258116313857451,
+    "is_vol_ann_pct": 0.6813490258631165,
+    "is_maxdd_pct": 0.3467214070326574,
+    "turn_per_yr": 62.00030940594059,
+    "lag1_autocorr": 0.7978424947254243,
+    "n_eff": 118.85383936698017,
+    "dsr_n18": 1.0,
+    "dsr_n1": 1.0,
+    "dsr_status": "PASS (>0.95)",
+    "dsr_pass": true,
+    "oos_sharpe_honest_median": 18.190660207727667,
+    "oos_sharpe_honest_iqr": [
+      15.581287971068635,
+      20.19213854730041
+    ],
+    "oos_frac_sharpe_pos": 1.0,
+    "oos_sign_survives": true,
+    "pbo_menu": 0.2108780108780109
+  },
+  "menu_oos_sign_survival_frac": 0.8333333333333334,
+  "pbo_across_menu": {
+    "pbo": 0.2108780108780109,
+    "n_splits": 12870,
+    "n_configs": 18,
+    "S": 16,
+    "median_oos_rank": 0.8421052631578947,
+    "is_best_counts": {
+      "HL-Binance|trail_lb90_rb21": 8584,
+      "HL-Binance|trail_lb270_rb63": 2702,
+      "HL-Binance|trail_lb270_rb21": 896,
+      "HL-Bybit|trail_lb90_rb21": 283,
+      "HL-Binance|trail_lb90_rb63": 274,
+      "HL-Binance|trail_lb180_rb21": 107,
+      "HL-Bybit|trail_lb90_rb63": 23,
+      "HL-Bybit|trail_lb270_rb21": 1,
+      "Binance-Bybit|trail_lb180_rb63": 0,
+      "Binance-Bybit|trail_lb180_rb21": 0,
+      "Binance-Bybit|trail_lb90_rb63": 0,
+      "Binance-Bybit|trail_lb90_rb21": 0,
+      "HL-Bybit|trail_lb180_rb21": 0,
+      "HL-Bybit|trail_lb180_rb63": 0,
+      "Binance-Bybit|trail_lb270_rb21": 0,
+      "HL-Binance|trail_lb180_rb63": 0,
+      "HL-Bybit|trail_lb270_rb63": 0,
+      "Binance-Bybit|trail_lb270_rb63": 0
+    },
+    "note": "N=18 configs → PBO=0.211: fraction of CSCV splits where the IS-best config ranks below median OOS."
+  },
+  "dsr_threshold": 0.95,
+  "verdict": "CROSS-EXCHANGE FUNDING-SPREAD EDGE — SIGN SURVIVES, ABSOLUTE NUMBERS INFLATED.\n\n  Committed = HL-Binance|trail_lb90_rb21 (Task B best NET-Sharpe deployable causal config; trailing-mean direction, 30-day lookback, weekly rebalance).\n  DSR(N=18) = 1.0000 [PASS (>0.95)], DSR(N=1) = 1.0000. Pooled-OOS median Sharpe (HONEST daily sqrt365) = +18.191 with 100.0% of OOS segments positive → SIGN SURVIVES OOS. PBO(menu) = 0.2109 (moderate overfit). Across the full 18-book menu, 83% of members have positive OOS median Sharpe.\n\n  HONEST SYNTHESIS: the committed book's absolute Sharpe (+13.59) and tiny maxDD (0.35%) are a FUNDING-ACCRUAL SMOOTHNESS ARTIFACT — pnl lag-1 autocorr ρ=0.80, vol_ann 0.68%, n_eff≈119 vs n=1057 — because the model is funding-ONLY with NO cross-venue basis / MTM risk (both perp legs assumed perfectly delta-neutral). The DSR/Sharpe are therefore OPTIMISTIC. What IS meaningful: the EDGE SIGN — short the funding-rich venue, long the cheap one — is structurally real and persists out-of-sample and under deflation across the menu of venue-pairs and lookback/rebalance settings. The REAL risk-adjusted return can only be measured LIVE (once basis divergence, non-atomic execution and single-leg liquidation are priced in). This sets up Task D: the decisive test is whether this perp-vs-perp funding differential DECORRELATES from FRAB (HL spot-vs-perp basis carry) and XSMOM — its value as a third stream rests on decorrelation, not on this (inflated) standalone Sharpe.",
+  "annualization_note_honest": "metrics_daily PPY=365 sqrt(365) for ALL absolute levels.",
+  "harness_sharpe_inflation_factor": 4.898979485566356,
+  "harness_ann_inflation_factor": 24.0,
+  "caveats": [
+    "FUNDING-ONLY pnl, NO BASIS MODEL: spread.py models only the cross-venue funding differential; both perp legs are assumed perfectly delta-neutral, so real basis risk (price divergence on entry/exit, non-atomic execution, single-leg liquidation) is UNMODELLED. This is the honesty ceiling — the absolute Sharpe/maxDD are NOT achievable risk-adjusted numbers, only the edge SIGN is validated here.",
+    "SERIAL SMOOTHNESS inflates Sharpe AND DSR: the committed pnl has lag-1 autocorr ρ≈0.80 (funding accrues smoothly, no MTM noise), giving n_eff≈119 vs n=1057. DSR assumes ~iid returns, so the committed DSR is optimistic; treat it as a SIGN test, not a magnitude test.",
+    "HARNESS ANNUALIZATION IS HOURLY (HOURS_PER_YEAR=8760); our pnl is DAILY. Any annual_pct/Sharpe the harness annualizes is INFLATED ~×35 ann / ~×4.90 Sharpe. All honest absolute levels use metrics_daily (sqrt365) ONLY. DSR/PBO are period-agnostic and valid.",
+    "3-year sample (2023-06 → 2026-05) is a broadly trending/rising crypto regime; the funding-spread sign-persistence may be regime-dependent (which venue is structurally richer can shift with the cycle).",
+    "Secondary pairs HL-Backpack / HL-Drift are EXCLUDED from the validated menu (short/odd history per PLAN); only the 3 core pairs (HL-Binance, HL-Bybit, Binance-Bybit) × trailing grid are validated.",
+    "Double costs (4 taker legs/round-trip, venue fees > HL: HL 3.5 / Binance 5.0 / Bybit 5.5 bps + 0.2 slip/leg) are applied; they are the key killer of a thin spread and are why Binance-Bybit (no HL leg, both high-fee) barely clears zero.",
+    "DSR deflation uses N=18 (full menu) — conservative; the trailing legs share signal across (lb,rb) and are highly correlated, so the effective number of independent trials is < N. The N=1 DSR is the single-strategy view.",
+    "purge=90d on CPCV = max menu lookback in days (lb270=90d rolling window). The committed lb90 needs only 30d; a menu-wide purge must cover the slowest member. Signal is causal (rolling.shift(1)) and carry is lagged 1 period (no look-ahead).",
+    "STANDALONE DSR is NOT the deciding metric: per PLAN, the spread stream's value rests primarily on DECORRELATION with FRAB (HL basis carry) and XSMOM (Task D), not on this (smoothness-inflated) standalone Sharpe."
+  ]
+}
