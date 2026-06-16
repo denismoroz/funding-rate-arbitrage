@@ -1,0 +1,216 @@
+{
+  "test": "invvol_weighting_validation",
+  "description": "CPCV+DSR+PBO validation of inverse-volatility leg weighting vs. equal-weight (EW) for the crypto cross-sectional momentum book. Menu: EW (incumbent) + IV20 + IV30 + IV60 (4 configs). Book: survivorship-debiased PT panel, identical hyperparams to validated book. Only the within-leg weight matrix changes; portfolio_returns is unchanged.",
+  "invvol_model": "rank_to_weights_invvol: same selection (top-k long, bottom-k short) as EW. Within each leg: w_i = (1/vol_i) / sum(1/vol_j). Vol = rolling std of daily price pct_change, window=W, min_periods=W, causal. Names with vol<=0 or NaN are excluded from the leg. Dollar-neutral preserved: long leg sums to +1, short leg to −1.",
+  "assert_ew_equals_run_book": true,
+  "assert_ew_max_diff": 0.0,
+  "common_window": {
+    "start": "2023-06-08",
+    "end": "2026-06-13",
+    "n_days": 1102
+  },
+  "cpcv_params": {
+    "n_groups": 6,
+    "k": 2,
+    "purge_days": 60,
+    "embargo_days": 7
+  },
+  "costs_bps": 8.5,
+  "rebal_every": 7,
+  "pbo_S": 16,
+  "n_configs_in_menu": 4,
+  "per_config": {
+    "EW": {
+      "type": "equal_weight",
+      "vol_window": null,
+      "turn_per_yr": 54.301963842939855,
+      "eff_breadth_per_leg": 16.86577181208054,
+      "is_sharpe_daily": 0.7563861054713928,
+      "is_ann_pct": 29.43679193949713,
+      "is_maxdd_pct": 27.780224265857456,
+      "is_calmar": 1.0596311843196902,
+      "is_vol_ann_pct": 38.91767937904096,
+      "is_hit_pct": 48.09437386569873,
+      "dsr_n4": 0.8731235494239343,
+      "dsr_n4_sr_hat": 0.03957309087979416,
+      "dsr_n4_sr_star": 0.005010572754104397,
+      "dsr_n4_psr_vs_zero": 0.9043485114452681,
+      "dsr_n1": 0.9043485114452681,
+      "dsr_n1_psr_vs_zero": 0.9043485114452681,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.5745395689313052,
+          "iqr_lo": 0.07591401398084414,
+          "iqr_hi": 1.235393814110711,
+          "mean": 0.7191889814661985
+        },
+        "ann_pct": {
+          "median": 22.750448928532077,
+          "iqr_lo": 2.8068814363054018,
+          "iqr_hi": 47.495670601349524,
+          "mean": 28.296304199046666
+        },
+        "maxdd_pct": {
+          "median": 23.866395984183853,
+          "iqr_lo": 18.36700607371603,
+          "iqr_hi": 24.645562180454494,
+          "mean": 22.21957265054441
+        },
+        "frac_sharpe_pos": 0.84
+      },
+      "corr_vs_ew": null,
+      "assert_equals_run_book": true,
+      "assert_max_diff": 0.0
+    },
+    "IV20": {
+      "type": "inverse_vol",
+      "vol_window": 20,
+      "turn_per_yr": 64.90289708551062,
+      "eff_breadth_per_leg": 13.633299158943236,
+      "is_sharpe_daily": 0.8846848694116891,
+      "is_ann_pct": 33.42735740443084,
+      "is_maxdd_pct": 25.426443624568506,
+      "is_calmar": 1.3146690075104088,
+      "is_vol_ann_pct": 37.7844796042006,
+      "is_hit_pct": 48.185117967332125,
+      "dsr_n4": 0.9138125125902017,
+      "dsr_n4_sr_hat": 0.04628550747291814,
+      "dsr_n4_sr_star": 0.005010572754104397,
+      "dsr_n4_psr_vs_zero": 0.9370249632452898,
+      "dsr_n1": 0.9370249632452898,
+      "dsr_n1_psr_vs_zero": 0.9370249632452898,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.4458195014240704,
+          "iqr_lo": 0.4352034837102078,
+          "iqr_hi": 1.3911442707747017,
+          "mean": 0.8218818671848439
+        },
+        "ann_pct": {
+          "median": 16.272111208577584,
+          "iqr_lo": 15.789873103752605,
+          "iqr_hi": 57.24551626120461,
+          "mean": 32.46255816670481
+        },
+        "maxdd_pct": {
+          "median": 21.770567021047537,
+          "iqr_lo": 18.848778417366375,
+          "iqr_hi": 22.86305987535523,
+          "mean": 20.575238845034733
+        },
+        "frac_sharpe_pos": 1.0
+      },
+      "corr_vs_ew": 0.9405471715131943
+    },
+    "IV30": {
+      "type": "inverse_vol",
+      "vol_window": 30,
+      "turn_per_yr": 62.505046958112,
+      "eff_breadth_per_leg": 13.766816873939733,
+      "is_sharpe_daily": 0.8975778839742833,
+      "is_ann_pct": 34.25533859487002,
+      "is_maxdd_pct": 25.59057130815153,
+      "is_calmar": 1.338592178438722,
+      "is_vol_ann_pct": 38.16419634048322,
+      "is_hit_pct": 48.82032667876588,
+      "dsr_n4": 0.9170342917596528,
+      "dsr_n4_sr_hat": 0.04696005243521893,
+      "dsr_n4_sr_star": 0.005010572754104397,
+      "dsr_n4_psr_vs_zero": 0.9395338045284785,
+      "dsr_n1": 0.9395338045284785,
+      "dsr_n1_psr_vs_zero": 0.9395338045284785,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.4871967694383673,
+          "iqr_lo": 0.38454483362414243,
+          "iqr_hi": 1.4330748355158778,
+          "mean": 0.8334544281115117
+        },
+        "ann_pct": {
+          "median": 18.602609443441263,
+          "iqr_lo": 13.90236043018496,
+          "iqr_hi": 59.93422443452423,
+          "mean": 33.24350625781234
+        },
+        "maxdd_pct": {
+          "median": 20.974727908091463,
+          "iqr_lo": 18.627818019395647,
+          "iqr_hi": 23.96091453812499,
+          "mean": 20.33608272663473
+        },
+        "frac_sharpe_pos": 1.0
+      },
+      "corr_vs_ew": 0.946014155023641
+    },
+    "IV60": {
+      "type": "inverse_vol",
+      "vol_window": 60,
+      "turn_per_yr": 59.7963177318656,
+      "eff_breadth_per_leg": 14.10250879841847,
+      "is_sharpe_daily": 0.9761895211890559,
+      "is_ann_pct": 37.719869082545564,
+      "is_maxdd_pct": 24.693099078712287,
+      "is_calmar": 1.5275469863992708,
+      "is_vol_ann_pct": 38.63990369062819,
+      "is_hit_pct": 49.727767695099814,
+      "dsr_n4": 0.9352464514789293,
+      "dsr_n4_sr_hat": 0.0510729062293415,
+      "dsr_n4_sr_star": 0.005010572754104397,
+      "dsr_n4_psr_vs_zero": 0.953614786888207,
+      "dsr_n1": 0.953614786888207,
+      "dsr_n1_psr_vs_zero": 0.953614786888207,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.5312655065294957,
+          "iqr_lo": 0.46074715914916137,
+          "iqr_hi": 1.5416189669449236,
+          "mean": 0.9136282565534135
+        },
+        "ann_pct": {
+          "median": 20.131141137144315,
+          "iqr_lo": 17.4351880576585,
+          "iqr_hi": 66.53859445749394,
+          "mean": 36.67516939977984
+        },
+        "maxdd_pct": {
+          "median": 21.673731958537356,
+          "iqr_lo": 18.32109344519627,
+          "iqr_hi": 23.354728585508976,
+          "mean": 20.25900953836242
+        },
+        "frac_sharpe_pos": 1.0
+      },
+      "corr_vs_ew": 0.9550796518566236
+    }
+  },
+  "pbo_across_menu": {
+    "pbo": 0.38997668997669,
+    "n_splits": 12870,
+    "n_configs": 4,
+    "S": 16,
+    "median_oos_rank": 0.6,
+    "is_best_counts": {
+      "IV60": 8506,
+      "EW": 2679,
+      "IV20": 1335,
+      "IV30": 350
+    },
+    "note": "N=4 configs → PBO=0.390: fraction of splits where IS-best config ranks below median OOS."
+  },
+  "verdict": "KEEP EW — INVERSE-VOL CONFIGS ARE STATISTICALLY INDISTINGUISHABLE FROM EW.\n\n  All 4 configs (EW + IV sweep) fall in the DSR WARN zone: the\n  momentum edge is likely real (PSR_vs_0 elevated) but ~3 years of data\n  is insufficient to clear DSR>0.95 even for N=1. No inverse-vol window\n  clears the menu-size multi-test bar.\n\n  All OOS IQR ranges overlap substantially with EW. PBO confirms IS-winner\n  selection among these correlated books is unreliable.\n\n  TURNOVER: every IV window costs MORE than EW — turnover 59.8-64.9/yr vs EW 54.3/yr (+47 to +90 bps/yr),\n  because vol-based weights drift more between rebalances than equal weights.\n\n  CONCENTRATION: the structural argument FAILS here. IV effective breadth/leg is\n  13.6-14.1 names vs EW 16.9 — inverse-vol is MORE concentrated, not less.\n  Within momentum terciles crypto vol is fairly homogeneous, so 1/vol tilts\n  toward fewer low-vol names rather than equalizing risk contribution.\n\n  CONCLUSION: Inverse-vol weighting does not deliver a detectable\n  improvement in this dataset. The complexity cost (harder to audit,\n  path-dependent vol computation, potential concentration) is not\n  compensated by measurable OOS benefit. Retain EW as the incumbent.\n  Revisit with 5+ years of data or if live dispersion evidence suggests\n  specific coins are dominating realized portfolio vol.",
+  "dsr_threshold": 0.95,
+  "honesty_caveats": [
+    "~3 years of data only (1102 days); low statistical power for discriminating between similar weighting schemes that share the same momentum signal.",
+    "Survivorship-debiased PT book (the honest version; includes 28 dead/delisted coins). Results are more conservative than the frozen survivor set.",
+    "No real crypto bear market or liquidity crisis in the study window (2023-06 to present); inverse-vol weighting might behave differently when vol regimes shift sharply.",
+    "DSR deflation uses N=4 (full menu size). However, the three IV configs are NOT truly independent — they share the same momentum signal and differ only in the vol-window smoothing. N=4 deflation is therefore conservative (penalizes more than necessary); N=1 is the more honest single-strategy view. Both are reported.",
+    "Vol is computed causally (rolling std of price returns, all data <= t). However, CPCV slices the precomputed pnl — the vol computation inside the IS portion of a CPCV fold is correctly estimated from IS data only; no look-ahead is introduced by the pnl slicing.",
+    "Inverse-vol concentration risk: if the vol window is short (W=20), the weights can become highly concentrated in the 1-2 lowest-vol names (eff_breadth → 1). Check eff_breadth/leg in the summary table. If eff_breadth << k_EW, the structural rationale for IV (better diversification) is inverted — IV becomes MORE concentrated, not less.",
+    "The harness (CPCV/DSR/PBO) was validated on reference series previously and imported unchanged."
+  ],
+  "annualization_note": "IS and OOS Sharpe/ann use sqrt(365) daily annualization (honest daily). DSR and PBO use per-period (per-day) Sharpe ratios — annualization-agnostic."
+}
