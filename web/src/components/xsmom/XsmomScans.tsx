@@ -44,10 +44,21 @@ function ScanRow({ scan, now }: { scan: import("../../lib/api").XsmomScan; now: 
           <span className="text-[11px] text-amber-600">{scan.note}</span>
         )}
       </div>
-      {(longs.length > 0 || shorts.length > 0) && (
-        <div className="flex flex-wrap gap-1 mt-1 overflow-x-auto">
+      {longs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 mt-1">
+          <span className="w-12 shrink-0 text-[10px] font-medium uppercase text-indigo-500">long</span>
           {longs.map((r) => <RankBadge key={`${r.coin}-l`} item={r} />)}
+        </div>
+      )}
+      {shorts.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 mt-1">
+          <span className="w-12 shrink-0 text-[10px] font-medium uppercase text-rose-500">short</span>
           {shorts.map((r) => <RankBadge key={`${r.coin}-s`} item={r} />)}
+        </div>
+      )}
+      {others.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 mt-1">
+          <span className="w-12 shrink-0 text-[10px] font-medium uppercase text-gray-400">neutral</span>
           {others.map((r) => <RankBadge key={`${r.coin}-o`} item={r} />)}
         </div>
       )}
@@ -55,7 +66,7 @@ function ScanRow({ scan, now }: { scan: import("../../lib/api").XsmomScan; now: 
   );
 }
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 10;
 
 export function XsmomScans() {
   const now = useNow();
