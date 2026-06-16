@@ -1,0 +1,218 @@
+{
+  "test": "maker_model",
+  "description": "Execution-cost model: TAKER (market) vs POST-ONLY LIMIT (maker). Breakeven fill-rate + per-book Sharpe impact. RESEARCH ONLY \u2014 all maker params are swept assumptions.",
+  "cost_decomposition": {
+    "research_costs_bps_per_leg": 8.5,
+    "taker_fee_bps": 3.5,
+    "implied_slippage_bps": 5.0,
+    "maker_fee_bps": 1.0,
+    "note": "8.5 = 3.5 taker fee + 5.0 implied slippage; maker fee 1.0bps base tier, NO rebate"
+  },
+  "maker_model": {
+    "policy_A": "cross-after-timeout: unfilled portion crosses as taker",
+    "policy_B": "skip/tracking-error: unfilled portion stays off target book (qualitative)",
+    "formula": "E[cost] = p_fill*(maker_fee - spread_capture + adverse_selection) + (1-p_fill)*(c_taker + drift_penalty)",
+    "default_params_bps": {
+      "maker_fee": 1.0,
+      "spread_capture": 2.5,
+      "adverse_selection": 2.5,
+      "drift_penalty": 1.5,
+      "c_taker": 8.5
+    },
+    "c_maker_filled_bps": 1.0,
+    "c_unfilled_bps": 10.0
+  },
+  "breakeven": {
+    "p_fill_star_default": 0.1667,
+    "interpretation": "fill-rate at which policy-A E[cost] == 8.5bps taker; above p* maker saves, below p* maker is worse",
+    "sweep": {
+      "adverse_selection": {
+        "0.0": 0.1304,
+        "1.0": 0.1429,
+        "2.5": 0.1667,
+        "4.0": 0.2,
+        "6.0": 0.2727
+      },
+      "spread_capture": {
+        "0.0": 0.2308,
+        "1.0": 0.2,
+        "2.5": 0.1667,
+        "4.0": 0.1429,
+        "5.0": 0.1304
+      },
+      "drift_penalty": {
+        "0.0": 0.0,
+        "1.0": 0.1176,
+        "1.5": 0.1667,
+        "3.0": 0.2857,
+        "5.0": 0.4
+      }
+    }
+  },
+  "eff_cost_by_pfill_bps": {
+    "p0.3": 7.3,
+    "p0.5": 5.5,
+    "p0.7": 3.7,
+    "p0.9": 1.9,
+    "p1.0": 1.0
+  },
+  "turnover_per_yr": {
+    "XSMOM": 54.3,
+    "TREND": 235.53,
+    "ratio_trend_over_xsmom": 4.337
+  },
+  "book_metrics": {
+    "XSMOM": {
+      "baseline_8.5": {
+        "eff_cost_bps": 8.5,
+        "sharpe": 0.7564,
+        "ann_pct": 29.437,
+        "maxdd_pct": 27.78,
+        "calmar": 1.06,
+        "n": 1102
+      },
+      "maker_p0.3": {
+        "eff_cost_bps": 7.3,
+        "sharpe": 0.7731,
+        "ann_pct": 30.088,
+        "maxdd_pct": 27.305,
+        "calmar": 1.102,
+        "n": 1102
+      },
+      "maker_p0.5": {
+        "eff_cost_bps": 5.5,
+        "sharpe": 0.7982,
+        "ann_pct": 31.066,
+        "maxdd_pct": 26.671,
+        "calmar": 1.165,
+        "n": 1102
+      },
+      "maker_p0.7": {
+        "eff_cost_bps": 3.7,
+        "sharpe": 0.8233,
+        "ann_pct": 32.043,
+        "maxdd_pct": 26.033,
+        "calmar": 1.231,
+        "n": 1102
+      },
+      "maker_p0.9": {
+        "eff_cost_bps": 1.9,
+        "sharpe": 0.8483,
+        "ann_pct": 33.021,
+        "maxdd_pct": 25.914,
+        "calmar": 1.274,
+        "n": 1102
+      },
+      "maker_p1.0": {
+        "eff_cost_bps": 1.0,
+        "sharpe": 0.8609,
+        "ann_pct": 33.509,
+        "maxdd_pct": 25.86,
+        "calmar": 1.296,
+        "n": 1102
+      }
+    },
+    "TREND": {
+      "baseline_8.5": {
+        "eff_cost_bps": 8.5,
+        "sharpe": 0.7156,
+        "ann_pct": 111.531,
+        "maxdd_pct": 93.682,
+        "calmar": 1.191,
+        "n": 1102
+      },
+      "maker_p0.3": {
+        "eff_cost_bps": 7.3,
+        "sharpe": 0.7338,
+        "ann_pct": 114.357,
+        "maxdd_pct": 93.513,
+        "calmar": 1.223,
+        "n": 1102
+      },
+      "maker_p0.5": {
+        "eff_cost_bps": 5.5,
+        "sharpe": 0.761,
+        "ann_pct": 118.597,
+        "maxdd_pct": 93.25,
+        "calmar": 1.272,
+        "n": 1102
+      },
+      "maker_p0.7": {
+        "eff_cost_bps": 3.7,
+        "sharpe": 0.7881,
+        "ann_pct": 122.836,
+        "maxdd_pct": 92.977,
+        "calmar": 1.321,
+        "n": 1102
+      },
+      "maker_p0.9": {
+        "eff_cost_bps": 1.9,
+        "sharpe": 0.8153,
+        "ann_pct": 127.076,
+        "maxdd_pct": 92.693,
+        "calmar": 1.371,
+        "n": 1102
+      },
+      "maker_p1.0": {
+        "eff_cost_bps": 1.0,
+        "sharpe": 0.8289,
+        "ann_pct": 129.196,
+        "maxdd_pct": 92.546,
+        "calmar": 1.396,
+        "n": 1102
+      }
+    }
+  },
+  "annual_cost_drag_pct": {
+    "XSMOM": {
+      "baseline_8.5": 4.616,
+      "maker_p0.3": 3.964,
+      "maker_p0.5": 2.987,
+      "maker_p0.7": 2.009,
+      "maker_p0.9": 1.032,
+      "maker_p1.0": 0.543
+    },
+    "TREND": {
+      "baseline_8.5": 20.02,
+      "maker_p0.3": 17.194,
+      "maker_p0.5": 12.954,
+      "maker_p0.7": 8.715,
+      "maker_p0.9": 4.475,
+      "maker_p1.0": 2.355
+    }
+  },
+  "headline_3bps_vs_8.5bps": {
+    "XSMOM": {
+      "sharpe_8.5": 0.7564,
+      "sharpe_3.0": 0.833,
+      "dsharpe": 0.0766,
+      "ann_8.5_pct": 29.437,
+      "ann_3.0_pct": 32.423,
+      "dann_pct": 2.987
+    },
+    "TREND": {
+      "sharpe_8.5": 0.7156,
+      "sharpe_3.0": 0.7987,
+      "dsharpe": 0.0831,
+      "ann_8.5_pct": 111.531,
+      "ann_3.0_pct": 124.485,
+      "dann_pct": 12.954
+    }
+  },
+  "policy_B_tracking_error_bound": {
+    "p0.3": "book holds 70% less of intended rebal delta/period",
+    "p0.5": "book holds 50% less of intended rebal delta/period",
+    "p0.7": "book holds 30% less of intended rebal delta/period",
+    "p0.9": "book holds 10% less of intended rebal delta/period",
+    "p1.0": "book holds 0% less of intended rebal delta/period"
+  },
+  "caveats": [
+    "NO order-book / spread data and NO measured fill-rate in this research panel. spread_capture, adverse_selection, drift_penalty and p_fill are ASSUMPTIONS, sensitivity-swept here, NOT measured.",
+    "Real fill-rate + spread must come from (a) auditing the live prod fills DB and (b) a live post-only A/B test. This model frames 'what fill-rate is needed and what is at stake' \u2014 it does NOT prove maker is cheaper.",
+    "HL maker fee 1.0 bps is BASE TIER. No rebate is assumed (rebates need volume our ~$345 occupied capital does not generate).",
+    "Policy B (skip) is tracking error, not a per-leg bp cost; quantitative results are policy A (cross-after-timeout) only. B is a documented caveat.",
+    "Maker changes are LIVE EXECUTION changes to src/frab \u2014 OUT OF SCOPE here (research only). Adverse selection is hardest on thin alts (wide spread, low fill-rate) and on a directional book that chases momentum.",
+    "Turnover is measured on the PT survivorship panel; live universe (~15-20 coins) and live rebalance cadence may differ from the backtest grid."
+  ],
+  "verdict": "MAKER SWITCH \u2014 CONDITIONALLY worth pursuing, and it matters MOST for the TREND book by a wide margin. Decomposition: research 8.5bps/leg = 3.5 taker fee + 5.0 implied slippage; HL maker fee is 1.0bps. At default params (spread_capture 2.5, adverse_selection 2.5, drift 1.5) the breakeven is p_fill*=0.17: we must fill >=17% of legs passively for maker (policy A) to beat all-taker. The stakes scale with turnover: TREND (~236/yr) is ~4.3x more cost-sensitive than XSMOM (~54/yr), so the same per-bp saving buys ~4.3x more Sharpe/return on TREND. At effective 3bps vs 8.5, TREND gains Sharpe +0.083 (ann +12.95pp) vs XSMOM +0.077 (ann +2.99pp). PLAUSIBILITY: a weekly target-book reconcile on liquid majors can plausibly fill >=17% passively; thin alts (wide spread \u2192 biggest fee win) are exactly where fill-risk + adverse selection are worst, so a blended fill-rate near breakeven is realistic but UNCERTAIN. DECISION: do NOT flip live blindly. First audit the live prod fills DB for realized spread + passive fill-rate, then run a live post-only A/B test \u2014 prioritising TREND, where the per-bp payoff is largest."
+}
