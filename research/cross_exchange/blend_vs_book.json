@@ -1,0 +1,340 @@
+{
+  "test": "cross_exchange_spread_decorrelation_vs_frab_proxy_and_xsmom",
+  "task": "Task D of research/cross_exchange/PLAN.md (DECISIVE)",
+  "description": "Decorrelation of the committed cross-exchange SPREAD book (HL-Binance perp-vs-perp funding spread, trail lb90/rb21) against the XSMOM cross-sec momentum book and a FRAB-PROXY (HL-only funding-harvest stand-in for HL basis carry), plus risk-parity (inverse-vol) and equal-weight blends and crisis-alpha. Decides whether cross-venue spread carry is a STRUCTURALLY DISTINCT, decorrelated funding source worth a LIVE diversification test, INDEPENDENT of its smoothness-inflated standalone Sharpe.",
+  "spread_provenance": {
+    "rebuilt_sum": 0.27343149003666667,
+    "rebuilt_len": 1078,
+    "csv_sum": 0.273431490036658,
+    "csv_len": 1078,
+    "max_abs_diff": 9.999054535747565e-17,
+    "passed": true,
+    "csv": "research/cross_exchange/characterize_committed_pnl.csv",
+    "note": "SPREAD book rebuilt via spread.py engine + characterize.trailing_direction_signal, asserted bit-exact (sum/len + max abs diff < 1e-9) vs characterize_committed_pnl.csv."
+  },
+  "config": {
+    "committed_spread_pair": "HL-Binance",
+    "committed_spread_config": "trail_lb90_rb21",
+    "spread_lag1_autocorr": 0.8009300048943795,
+    "core_coins": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "AVAX",
+      "LINK",
+      "AAVE",
+      "DOGE",
+      "ARB",
+      "OP",
+      "MATIC"
+    ],
+    "xsmom_coins_used": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "AVAX",
+      "LINK",
+      "AAVE",
+      "DOGE",
+      "ARB",
+      "MATIC"
+    ],
+    "frab_proxy": {
+      "lookback_days": 30,
+      "rebalance_days": 7,
+      "hl_taker_bps": 3.5,
+      "hl_slip_bps": 0.2,
+      "construction": "HL-only funding-harvest: per coin, hold sign(rolling-mean(daily HL funding, 30d).shift(1)) updated weekly (ffill between), pnl = position·funding minus single-venue HL taker+slip on rebalance, equal-weight across present coins, daily. A CRUDE PROXY for HL carry (NOT real FRAB).",
+      "LABEL": "PROXY for HL carry — correlation reference only, NOT real FRAB"
+    },
+    "rolling_window_days": 90,
+    "annualization": "metrics_daily PPY=365 sqrt(365) (honest absolute ONLY)"
+  },
+  "common_window": {
+    "start": "2023-06-08",
+    "end": "2026-05-13",
+    "n_days": 1071
+  },
+  "frab_proxy_standalone_full_sample": {
+    "n": 1101,
+    "ann": 0.16089747634126172,
+    "vol_ann": 0.011884968269483693,
+    "sharpe": 13.537897005109246,
+    "maxdd": 0.0018478684470538687,
+    "calmar": 87.0719323108672,
+    "hit": 0.9082652134423251,
+    "mean": 0.0004408150036746897,
+    "std": 0.0006220876711473379
+  },
+  "correlation": {
+    "spread_vs_xsmom": {
+      "pair": "spread_vs_xsmom",
+      "n": 1071,
+      "pearson": 0.007581493455558408,
+      "spearman": 0.022239946820225592,
+      "rolling_window_days": 90,
+      "rolling_pearson_mean": 0.005161736932862425,
+      "rolling_pearson_min": -0.21799174286540565,
+      "rolling_pearson_max": 0.2305091540563409,
+      "frac_windows_abs_corr_below_0p3": 1.0
+    },
+    "spread_vs_frab_proxy": {
+      "pair": "spread_vs_frab_proxy",
+      "n": 1071,
+      "pearson": 0.8616077390964065,
+      "spearman": 0.7255766529952963,
+      "rolling_window_days": 90,
+      "rolling_pearson_mean": 0.7028960665745463,
+      "rolling_pearson_min": -0.056648915456224774,
+      "rolling_pearson_max": 0.9555411733837503,
+      "frac_windows_abs_corr_below_0p3": 0.045824847250509164
+    },
+    "xsmom_vs_frab_proxy": {
+      "pair": "xsmom_vs_frab_proxy",
+      "n": 1071,
+      "pearson": 0.04380828921598425,
+      "spearman": 0.04073229206111706,
+      "rolling_window_days": 90,
+      "rolling_pearson_mean": 0.0544803233110992,
+      "rolling_pearson_min": -0.18070889159312187,
+      "rolling_pearson_max": 0.3218682778373112,
+      "frac_windows_abs_corr_below_0p3": 0.9989816700610998
+    },
+    "headline": "THE decisive numbers: SPREAD⟂FRAB-proxy (is cross-venue spread carry a distinct funding source vs HL basis carry?) and SPREAD⟂XSMOM."
+  },
+  "blend": {
+    "spread_plus_frab_proxy": {
+      "other_leg": "frab_proxy",
+      "n": 1071,
+      "inverse_vol_weights_FLAGGED_inflated": {
+        "w_spread": 0.6374602511833543,
+        "w_other": 0.36253974881664575,
+        "flag": "w_spread=0.637 is INFLATED: the SPREAD book is funding-only (no basis risk) so its vol is artificially tiny → 1/vol over-weights it. Read the inverse-vol blend as SUGGESTIVE only; the equal-weight blend is the sanity alternative and the DECORRELATION number is the robust takeaway."
+      },
+      "metrics": {
+        "spread": {
+          "n": 1071,
+          "ann": 0.09318626878000312,
+          "vol_ann": 0.006824411011044139,
+          "sharpe": 13.654844151267723,
+          "maxdd": 0.003467214070326574,
+          "calmar": 26.876410538800673,
+          "hit": 0.8748832866479925,
+          "mean": 0.0002553048459726113,
+          "std": 0.000357205998076857
+        },
+        "frab_proxy": {
+          "n": 1071,
+          "ann": 0.16423800467913555,
+          "vol_ann": 0.011999486322474402,
+          "sharpe": 13.68708628564595,
+          "maxdd": 0.0018478684470538687,
+          "calmar": 88.8797062047284,
+          "hit": 0.9094304388422035,
+          "mean": 0.00044996713610722066,
+          "std": 0.0006280818199977169
+        },
+        "blend_inverse_vol": {
+          "n": 1071,
+          "ann": 0.11894534726586123,
+          "vol_ann": 0.008394162459904238,
+          "sharpe": 14.170007768376951,
+          "maxdd": 0.002864899409830479,
+          "calmar": 41.51815831917792,
+          "hit": 0.9103641456582633,
+          "mean": 0.00032587766374208557,
+          "std": 0.0004393705441622594
+        },
+        "blend_equal_weight": {
+          "n": 1071,
+          "ann": 0.12871213672956933,
+          "vol_ann": 0.009105951145325026,
+          "sharpe": 14.1349469896563,
+          "maxdd": 0.0026364477841556155,
+          "calmar": 48.82028671422841,
+          "hit": 0.9150326797385621,
+          "mean": 0.00035263599103991594,
+          "std": 0.00047662726674008746
+        }
+      }
+    },
+    "spread_plus_xsmom": {
+      "other_leg": "xsmom",
+      "n": 1071,
+      "inverse_vol_weights_FLAGGED_inflated": {
+        "w_spread": 0.9866735532247156,
+        "w_other": 0.013326446775284361,
+        "flag": "w_spread=0.987 is INFLATED: the SPREAD book is funding-only (no basis risk) so its vol is artificially tiny → 1/vol over-weights it. Read the inverse-vol blend as SUGGESTIVE only; the equal-weight blend is the sanity alternative and the DECORRELATION number is the robust takeaway."
+      },
+      "metrics": {
+        "spread": {
+          "n": 1071,
+          "ann": 0.09318626878000312,
+          "vol_ann": 0.006824411011044139,
+          "sharpe": 13.654844151267723,
+          "maxdd": 0.003467214070326574,
+          "calmar": 26.876410538800673,
+          "hit": 0.8748832866479925,
+          "mean": 0.0002553048459726113,
+          "std": 0.000357205998076857
+        },
+        "xsmom": {
+          "n": 1071,
+          "ann": 0.4160882029168798,
+          "vol_ann": 0.5052709078777764,
+          "sharpe": 0.8234952704174496,
+          "maxdd": 0.5547696004591998,
+          "calmar": 0.7500198326881482,
+          "hit": 0.4911297852474323,
+          "mean": 0.0011399676792243282,
+          "std": 0.026447088057210424
+        },
+        "blend_inverse_vol": {
+          "n": 1071,
+          "ann": 0.09748940421891455,
+          "vol_ann": 0.009558588190388965,
+          "sharpe": 10.199142622018057,
+          "maxdd": 0.003824556570621085,
+          "calmar": 25.490381020323845,
+          "hit": 0.7226890756302521,
+          "mean": 0.0002670942581340125,
+          "std": 0.0005003193725037885
+        },
+        "blend_equal_weight": {
+          "n": 1071,
+          "ann": 0.2546372358484414,
+          "vol_ann": 0.25268436219229173,
+          "sharpe": 1.0077285101428772,
+          "maxdd": 0.30288896867014126,
+          "calmar": 0.8406949812878527,
+          "hit": 0.5368814192343604,
+          "mean": 0.0006976362625984695,
+          "std": 0.013226104003589565
+        }
+      }
+    },
+    "inverse_vol_flag": "Inverse-vol weights OVER-weight SPREAD because its funding-only vol is artificially tiny — SUGGESTIVE only; equal-weight is the sanity alternative; correlation is robust."
+  },
+  "crisis_alpha": {
+    "spread_in_xsmom_drawdowns": {
+      "other_leg": "xsmom",
+      "windows": [
+        {
+          "peak_date": "2024-11-12",
+          "trough_date": "2025-05-09",
+          "xsmom_dd_pct": -55.477,
+          "n_days": 179,
+          "xsmom_cum_pnl_pct": -52.8391,
+          "spread_cum_pnl_pct": 3.5583,
+          "spread_flat_to_positive": true
+        },
+        {
+          "peak_date": "2023-12-24",
+          "trough_date": "2024-02-28",
+          "xsmom_dd_pct": -25.8035,
+          "n_days": 67,
+          "xsmom_cum_pnl_pct": -25.6739,
+          "spread_cum_pnl_pct": 3.5077,
+          "spread_flat_to_positive": true
+        },
+        {
+          "peak_date": "2024-04-12",
+          "trough_date": "2024-05-25",
+          "xsmom_dd_pct": -22.3516,
+          "n_days": 44,
+          "xsmom_cum_pnl_pct": -18.7577,
+          "spread_cum_pnl_pct": 0.6188,
+          "spread_flat_to_positive": true
+        },
+        {
+          "peak_date": "2024-08-06",
+          "trough_date": "2024-10-07",
+          "xsmom_dd_pct": -17.1734,
+          "n_days": 63,
+          "xsmom_cum_pnl_pct": -15.2689,
+          "spread_cum_pnl_pct": 0.7064,
+          "spread_flat_to_positive": true
+        },
+        {
+          "peak_date": "2023-11-14",
+          "trough_date": "2023-11-20",
+          "xsmom_dd_pct": -11.2865,
+          "n_days": 7,
+          "xsmom_cum_pnl_pct": -9.1517,
+          "spread_cum_pnl_pct": 0.4313,
+          "spread_flat_to_positive": true
+        }
+      ],
+      "spread_flat_to_positive_in_n": [
+        5,
+        5
+      ]
+    },
+    "spread_in_frab_proxy_drawdowns": {
+      "other_leg": "frab_proxy",
+      "windows": [
+        {
+          "peak_date": "2023-10-23",
+          "trough_date": "2023-11-07",
+          "frab_proxy_dd_pct": -0.1848,
+          "n_days": 16,
+          "frab_proxy_cum_pnl_pct": -0.1535,
+          "spread_cum_pnl_pct": -0.3013,
+          "spread_flat_to_positive": false
+        },
+        {
+          "peak_date": "2025-10-09",
+          "trough_date": "2025-10-16",
+          "frab_proxy_dd_pct": -0.1205,
+          "n_days": 8,
+          "frab_proxy_cum_pnl_pct": -0.0889,
+          "spread_cum_pnl_pct": 0.0625,
+          "spread_flat_to_positive": true
+        },
+        {
+          "peak_date": "2025-04-02",
+          "trough_date": "2025-04-10",
+          "frab_proxy_dd_pct": -0.055,
+          "n_days": 9,
+          "frab_proxy_cum_pnl_pct": -0.0474,
+          "spread_cum_pnl_pct": -0.0744,
+          "spread_flat_to_positive": false
+        },
+        {
+          "peak_date": "2023-07-13",
+          "trough_date": "2023-07-15",
+          "frab_proxy_dd_pct": -0.0466,
+          "n_days": 3,
+          "frab_proxy_cum_pnl_pct": -0.0233,
+          "spread_cum_pnl_pct": -0.0909,
+          "spread_flat_to_positive": false
+        },
+        {
+          "peak_date": "2026-01-30",
+          "trough_date": "2026-02-03",
+          "frab_proxy_dd_pct": -0.0463,
+          "n_days": 5,
+          "frab_proxy_cum_pnl_pct": -0.0413,
+          "spread_cum_pnl_pct": 0.0188,
+          "spread_flat_to_positive": true
+        }
+      ],
+      "spread_flat_to_positive_in_n": [
+        2,
+        5
+      ]
+    }
+  },
+  "decision_rule": "The DECISIVE question is DECORRELATION (independent of the SPREAD book's smoothness-inflated standalone Sharpe): if SPREAD⟂FRAB-proxy is LOW (|corr|<0.3) → cross-venue spread carry is a structurally distinct funding source worth a LIVE decorrelation test. If HIGH (HL funding drives both legs) → NOT a diversifier.",
+  "verdict_call": "PARTIAL DIVERSIFIER — NEEDS-LIVE-CONFIRMATION",
+  "verdict": "DECORRELATION is the decisive read (independent of the SPREAD book's smoothness-inflated standalone Sharpe). SPREAD ⟂ FRAB-proxy (HL carry): Pearson +0.862, rolling-90d mean +0.703, |corr|<0.3 on 5% of windows — HIGH (HL funding drives both → NOT distinct). SPREAD ⟂ XSMOM: Pearson +0.008, rolling mean +0.005, |corr|<0.3 on 100% of windows — LOW. XSMOM ⟂ FRAB-proxy (context): Pearson +0.044. BLEND CAVEAT: the inverse-vol risk-parity weight MASSIVELY over-weights SPREAD (w_spread≈0.64 vs FRAB-proxy) because the funding-only SPREAD book has artificially tiny vol (lag-1 autocorr +0.80); the blend Sharpe is therefore SUGGESTIVE only, the equal-weight blend is the sanity alternative, and the correlation numbers are the robust takeaway. DECISION: PARTIAL DIVERSIFIER — NEEDS-LIVE-CONFIRMATION. SPREAD is highly correlated with HL carry (HL funding is the common driver of both legs) → it is NOT a genuine diversifier. CAVEAT: this is SIM with a FRAB PROXY (HL-only funding-harvest stand-in, NOT real FRAB), funding-only with NO basis-risk model, ~3y mostly-up-market. The real read is the LIVE FRAB⟂spread checkpoint (project_riskparity_checkpoint, ~2026-07-16).",
+  "honesty_caveats": [
+    "metrics_daily (PPY=365, sqrt365) for ALL absolute levels. No harness hourly annualization anywhere in this file.",
+    "SMOOTHNESS ARTIFACT: the committed SPREAD book is funding-only (spread.py models NO perp-mark/basis between venues), so its realized vol is artificially tiny and lag-1 autocorr is high (+0.80). An inverse-vol risk-parity weight therefore MASSIVELY over-weights SPREAD; that blend Sharpe is SUGGESTIVE only. The equal-weight blend is the sanity alternative, and the DECORRELATION (correlation numbers) is the robust, scale-invariant takeaway.",
+    "FRAB-PROXY is a CRUDE STAND-IN, NOT real FRAB: an HL-only funding-harvest book (causal trailing-sign of daily-summed HL funding, weekly rebal, single-venue HL taker). Its role is a correlation REFERENCE for 'HL carry', not a polished strategy. The real FRAB⟂spread measurement is the LIVE checkpoint (project_riskparity_checkpoint, ~2026-07-16).",
+    "CAUSAL / no look-ahead: SPREAD uses characterize.trailing_direction_signal (rolling.shift(1) + rebalance ffill) through the frozen engine; FRAB-proxy uses rolling(funding).shift(1) trailing sign, held between weekly rebalances.",
+    "FUNDING-ONLY honesty ceiling: neither SPREAD nor FRAB-proxy models price/basis/liquidation risk. Real basis risk (cross-venue price divergence, non-atomic execution) is NOT captured.",
+    "Coin universe: SPREAD = HL∩Binance core; XSMOM/FRAB-proxy = survivorship PT panel (OP dropped — no price cache in the crypto data dir). Books aligned on the common daily UTC window only.",
+    "~3 years (2023-06 →), predominantly an up-market with no sustained bear in-sample → crisis-alpha is SUGGESTED, not proven."
+  ]
+}
