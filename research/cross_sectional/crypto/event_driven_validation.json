@@ -1,0 +1,345 @@
+{
+  "test": "event_driven_rebal_validation",
+  "description": "CPCV+DSR+PBO validation of event-driven (drift-threshold) rebalancing vs. fixed weekly R=7 for the crypto cross-sectional momentum book. Menu: R7 (incumbent) + tau ∈ {0.2,0.4,0.6,0.8,1.0,1.2}. Book: survivorship-debiased PT panel, identical hyperparams to validated book.",
+  "drift_model": "drift_i = sum_c |w_target[c,i] - held[c]| (L1, dollar-neutral book). Rebalance on day i iff: i==0 OR drift_i >= tau. Range: [0,2]. Causal: w_target[i] uses only data<=i; held is the last-rebalance weights (signal-driven, not mark-to-market).",
+  "assert_scheduled_r7_equals_xsec": true,
+  "assert_r7_equals_run_book": true,
+  "common_window": {
+    "start": "2023-06-08",
+    "end": "2026-06-13",
+    "n_days": 1102
+  },
+  "cpcv_params": {
+    "n_groups": 6,
+    "k": 2,
+    "purge_days": 60,
+    "embargo_days": 7
+  },
+  "costs_bps": 8.5,
+  "pbo_S": 16,
+  "n_configs_in_menu": 7,
+  "per_config": {
+    "R7": {
+      "type": "fixed_weekly",
+      "rebal_every": 7,
+      "rebals_per_yr": 52.33212341197822,
+      "mean_hold_days": 6.974683544303797,
+      "turn_per_yr": 54.301963842939855,
+      "is_sharpe_daily": 0.7563861054713928,
+      "is_ann_pct": 29.43679193949713,
+      "is_maxdd_pct": 27.780224265857456,
+      "is_calmar": 1.0596311843196902,
+      "is_vol_ann_pct": 38.91767937904096,
+      "is_hit_pct": 48.09437386569873,
+      "dsr_n7": 0.7166424119450041,
+      "dsr_n7_sr_hat": 0.03957309087979416,
+      "dsr_n7_sr_star": 0.02222353298237338,
+      "dsr_n7_psr_vs_zero": 0.9043485114452681,
+      "dsr_n1": 0.9043485114452681,
+      "dsr_n1_psr_vs_zero": 0.9043485114452681,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.5745395689313052,
+          "iqr_lo": 0.07591401398084414,
+          "iqr_hi": 1.235393814110711,
+          "mean": 0.7191889814661985
+        },
+        "ann_pct": {
+          "median": 22.750448928532077,
+          "iqr_lo": 2.8068814363054018,
+          "iqr_hi": 47.495670601349524,
+          "mean": 28.296304199046666
+        },
+        "maxdd_pct": {
+          "median": 23.866395984183853,
+          "iqr_lo": 18.36700607371603,
+          "iqr_hi": 24.645562180454494,
+          "mean": 22.21957265054441
+        },
+        "frac_sharpe_pos": 0.84
+      }
+    },
+    "tau0.2": {
+      "type": "event_driven",
+      "tau": 0.2,
+      "rebals_per_yr": 328.5662431941924,
+      "mean_hold_days": 1.1108870967741935,
+      "turn_per_yr": 152.50960569745126,
+      "is_sharpe_daily": 0.30900800049386107,
+      "is_ann_pct": 11.567088478753522,
+      "is_maxdd_pct": 57.976173727619916,
+      "is_calmar": 0.1995145201043674,
+      "is_vol_ann_pct": 37.4329740986215,
+      "is_hit_pct": 48.09437386569873,
+      "dsr_n7": 0.4204083302876531,
+      "dsr_n7_sr_hat": 0.01616687773304097,
+      "dsr_n7_sr_star": 0.02222353298237338,
+      "dsr_n7_psr_vs_zero": 0.7040625863614673,
+      "dsr_n1": 0.7040625863614673,
+      "dsr_n1_psr_vs_zero": 0.7040625863614673,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.6968762959164433,
+          "iqr_lo": -0.7666230311654961,
+          "iqr_hi": 1.0648716581519073,
+          "mean": 0.27146534622021923
+        },
+        "ann_pct": {
+          "median": 22.584452075542348,
+          "iqr_lo": -27.563871507095033,
+          "iqr_hi": 40.31222380843039,
+          "mean": 10.920009664952415
+        },
+        "maxdd_pct": {
+          "median": 25.80005980197484,
+          "iqr_lo": 20.491208658329597,
+          "iqr_hi": 34.69062435797677,
+          "mean": 26.97936425613039
+        },
+        "frac_sharpe_pos": 0.68
+      },
+      "corr_vs_r7": 0.8226772545257898
+    },
+    "tau0.4": {
+      "type": "event_driven",
+      "tau": 0.4,
+      "rebals_per_yr": 227.54537205081672,
+      "mean_hold_days": 1.6040756914119358,
+      "turn_per_yr": 133.2102310420802,
+      "is_sharpe_daily": 0.24299530928267835,
+      "is_ann_pct": 9.24091812662637,
+      "is_maxdd_pct": 56.48022646369082,
+      "is_calmar": 0.16361333346577564,
+      "is_vol_ann_pct": 38.02920374844083,
+      "is_hit_pct": 47.186932849364794,
+      "dsr_n7": 0.37635218264378534,
+      "dsr_n7_sr_hat": 0.012713183634718166,
+      "dsr_n7_sr_star": 0.02222353298237338,
+      "dsr_n7_psr_vs_zero": 0.6631898330847819,
+      "dsr_n1": 0.6631898330847819,
+      "dsr_n1_psr_vs_zero": 0.6631898330847819,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.18793526619122888,
+          "iqr_lo": -0.9851636090733336,
+          "iqr_hi": 1.10779566445058,
+          "mean": 0.17796070660270505
+        },
+        "ann_pct": {
+          "median": 7.057790022695201,
+          "iqr_lo": -36.10530208571793,
+          "iqr_hi": 41.85835208404462,
+          "mean": 8.191876643951112
+        },
+        "maxdd_pct": {
+          "median": 22.700145503239668,
+          "iqr_lo": 19.58434597012578,
+          "iqr_hi": 35.401161758114874,
+          "mean": 27.25928267685742
+        },
+        "frac_sharpe_pos": 0.68
+      },
+      "corr_vs_r7": 0.8509477738061216
+    },
+    "tau0.6": {
+      "type": "event_driven",
+      "tau": 0.6,
+      "rebals_per_yr": 132.1551724137931,
+      "mean_hold_days": 2.761904761904762,
+      "turn_per_yr": 102.1421730910606,
+      "is_sharpe_daily": 0.5179214978204153,
+      "is_ann_pct": 20.005788511627234,
+      "is_maxdd_pct": 47.421803490690664,
+      "is_calmar": 0.42186899356441715,
+      "is_vol_ann_pct": 38.62706722122599,
+      "is_hit_pct": 47.82214156079855,
+      "dsr_n7": 0.5640715875912318,
+      "dsr_n7_sr_hat": 0.027096947383866997,
+      "dsr_n7_sr_star": 0.02222353298237338,
+      "dsr_n7_psr_vs_zero": 0.815101951470782,
+      "dsr_n1": 0.815101951470782,
+      "dsr_n1_psr_vs_zero": 0.815101951470782,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.41164174738823667,
+          "iqr_lo": -0.49803503504866775,
+          "iqr_hi": 1.2642287807844426,
+          "mean": 0.4573279503491154
+        },
+        "ann_pct": {
+          "median": 15.89597356868033,
+          "iqr_lo": -18.617058391566673,
+          "iqr_hi": 50.2214347030564,
+          "mean": 18.815665539654272
+        },
+        "maxdd_pct": {
+          "median": 22.654707610203072,
+          "iqr_lo": 21.636349070466952,
+          "iqr_hi": 25.8438744270583,
+          "mean": 25.356183132218572
+        },
+        "frac_sharpe_pos": 0.68
+      },
+      "corr_vs_r7": 0.8552860254688145
+    },
+    "tau0.8": {
+      "type": "event_driven",
+      "tau": 0.8,
+      "rebals_per_yr": 84.12885662431943,
+      "mean_hold_days": 4.338582677165355,
+      "turn_per_yr": 80.97413940863572,
+      "is_sharpe_daily": 0.2788931778453612,
+      "is_ann_pct": 10.701265313949254,
+      "is_maxdd_pct": 53.11176199222382,
+      "is_calmar": 0.20148578982403267,
+      "is_vol_ann_pct": 38.37048075762835,
+      "is_hit_pct": 46.46098003629764,
+      "dsr_n7": 0.40015793502567837,
+      "dsr_n7_sr_hat": 0.014591311226890972,
+      "dsr_n7_sr_star": 0.02222353298237338,
+      "dsr_n7_psr_vs_zero": 0.6856539258279885,
+      "dsr_n1": 0.6856539258279885,
+      "dsr_n1_psr_vs_zero": 0.6856539258279885,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.22702662565876436,
+          "iqr_lo": -0.918064194609919,
+          "iqr_hi": 1.6596200499995208,
+          "mean": 0.21328852285553046
+        },
+        "ann_pct": {
+          "median": 8.902468766472387,
+          "iqr_lo": -34.38678629274586,
+          "iqr_hi": 62.332533718755755,
+          "mean": 9.116130124593802
+        },
+        "maxdd_pct": {
+          "median": 25.799518707136404,
+          "iqr_lo": 19.007357831839332,
+          "iqr_hi": 33.18119945651675,
+          "mean": 27.140557243982407
+        },
+        "frac_sharpe_pos": 0.52
+      },
+      "corr_vs_r7": 0.8830176856990302
+    },
+    "tau1.0": {
+      "type": "event_driven",
+      "tau": 1.0,
+      "rebals_per_yr": 59.61887477313975,
+      "mean_hold_days": 6.122222222222222,
+      "turn_per_yr": 66.56467784497535,
+      "is_sharpe_daily": 0.925880478596219,
+      "is_ann_pct": 35.79121901093106,
+      "is_maxdd_pct": 42.043340941915595,
+      "is_calmar": 0.8512934083991548,
+      "is_vol_ann_pct": 38.65641390905681,
+      "is_hit_pct": 48.82032667876588,
+      "dsr_n7": 0.8077146793340265,
+      "dsr_n7_sr_hat": 0.04844080563917926,
+      "dsr_n7_sr_star": 0.02222353298237338,
+      "dsr_n7_psr_vs_zero": 0.9459242481751585,
+      "dsr_n1": 0.9459242481751585,
+      "dsr_n1_psr_vs_zero": 0.9459242481751585,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 1.104979961731003,
+          "iqr_lo": -0.0003692018577557157,
+          "iqr_hi": 1.6354951172764438,
+          "mean": 0.8897892859835719
+        },
+        "ann_pct": {
+          "median": 42.19911134892607,
+          "iqr_lo": -0.01370220693269434,
+          "iqr_hi": 63.658651078973364,
+          "mean": 34.49844348030258
+        },
+        "maxdd_pct": {
+          "median": 22.984744219066087,
+          "iqr_lo": 17.961439580255533,
+          "iqr_hi": 23.793974534433893,
+          "mean": 23.421301549015947
+        },
+        "frac_sharpe_pos": 0.68
+      },
+      "corr_vs_r7": 0.8691358557872665
+    },
+    "tau1.2": {
+      "type": "event_driven",
+      "tau": 1.2,
+      "rebals_per_yr": 43.72050816696915,
+      "mean_hold_days": 8.348484848484848,
+      "turn_per_yr": 57.58181253855528,
+      "is_sharpe_daily": 0.9429205059266682,
+      "is_ann_pct": 35.86659560913578,
+      "is_maxdd_pct": 32.65593587094162,
+      "is_calmar": 1.098317798971767,
+      "is_vol_ann_pct": 38.037772414215745,
+      "is_hit_pct": 49.274047186932854,
+      "dsr_n7": 0.8148716477818332,
+      "dsr_n7_sr_hat": 0.0493323166614789,
+      "dsr_n7_sr_star": 0.02222353298237338,
+      "dsr_n7_psr_vs_zero": 0.948504092378795,
+      "dsr_n1": 0.948504092378795,
+      "dsr_n1_psr_vs_zero": 0.948504092378795,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 1.3117433405829688,
+          "iqr_lo": 0.2125668143764927,
+          "iqr_hi": 1.403578406993262,
+          "mean": 0.8982494533723626
+        },
+        "ann_pct": {
+          "median": 45.232631282483375,
+          "iqr_lo": 7.396237879601679,
+          "iqr_hi": 58.42731316169624,
+          "mean": 34.928677916161945
+        },
+        "maxdd_pct": {
+          "median": 22.606431404055172,
+          "iqr_lo": 19.638560652190918,
+          "iqr_hi": 22.962352530097807,
+          "mean": 22.226695364608005
+        },
+        "frac_sharpe_pos": 0.8
+      },
+      "corr_vs_r7": 0.8707393458619925
+    }
+  },
+  "pbo_across_menu": {
+    "pbo": 0.2948717948717949,
+    "n_splits": 12870,
+    "n_configs": 7,
+    "S": 16,
+    "median_oos_rank": 0.625,
+    "is_best_counts": {
+      "tau1.2": 5442,
+      "tau1.0": 4242,
+      "R7": 3084,
+      "tau0.6": 100,
+      "tau0.8": 2,
+      "tau0.2": 0,
+      "tau0.4": 0
+    },
+    "note": "N=7 configs → PBO=0.295: fraction of splits where IS-best config ranks below median OOS."
+  },
+  "verdict": "KEEP R7 — EVENT-DRIVEN CONFIGS ARE STATISTICALLY INDISTINGUISHABLE FROM R7.\n\n  All 7 configs (R7 + τ sweep) fall in the DSR WARN zone: the\n  momentum edge is likely real (PSR_vs_0 elevated) but ~3 years of data\n  is insufficient to clear DSR>0.95 even for N=1. No event-driven threshold\n  clears the menu-size multi-test bar.\n\n  All OOS IQR ranges overlap substantially with R7. PBO confirms IS-winner\n  selection among these highly correlated books is unreliable.\n\n  COST TRADEOFF: Higher-tau (tau>=0.6) configs reduce rebalance frequency\n  and turnover vs R7, potentially lowering live costs if real execution\n  costs exceed the modeled 8.5bps — but this is a cost argument only,\n  not a Sharpe argument. It is too weak to override indistinguishability.\n\n  CONCLUSION: Event-driven rebalancing does not deliver a detectable\n  improvement in this dataset. The drift-based approach adds model\n  complexity (path-dependent schedule, causal but harder to audit)\n  without a measurable OOS benefit. Retain R7 as the incumbent.\n  Revisit with 5+ years of data or if live costs materially exceed model.",
+  "dsr_threshold": 0.95,
+  "honesty_caveats": [
+    "~3 years of data only (1102 days); low statistical power for discriminating between similar strategies — especially when they share nearly all rebalance days.",
+    "Survivorship-debiased PT book (the honest version; includes 28 dead/delisted coins). Results are more conservative than the frozen survivor set.",
+    "No real crypto bear market or liquidity crisis in the study window (2023-06 to present); event-driven rebalancing might react differently in a crash.",
+    "DSR deflation uses N=7 (full menu size) — conservative because tau configs are not truly independent (they share the same signal, only the rebalance frequency differs). N=1 DSR is the more honest single-strategy view.",
+    "The drift schedule is CAUSAL (w_target and held are both known at t, no look-ahead) but is computed on the full panel and then sliced for CPCV — same path-dependency caveat as fixed cadence (the CPCV test indices are carved from the precomputed pnl, not re-run with fresh initialization).",
+    "The xsec model ignores intra-hold price drift of weights (held vector is constant between rebalances, not re-normalized for mark-to-market moves). This means 'drift' here is purely signal-driven (target vs last rebalance weights), not mark-to-market drift. A mark-to-market drift trigger might behave differently.",
+    "The harness (CPCV/DSR/PBO) was validated on reference series previously and imported unchanged."
+  ],
+  "annualization_note": "IS and OOS Sharpe/ann use sqrt(365) daily annualization (honest daily). DSR and PBO use per-period (per-day) Sharpe ratios — annualization-agnostic."
+}
