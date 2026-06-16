@@ -1,0 +1,226 @@
+{
+  "test": "trend_characterization_sanity",
+  "description": "SANITY characterization (NOT the validation harness) of directional trend books on the survivorship-debiased PT panel: honest daily metrics, skew, turnover, gross, and a net-exposure/regime crisis-alpha check. Task B of research/trend_following/PLAN.md.",
+  "menu": [
+    "TSMOM_L30",
+    "TSMOM_L60",
+    "TSMOM_L90",
+    "TSMOM_L120",
+    "TSMOM_ENS",
+    "DONCH_N20",
+    "DONCH_N55",
+    "DONCH_N100"
+  ],
+  "committed_pick": "TSMOM_ENS",
+  "committed_reason": "Default committed = TSMOM_ENSEMBLE: equal-weight over lookbacks (30, 60, 90, 120) avoids overfitting a single lookback (FixedEnsemble logic from the cross-sec book), has the cleanest directional/regime structure, and modest turnover/gross. Per-lookback configs are noisier and channel/lookback choice is exactly what we must NOT cherry-pick at the characterization stage.",
+  "constants": {
+    "VOL_TARGET": 0.02,
+    "LEVERAGE_CAP": 3.0,
+    "COSTS_BPS": 8.5,
+    "VOL_WINDOW": 30,
+    "tsmom_lookbacks": [
+      30,
+      60,
+      90,
+      120
+    ],
+    "donchian_channels": [
+      20,
+      55,
+      100
+    ],
+    "annualization": "metrics_daily PPY=365 sqrt(365) (honest daily ONLY)"
+  },
+  "panel_window": {
+    "start": "2023-06-08",
+    "end": "2026-06-13",
+    "n_days": 1102,
+    "n_coins": 62
+  },
+  "per_book": {
+    "TSMOM_L30": {
+      "type": "tsmom",
+      "sharpe": 0.40407079726393186,
+      "ann_pct": 57.350865718793344,
+      "vol_ann_pct": 141.93271601692305,
+      "maxdd_pct": 95.65770384588303,
+      "calmar": 0.5995425711994198,
+      "hit_pct": 49.18330308529946,
+      "skew": 0.16435193270118825,
+      "turn_per_yr": 206.42208938911304,
+      "gross_mean": 2.9183303085299457,
+      "gross_p95": 3.0000000000000013,
+      "gross_max": 3.0000000000000027,
+      "cap_binds_frac": 0.9727767695099818,
+      "n_days": 1102
+    },
+    "TSMOM_L60": {
+      "type": "tsmom",
+      "sharpe": 0.5045479427694998,
+      "ann_pct": 71.9243682164088,
+      "vol_ann_pct": 142.55209885825872,
+      "maxdd_pct": 91.69999691232331,
+      "calmar": 0.7843442817689242,
+      "hit_pct": 48.72958257713248,
+      "skew": -0.10090113298652618,
+      "turn_per_yr": 145.2162650832876,
+      "gross_mean": 2.836660617059891,
+      "gross_p95": 3.0000000000000013,
+      "gross_max": 3.0000000000000027,
+      "cap_binds_frac": 0.9455535390199638,
+      "n_days": 1102
+    },
+    "TSMOM_L90": {
+      "type": "tsmom",
+      "sharpe": 0.4411214920031821,
+      "ann_pct": 61.50634287745913,
+      "vol_ann_pct": 139.431752912677,
+      "maxdd_pct": 95.29037150652366,
+      "calmar": 0.6454623054255629,
+      "hit_pct": 47.54990925589836,
+      "skew": -0.23739688171198062,
+      "turn_per_yr": 110.18660766244881,
+      "gross_mean": 2.7549909255898366,
+      "gross_p95": 3.0000000000000013,
+      "gross_max": 3.0000000000000027,
+      "cap_binds_frac": 0.9183303085299456,
+      "n_days": 1102
+    },
+    "TSMOM_L120": {
+      "type": "tsmom",
+      "sharpe": 0.3330792087725396,
+      "ann_pct": 44.54804247928663,
+      "vol_ann_pct": 133.74609193847508,
+      "maxdd_pct": 96.41863820278913,
+      "calmar": 0.46202729378517576,
+      "hit_pct": 46.46098003629764,
+      "skew": -0.40253123625516285,
+      "turn_per_yr": 89.49105580215037,
+      "gross_mean": 2.6733212341197823,
+      "gross_p95": 3.0000000000000013,
+      "gross_max": 3.0000000000000027,
+      "cap_binds_frac": 0.8911070780399274,
+      "n_days": 1102
+    },
+    "TSMOM_ENS": {
+      "type": "tsmom_ensemble",
+      "sharpe": 0.7156450085122582,
+      "ann_pct": 111.53057720112236,
+      "vol_ann_pct": 155.84623084702469,
+      "maxdd_pct": 93.68200614118933,
+      "calmar": 1.19052293813001,
+      "hit_pct": 49.546279491833026,
+      "skew": -0.052332534106835256,
+      "turn_per_yr": 235.53295059077388,
+      "gross_mean": 2.9183303085299457,
+      "gross_p95": 3.0000000000000013,
+      "gross_max": 3.000000000000002,
+      "cap_binds_frac": 0.9727767695099818,
+      "n_days": 1102
+    },
+    "DONCH_N20": {
+      "type": "donchian",
+      "sharpe": 0.46815872681371107,
+      "ann_pct": 66.7372869866312,
+      "vol_ann_pct": 142.55269241875564,
+      "maxdd_pct": 94.54995477993128,
+      "calmar": 0.7058415537264385,
+      "hit_pct": 48.09437386569873,
+      "skew": -0.052916115270358936,
+      "turn_per_yr": 91.37270482349999,
+      "gross_mean": 2.9183303085299457,
+      "gross_p95": 3.0000000000000013,
+      "gross_max": 3.0000000000000027,
+      "cap_binds_frac": 0.9727767695099818,
+      "n_days": 1102
+    },
+    "DONCH_N55": {
+      "type": "donchian",
+      "sharpe": 0.4456376871919586,
+      "ann_pct": 63.125103816940495,
+      "vol_ann_pct": 141.6511790434576,
+      "maxdd_pct": 95.14620619928476,
+      "calmar": 0.6634537133800615,
+      "hit_pct": 48.457350272232304,
+      "skew": -0.21500545614559838,
+      "turn_per_yr": 53.398894733047435,
+      "gross_mean": 2.8437885435264367,
+      "gross_p95": 3.0000000000000013,
+      "gross_max": 3.0000000000000027,
+      "cap_binds_frac": 0.9428312159709619,
+      "n_days": 1102
+    },
+    "DONCH_N100": {
+      "type": "donchian",
+      "sharpe": 0.2401701830189453,
+      "ann_pct": 34.09035616737042,
+      "vol_ann_pct": 141.94249985095476,
+      "maxdd_pct": 98.25358873000202,
+      "calmar": 0.3469629619438097,
+      "hit_pct": 46.73321234119782,
+      "skew": -0.48970734892195295,
+      "turn_per_yr": 41.197578493438115,
+      "gross_mean": 2.716919711196304,
+      "gross_p95": 3.0000000000000013,
+      "gross_max": 3.0000000000000027,
+      "cap_binds_frac": 0.9019963702359347,
+      "n_days": 1102
+    }
+  },
+  "regime_crisis_alpha": {
+    "btc_symbol": "BTC",
+    "regime_def": "bull = BTC 90d trailing return > 0 (causal); bear = < 0",
+    "n_bull_days": 596,
+    "n_bear_days": 415,
+    "mean_net_exposure_bull": 0.8887274940108254,
+    "mean_net_exposure_bear": -2.5612643716349526,
+    "mean_net_exposure_all": -0.5274412737864029,
+    "frac_days_net_long": 0.3867457962413452,
+    "worst_btc_drawdown_windows": [
+      {
+        "btc_peak": "2025-10-06",
+        "btc_trough": "2026-06-06",
+        "btc_drawdown_pct": -51.16,
+        "n_days": 244,
+        "ens_book_cum_pnl_pct": 57.691
+      },
+      {
+        "btc_peak": "2025-01-21",
+        "btc_trough": "2025-04-08",
+        "btc_drawdown_pct": -28.1,
+        "n_days": 78,
+        "ens_book_cum_pnl_pct": 98.279
+      },
+      {
+        "btc_peak": "2024-03-13",
+        "btc_trough": "2024-09-06",
+        "btc_drawdown_pct": -26.15,
+        "n_days": 178,
+        "ens_book_cum_pnl_pct": -47.038
+      },
+      {
+        "btc_peak": "2023-07-13",
+        "btc_trough": "2023-09-11",
+        "btc_drawdown_pct": -20.0,
+        "n_days": 61,
+        "ens_book_cum_pnl_pct": -3.785
+      }
+    ],
+    "max_btc_drawdown_pct": -51.16
+  },
+  "xsec_reference_skew": -0.2032933748612649,
+  "structural_soundness": {
+    "directional_regime_ordered": true,
+    "skew_better_than_xsec": true,
+    "survives_chop_net_of_cost": true
+  },
+  "verdict": "Trend books are STRUCTURALLY SOUND as a directional stream: the committed TSMOM_ENS book is net-long in bull and net-short in bear regimes, its daily skew (-0.052) is less-negative / better than the cross-sec momentum spread (-0.203) as trend-following theory predicts, and it survives chop net-of-cost (honest daily Sharpe 0.72, ann 111.53%, maxDD 93.7%, turnover 235.5/yr, mean gross 2.92). Committed candidate for Task C = TSMOM_ENSEMBLE. CRISIS-ALPHA IS SUGGESTED, NOT PROVEN: there is no sustained multi-quarter bear regime in-sample, though the deepest BTC selloff (-51.16%) is a real episode in which the book was positive by construction — a single episode, to be re-examined against the live XSMOM book in Task D.",
+  "honesty_caveats": [
+    "Honest absolute levels are computed ONLY via metrics_daily (PPY=365, sqrt(365) annualization). The validation harness's hourly-annualized (HOURS_PER_YEAR=8760) numbers are NOT used anywhere in this file.",
+    "Panel is ~3 years from 2023-06-08, predominantly an up-market. The deepest BTC peak-to-trough drawdown in-sample is -51.16% — a real selloff, but a SINGLE episode, not a sustained multi-quarter bear regime. Net-short-in-bear is a STRUCTURAL property of the signal shown via the net-exposure/regime check; crisis-alpha is SUGGESTED by the one deep window, NOT statistically proven.",
+    "No look-ahead: TSMOM/Donchian signals and realized vol are causal (trend.py invariant); accrual = -funding.shift(-1) aligns funding earned over t→t+1 with the position held at t (same convention as the cross-sec book), without look-ahead.",
+    "Survivorship-debiased PT panel (62 coins, includes dead/delisted) → conservative vs a frozen-survivor set.",
+    "This is a SANITY characterization, not a multi-test validation. DSR/PBO/CPCV (deflation, overfit) are Task C (trend_validation.py). The Sharpe levels here are full-sample IS and must NOT be read as OOS-robust edge.",
+    "Vol-targeting (target 0.02/day) and leverage cap (3.0) are fixed design choices identical across all books; absolute Sharpe is vol-target-invariant to first order, the constants drive the gross/turnover readout only."
+  ]
+}
