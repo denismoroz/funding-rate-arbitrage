@@ -1,0 +1,449 @@
+{
+  "test": "trend_following_validation",
+  "task": "Task C of research/trend_following/PLAN.md",
+  "description": "CPCV+DSR+PBO validation of the directional trend-following menu (TSMOM L30/L60/L90/L120 + TSMOM ensemble + Donchian N20/N55/N100) on the survivorship-debiased PT panel (same universe as the XSMOM book). Committed = TSMOM_ENS (equal-weight ensemble, fixed BEFORE OOS).",
+  "menu": [
+    "TSMOM_L30",
+    "TSMOM_L60",
+    "TSMOM_L90",
+    "TSMOM_L120",
+    "TSMOM_ENS",
+    "DONCH_N20",
+    "DONCH_N55",
+    "DONCH_N100"
+  ],
+  "committed_pick": "TSMOM_ENS",
+  "committed_reason": "Equal-weight TSMOM ensemble over lookbacks (30,60,90,120) avoids cherry-picking a single lookback (per PLAN); committed BEFORE looking at OOS.",
+  "constants": {
+    "VOL_TARGET": 0.02,
+    "LEVERAGE_CAP": 3.0,
+    "COSTS_BPS": 8.5,
+    "VOL_WINDOW": 30,
+    "tsmom_lookbacks": [
+      30,
+      60,
+      90,
+      120
+    ],
+    "donchian_channels": [
+      20,
+      55,
+      100
+    ],
+    "annualization_honest": "metrics_daily PPY=365 sqrt(365) (honest absolute ONLY)"
+  },
+  "cpcv_params": {
+    "n_groups": 6,
+    "k": 2,
+    "purge_days": 120,
+    "embargo_days": 7,
+    "purge_rationale": "purge = max lookback in menu (TSMOM_L120 / DONCH_N100) = 120"
+  },
+  "pbo_S": 16,
+  "n_configs_in_menu": 8,
+  "panel_window": {
+    "start": "2023-06-08",
+    "end": "2026-06-13",
+    "n_days_full": 1102,
+    "n_coins": 62
+  },
+  "common_window": {
+    "start": "2023-06-08",
+    "end": "2026-06-13",
+    "n_days": 1102
+  },
+  "sanity_assert_committed_eq_characterize": {
+    "passed": true,
+    "max_abs_diff": 0.0,
+    "note": "Committed TSMOM_ENS pnl fed to the harness is EXACTLY the series characterize.py (Task B) builds for TSMOM_ENS (replaces the template's XSEC-specific run_book asserts, which do not apply)."
+  },
+  "per_book": {
+    "TSMOM_L30": {
+      "type": "tsmom",
+      "committed": false,
+      "is_sharpe_daily": 0.40407079726393186,
+      "is_ann_pct": 57.350865718793344,
+      "is_vol_ann_pct": 141.93271601692305,
+      "is_maxdd_pct": 95.65770384588303,
+      "is_calmar": 0.5995425711994198,
+      "is_hit_pct": 49.18330308529946,
+      "is_n_days": 1102,
+      "turn_per_yr": 206.42208938911304,
+      "gross_mean": 2.9183303085299457,
+      "gross_p95": 3.0000000000000013,
+      "dsr_n8": 0.6376397031327022,
+      "dsr_n8_sr_hat": 0.0211404337894745,
+      "dsr_n8_sr_star": 0.010541466555492481,
+      "dsr_n8_psr_vs_zero": 0.7587861614818507,
+      "dsr_n1": 0.7587861614818507,
+      "dsr_n1_psr_vs_zero": 0.7587861614818507,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.4229265766416075,
+          "iqr_lo": 0.19105016770444005,
+          "iqr_hi": 0.7566242617726788,
+          "mean": 0.47698890587467835
+        },
+        "ann_pct": {
+          "median": 71.25338959616367,
+          "iqr_lo": 28.46925291889847,
+          "iqr_hi": 105.2988425307678,
+          "mean": 56.513411492931745
+        },
+        "maxdd_pct": {
+          "median": 75.98621429784289,
+          "iqr_lo": 58.17826109561977,
+          "iqr_hi": 82.63137987035314,
+          "mean": 67.05567463302458
+        },
+        "frac_sharpe_pos": 0.8
+      }
+    },
+    "TSMOM_L60": {
+      "type": "tsmom",
+      "committed": false,
+      "is_sharpe_daily": 0.5045479427694998,
+      "is_ann_pct": 71.9243682164088,
+      "is_vol_ann_pct": 142.55209885825872,
+      "is_maxdd_pct": 91.69999691232331,
+      "is_calmar": 0.7843442817689242,
+      "is_hit_pct": 48.72958257713248,
+      "is_n_days": 1102,
+      "turn_per_yr": 145.2162650832876,
+      "gross_mean": 2.836660617059891,
+      "gross_p95": 3.0000000000000013,
+      "dsr_n8": 0.7002466202632334,
+      "dsr_n8_sr_hat": 0.026397261197688336,
+      "dsr_n8_sr_star": 0.010541466555492481,
+      "dsr_n8_psr_vs_zero": 0.8090009730649392,
+      "dsr_n1": 0.8090009730649392,
+      "dsr_n1_psr_vs_zero": 0.8090009730649392,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.8013060232379181,
+          "iqr_lo": -0.037614003252365816,
+          "iqr_hi": 0.9741180828454512,
+          "mean": 0.537941087651774
+        },
+        "ann_pct": {
+          "median": 83.58796329134704,
+          "iqr_lo": -6.1511547042116606,
+          "iqr_hi": 110.77563084767787,
+          "mean": 72.90560431566661
+        },
+        "maxdd_pct": {
+          "median": 70.29647814689987,
+          "iqr_lo": 51.92322238956405,
+          "iqr_hi": 71.29947200012579,
+          "mean": 63.44763189945129
+        },
+        "frac_sharpe_pos": 0.72
+      }
+    },
+    "TSMOM_L90": {
+      "type": "tsmom",
+      "committed": false,
+      "is_sharpe_daily": 0.4411214920031821,
+      "is_ann_pct": 61.50634287745913,
+      "is_vol_ann_pct": 139.431752912677,
+      "is_maxdd_pct": 95.29037150652366,
+      "is_calmar": 0.6454623054255629,
+      "is_hit_pct": 47.54990925589836,
+      "is_n_days": 1102,
+      "turn_per_yr": 110.18660766244881,
+      "gross_mean": 2.7549909255898366,
+      "gross_p95": 3.0000000000000013,
+      "dsr_n8": 0.6608115539681614,
+      "dsr_n8_sr_hat": 0.023078875677116122,
+      "dsr_n8_sr_star": 0.010541466555492481,
+      "dsr_n8_psr_vs_zero": 0.777370141905244,
+      "dsr_n1": 0.777370141905244,
+      "dsr_n1_psr_vs_zero": 0.777370141905244,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.469152648024457,
+          "iqr_lo": 0.3618897303800173,
+          "iqr_hi": 0.8380999116587564,
+          "mean": 0.45782542933929915
+        },
+        "ann_pct": {
+          "median": 52.839384393879286,
+          "iqr_lo": 26.372591391088985,
+          "iqr_hi": 123.47846921971357,
+          "mean": 62.06738992665797
+        },
+        "maxdd_pct": {
+          "median": 66.54597017395972,
+          "iqr_lo": 59.068812013780004,
+          "iqr_hi": 68.7743474505758,
+          "mean": 66.3802792121544
+        },
+        "frac_sharpe_pos": 0.84
+      }
+    },
+    "TSMOM_L120": {
+      "type": "tsmom",
+      "committed": false,
+      "is_sharpe_daily": 0.3330792087725396,
+      "is_ann_pct": 44.54804247928663,
+      "is_vol_ann_pct": 133.74609193847508,
+      "is_maxdd_pct": 96.41863820278913,
+      "is_calmar": 0.46202729378517576,
+      "is_hit_pct": 46.46098003629764,
+      "is_n_days": 1102,
+      "turn_per_yr": 89.49105580215037,
+      "gross_mean": 2.6733212341197823,
+      "gross_p95": 3.0000000000000013,
+      "dsr_n8": 0.5900151628467504,
+      "dsr_n8_sr_hat": 0.01742625056644983,
+      "dsr_n8_sr_star": 0.010541466555492481,
+      "dsr_n8_psr_vs_zero": 0.7177071301046184,
+      "dsr_n1": 0.7177071301046184,
+      "dsr_n1_psr_vs_zero": 0.7177071301046184,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.9368826087250923,
+          "iqr_lo": 0.0013574671718064007,
+          "iqr_hi": 0.9485344328844549,
+          "mean": 0.45328316534319746
+        },
+        "ann_pct": {
+          "median": 73.67636290660666,
+          "iqr_lo": 0.1511735516124198,
+          "iqr_hi": 147.20155226160085,
+          "mean": 46.39204010794605
+        },
+        "maxdd_pct": {
+          "median": 71.17305678534886,
+          "iqr_lo": 57.056829613460295,
+          "iqr_hi": 71.33634387506268,
+          "mean": 65.1701952329127
+        },
+        "frac_sharpe_pos": 0.8
+      }
+    },
+    "TSMOM_ENS": {
+      "type": "tsmom_ensemble",
+      "committed": true,
+      "is_sharpe_daily": 0.7156450085122582,
+      "is_ann_pct": 111.53057720112236,
+      "is_vol_ann_pct": 155.84623084702469,
+      "is_maxdd_pct": 93.68200614118933,
+      "is_calmar": 1.19052293813001,
+      "is_hit_pct": 49.546279491833026,
+      "is_n_days": 1102,
+      "turn_per_yr": 235.53295059077388,
+      "gross_mean": 2.9183303085299457,
+      "gross_p95": 3.0000000000000013,
+      "dsr_n8": 0.8134742781134754,
+      "dsr_n8_sr_hat": 0.03744157217414374,
+      "dsr_n8_sr_star": 0.010541466555492481,
+      "dsr_n8_psr_vs_zero": 0.8924832674104167,
+      "dsr_n1": 0.8924832674104167,
+      "dsr_n1_psr_vs_zero": 0.8924832674104167,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.9416415524328499,
+          "iqr_lo": 0.13568105213895626,
+          "iqr_hi": 1.2350707348927237,
+          "mean": 0.7745740910845349
+        },
+        "ann_pct": {
+          "median": 122.30193982994615,
+          "iqr_lo": 20.07747213256936,
+          "iqr_hi": 149.56840530626866,
+          "mean": 112.45692260973341
+        },
+        "maxdd_pct": {
+          "median": 72.75234487017842,
+          "iqr_lo": 62.962645315401524,
+          "iqr_hi": 75.89813091213993,
+          "mean": 66.82850954232836
+        },
+        "frac_sharpe_pos": 0.84
+      }
+    },
+    "DONCH_N20": {
+      "type": "donchian",
+      "committed": false,
+      "is_sharpe_daily": 0.46815872681371107,
+      "is_ann_pct": 66.7372869866312,
+      "is_vol_ann_pct": 142.55269241875564,
+      "is_maxdd_pct": 94.54995477993128,
+      "is_calmar": 0.7058415537264385,
+      "is_hit_pct": 48.09437386569873,
+      "is_n_days": 1102,
+      "turn_per_yr": 91.37270482349999,
+      "gross_mean": 2.9183303085299457,
+      "gross_p95": 3.0000000000000013,
+      "dsr_n8": 0.6781078503049526,
+      "dsr_n8_sr_hat": 0.02449342697909778,
+      "dsr_n8_sr_star": 0.010541466555492481,
+      "dsr_n8_psr_vs_zero": 0.791544898786847,
+      "dsr_n1": 0.791544898786847,
+      "dsr_n1_psr_vs_zero": 0.791544898786847,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.39665209825173753,
+          "iqr_lo": 0.13053499238079116,
+          "iqr_hi": 1.130174516495387,
+          "mean": 0.5514830629728702
+        },
+        "ann_pct": {
+          "median": 59.30446991542535,
+          "iqr_lo": 18.135981974525368,
+          "iqr_hi": 119.94964517151897,
+          "mean": 66.37876174286038
+        },
+        "maxdd_pct": {
+          "median": 68.24038219325499,
+          "iqr_lo": 50.92379325641427,
+          "iqr_hi": 77.08861096080021,
+          "mean": 65.70032957289195
+        },
+        "frac_sharpe_pos": 0.88
+      }
+    },
+    "DONCH_N55": {
+      "type": "donchian",
+      "committed": false,
+      "is_sharpe_daily": 0.4456376871919586,
+      "is_ann_pct": 63.125103816940495,
+      "is_vol_ann_pct": 141.6511790434576,
+      "is_maxdd_pct": 95.14620619928476,
+      "is_calmar": 0.6634537133800615,
+      "is_hit_pct": 48.457350272232304,
+      "is_n_days": 1102,
+      "turn_per_yr": 53.398894733047435,
+      "gross_mean": 2.8437885435264367,
+      "gross_p95": 3.0000000000000013,
+      "dsr_n8": 0.6637097346452334,
+      "dsr_n8_sr_hat": 0.02331515685857035,
+      "dsr_n8_sr_star": 0.010541466555492481,
+      "dsr_n8_psr_vs_zero": 0.7797551197297774,
+      "dsr_n1": 0.7797551197297774,
+      "dsr_n1_psr_vs_zero": 0.7797551197297774,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.4662407059890889,
+          "iqr_lo": -0.08565619816489668,
+          "iqr_hi": 1.2853318162978298,
+          "mean": 0.5857406732749733
+        },
+        "ann_pct": {
+          "median": 66.35675896154267,
+          "iqr_lo": -11.164057386281666,
+          "iqr_hi": 204.85340112504286,
+          "mean": 66.12269259379654
+        },
+        "maxdd_pct": {
+          "median": 67.90791491157846,
+          "iqr_lo": 64.48920150990912,
+          "iqr_hi": 70.22227100208589,
+          "mean": 65.38715161264692
+        },
+        "frac_sharpe_pos": 0.72
+      }
+    },
+    "DONCH_N100": {
+      "type": "donchian",
+      "committed": false,
+      "is_sharpe_daily": 0.2401701830189453,
+      "is_ann_pct": 34.09035616737042,
+      "is_vol_ann_pct": 141.94249985095476,
+      "is_maxdd_pct": 98.25358873000202,
+      "is_calmar": 0.3469629619438097,
+      "is_hit_pct": 46.73321234119782,
+      "is_n_days": 1102,
+      "turn_per_yr": 41.197578493438115,
+      "gross_mean": 2.716919711196304,
+      "gross_p95": 3.0000000000000013,
+      "dsr_n8": 0.5266859742928728,
+      "dsr_n8_sr_hat": 0.012565376876274435,
+      "dsr_n8_sr_star": 0.010541466555492481,
+      "dsr_n8_psr_vs_zero": 0.6611507293306907,
+      "dsr_n1": 0.6611507293306907,
+      "dsr_n1_psr_vs_zero": 0.6611507293306907,
+      "oos_cpcv_honest_daily": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.7120619218294187,
+          "iqr_lo": -0.3510316168708969,
+          "iqr_hi": 0.9931541469229477,
+          "mean": 0.3487369961364598
+        },
+        "ann_pct": {
+          "median": 73.222079781753,
+          "iqr_lo": -39.09580510801746,
+          "iqr_hi": 128.86332325791815,
+          "mean": 36.776688977396546
+        },
+        "maxdd_pct": {
+          "median": 70.75800622770427,
+          "iqr_lo": 66.54774912328976,
+          "iqr_hi": 71.13761882153102,
+          "mean": 70.44280640140207
+        },
+        "frac_sharpe_pos": 0.68
+      }
+    }
+  },
+  "committed_summary": {
+    "is_sharpe_daily": 0.7156450085122582,
+    "is_ann_pct": 111.53057720112236,
+    "is_maxdd_pct": 93.68200614118933,
+    "turn_per_yr": 235.53295059077388,
+    "dsr_n8": 0.8134742781134754,
+    "dsr_n1": 0.8924832674104167,
+    "dsr_status": "WARN (0.5-0.95)",
+    "oos_sharpe_honest_median": 0.9416415524328499,
+    "oos_sharpe_honest_iqr": [
+      0.13568105213895626,
+      1.2350707348927237
+    ],
+    "oos_frac_sharpe_pos": 0.84,
+    "pbo_menu": 0.6253302253302253
+  },
+  "pbo_across_menu": {
+    "pbo": 0.6253302253302253,
+    "n_splits": 12870,
+    "n_configs": 8,
+    "S": 16,
+    "median_oos_rank": 0.2222222222222222,
+    "is_best_counts": {
+      "TSMOM_ENS": 4835,
+      "DONCH_N20": 2679,
+      "TSMOM_L60": 1675,
+      "TSMOM_L90": 1356,
+      "TSMOM_L30": 964,
+      "TSMOM_L120": 796,
+      "DONCH_N55": 466,
+      "DONCH_N100": 99
+    },
+    "note": "N=8 configs → PBO=0.625: fraction of splits where IS-best config ranks below median OOS."
+  },
+  "dsr_threshold": 0.95,
+  "edge_call": "MARGINAL",
+  "verdict": "STANDALONE TREND EDGE: MARGINAL.\n\n  Committed book = TSMOM_ENS (equal-weight TSMOM ensemble over (30, 60, 90, 120), fixed BEFORE OOS to avoid lookback cherry-picking).\n  DSR(N=8) = 0.8135 [WARN (0.5-0.95)], DSR(N=1) = 0.8925. Honest IS daily Sharpe +0.716 (ann +111.53%, maxDD 93.7%, turnover 235.5/yr).\n  Pooled-OOS median Sharpe (HONEST daily, sqrt365) = +0.942 with 84.0% of OOS segments positive → survives OOS. PBO(menu) = 0.6253 (high overfit risk).\n  The edge is MARGINAL: the committed ensemble does not clear the DSR>0.95 multi-test bar with only ~3 years of (mostly up-market) data, but it is not statistically dead either (DSR in the WARN zone and/or OOS positive without high PBO). On its own this is too thin to deploy as a standalone motor — consistent with the PLAN's sober prior that no robust 25% CAGR exists in crypto. The DECISIVE question is Task D: does trend DECORRELATE from the live XSMOM book? A marginal-but-uncorrelated stream can still earn its place in a risk-parity carry+momentum+trend basket. Carry the committed TSMOM_ENS book forward to Task D for the correlation / risk-parity blend test.",
+  "inflation_caveat": "HARNESS ANNUALIZATION IS HOURLY (HOURS_PER_YEAR=8760); our pnl is DAILY. Any annual_pct/Sharpe the HARNESS itself annualizes is INFLATED ~×35 on annual and ~×4.90 on Sharpe. ALL honest ABSOLUTE Sharpe/ann/OOS levels in this report and JSON are computed via metrics_daily (sqrt(365)) ONLY. DSR and PBO are ratio/ranking-based (period-agnostic) and are valid as-is.",
+  "harness_sharpe_inflation_factor": 4.898979485566356,
+  "harness_ann_inflation_factor": 24.0,
+  "honesty_caveats": [
+    "HARNESS ANNUALIZATION IS HOURLY (HOURS_PER_YEAR=8760); our pnl is DAILY. Any annual_pct/Sharpe the HARNESS itself annualizes is INFLATED ~×35 on annual and ~×4.90 on Sharpe. ALL honest ABSOLUTE Sharpe/ann/OOS levels in this report and JSON are computed via metrics_daily (sqrt(365)) ONLY. DSR and PBO are ratio/ranking-based (period-agnostic) and are valid as-is.",
+    "~3 years of data only (1102 days on the common window); low statistical power for clearing DSR>0.95, especially for a directional book whose payoff is concentrated in a few sustained trends.",
+    "Survivorship-debiased PT panel (62 coins, includes 28 dead/delisted) → conservative; the SAME panel as the XSMOM book → apples-to-apples for Task D.",
+    "No sustained multi-quarter crypto bear market in the 2023-06→present window. Trend's structural crisis-alpha (net-short in bear) is therefore under-sampled; the standalone Sharpe here may understate trend's diversification value in a regime it never fully saw.",
+    "DSR deflation uses N=8 (full menu) — conservative: the TSMOM legs share signal and are highly correlated, so the effective number of independent trials is < 8. N=1 DSR is the more honest single-strategy view.",
+    "purge=120d (= max menu lookback) on CPCV guarantees no signal leakage across train/test seams; embargo=7d. Signals + realized vol are causal (trend.py invariant); accrual = -funding.shift(-1) has no look-ahead.",
+    "The committed pick (TSMOM_ENS) was fixed BEFORE looking at OOS per the PLAN, so the OOS/DSR reported for it is an honest held-out read, not a post-hoc winner.",
+    "The harness (CPCV/DSR/PBO) was validated on reference series previously and imported UNCHANGED. The provenance assert proves the committed book fed here is EXACTLY the TSMOM_ENS book characterize.py produced (max diff 0.0e+00).",
+    "STANDALONE DSR is NOT the deciding metric: per the PLAN, trend's value as a third stream rests primarily on DECORRELATION with the live XSMOM book (Task D). A marginal standalone edge can still be worth building as a diversifier."
+  ]
+}
