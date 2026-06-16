@@ -16,7 +16,7 @@ from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential,
+    wait_random_exponential,
 )
 
 from frab.exchanges.hyperliquid.wire import (
@@ -64,8 +64,10 @@ class _RetryableHTTPError(Exception):
 _RETRYABLE = retry_if_exception_type(
     (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, _RetryableHTTPError)
 )
-_WAIT = wait_exponential(multiplier=0.3, min=0.3, max=4)
-_STOP = stop_after_attempt(4)
+# Jittered exponential backoff: jitter de-correlates the two engines (FRAB +
+# XSMOM) so a shared-IP 429 burst on the minute boundary doesn't resync on retry.
+_WAIT = wait_random_exponential(multiplier=0.3, max=4)
+_STOP = stop_after_attempt(5)
 
 
 class HLTransferError(RuntimeError):
@@ -121,7 +123,8 @@ class HLClient:
         ):
             with attempt:
                 resp = await self._http.post(self._api_url, json=body)
-                if resp.status_code >= 500:
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    # 429 (rate-limited) and 5xx are transient: back off + retry.
                     raise _RetryableHTTPError(f"HTTP {resp.status_code}")
                 resp.raise_for_status()
                 return resp.json()

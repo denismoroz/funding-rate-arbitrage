@@ -90,6 +90,29 @@ async def test_info_request_retries_on_5xx(mocker, make_client):
     await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_info_request_retries_on_429(mocker, make_client):
+    """429 (rate-limited) is transient: back off + retry, not an immediate fail."""
+    mocker.patch.object(hl_client_mod, "_WAIT", wait_none())
+    client = make_client()
+    call_count = 0
+
+    async def side_effect(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            return httpx.Response(429)
+        return httpx.Response(200, json={"ok": True})
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").mock(side_effect=side_effect)
+        result = await client.info_request({"type": "x"})
+
+    assert result == {"ok": True}
+    assert call_count == 3
+    await client.aclose()
+
+
 # ---------------------------------------------------------------------------
 # 3. test_info_request_retries_on_connect_error
 # ---------------------------------------------------------------------------
