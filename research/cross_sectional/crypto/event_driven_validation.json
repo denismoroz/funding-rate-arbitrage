@@ -17,7 +17,7 @@
   },
   "costs_bps": 8.5,
   "pbo_S": 16,
-  "n_configs_in_menu": 7,
+  "n_configs_in_menu": 12,
   "per_config": {
     "R7": {
       "type": "fixed_weekly",
@@ -31,10 +31,10 @@
       "is_calmar": 1.0596311843196902,
       "is_vol_ann_pct": 38.91767937904096,
       "is_hit_pct": 48.09437386569873,
-      "dsr_n7": 0.7166424119450041,
-      "dsr_n7_sr_hat": 0.03957309087979416,
-      "dsr_n7_sr_star": 0.02222353298237338,
-      "dsr_n7_psr_vs_zero": 0.9043485114452681,
+      "dsr_n12": 0.717120342725152,
+      "dsr_n12_sr_hat": 0.03957309087979416,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.9043485114452681,
       "dsr_n1": 0.9043485114452681,
       "dsr_n1_psr_vs_zero": 0.9043485114452681,
       "oos_cpcv": {
@@ -72,10 +72,10 @@
       "is_calmar": 0.1995145201043674,
       "is_vol_ann_pct": 37.4329740986215,
       "is_hit_pct": 48.09437386569873,
-      "dsr_n7": 0.4204083302876531,
-      "dsr_n7_sr_hat": 0.01616687773304097,
-      "dsr_n7_sr_star": 0.02222353298237338,
-      "dsr_n7_psr_vs_zero": 0.7040625863614673,
+      "dsr_n12": 0.42096290753889204,
+      "dsr_n12_sr_hat": 0.01616687773304097,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.7040625863614673,
       "dsr_n1": 0.7040625863614673,
       "dsr_n1_psr_vs_zero": 0.7040625863614673,
       "oos_cpcv": {
@@ -114,10 +114,10 @@
       "is_calmar": 0.16361333346577564,
       "is_vol_ann_pct": 38.02920374844083,
       "is_hit_pct": 47.186932849364794,
-      "dsr_n7": 0.37635218264378534,
-      "dsr_n7_sr_hat": 0.012713183634718166,
-      "dsr_n7_sr_star": 0.02222353298237338,
-      "dsr_n7_psr_vs_zero": 0.6631898330847819,
+      "dsr_n12": 0.37689018166346533,
+      "dsr_n12_sr_hat": 0.012713183634718166,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.6631898330847819,
       "dsr_n1": 0.6631898330847819,
       "dsr_n1_psr_vs_zero": 0.6631898330847819,
       "oos_cpcv": {
@@ -156,10 +156,10 @@
       "is_calmar": 0.42186899356441715,
       "is_vol_ann_pct": 38.62706722122599,
       "is_hit_pct": 47.82214156079855,
-      "dsr_n7": 0.5640715875912318,
-      "dsr_n7_sr_hat": 0.027096947383866997,
-      "dsr_n7_sr_star": 0.02222353298237338,
-      "dsr_n7_psr_vs_zero": 0.815101951470782,
+      "dsr_n12": 0.5646289349798818,
+      "dsr_n12_sr_hat": 0.027096947383866997,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.815101951470782,
       "dsr_n1": 0.815101951470782,
       "dsr_n1_psr_vs_zero": 0.815101951470782,
       "oos_cpcv": {
@@ -198,10 +198,10 @@
       "is_calmar": 0.20148578982403267,
       "is_vol_ann_pct": 38.37048075762835,
       "is_hit_pct": 46.46098003629764,
-      "dsr_n7": 0.40015793502567837,
-      "dsr_n7_sr_hat": 0.014591311226890972,
-      "dsr_n7_sr_star": 0.02222353298237338,
-      "dsr_n7_psr_vs_zero": 0.6856539258279885,
+      "dsr_n12": 0.4007056720679623,
+      "dsr_n12_sr_hat": 0.014591311226890972,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.6856539258279885,
       "dsr_n1": 0.6856539258279885,
       "dsr_n1_psr_vs_zero": 0.6856539258279885,
       "oos_cpcv": {
@@ -240,10 +240,10 @@
       "is_calmar": 0.8512934083991548,
       "is_vol_ann_pct": 38.65641390905681,
       "is_hit_pct": 48.82032667876588,
-      "dsr_n7": 0.8077146793340265,
-      "dsr_n7_sr_hat": 0.04844080563917926,
-      "dsr_n7_sr_star": 0.02222353298237338,
-      "dsr_n7_psr_vs_zero": 0.9459242481751585,
+      "dsr_n12": 0.8081021762896548,
+      "dsr_n12_sr_hat": 0.04844080563917926,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.9459242481751585,
       "dsr_n1": 0.9459242481751585,
       "dsr_n1_psr_vs_zero": 0.9459242481751585,
       "oos_cpcv": {
@@ -282,10 +282,10 @@
       "is_calmar": 1.098317798971767,
       "is_vol_ann_pct": 38.037772414215745,
       "is_hit_pct": 49.274047186932854,
-      "dsr_n7": 0.8148716477818332,
-      "dsr_n7_sr_hat": 0.0493323166614789,
-      "dsr_n7_sr_star": 0.02222353298237338,
-      "dsr_n7_psr_vs_zero": 0.948504092378795,
+      "dsr_n12": 0.8152488864486936,
+      "dsr_n12_sr_hat": 0.0493323166614789,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.948504092378795,
       "dsr_n1": 0.948504092378795,
       "dsr_n1_psr_vs_zero": 0.948504092378795,
       "oos_cpcv": {
@@ -311,32 +311,247 @@
         "frac_sharpe_pos": 0.8
       },
       "corr_vs_r7": 0.8707393458619925
+    },
+    "tau1.4": {
+      "type": "event_driven",
+      "tau": 1.4,
+      "rebals_per_yr": 31.465517241379313,
+      "mean_hold_days": 11.6,
+      "turn_per_yr": 47.69734607522712,
+      "is_sharpe_daily": 0.8608300183525447,
+      "is_ann_pct": 32.510034850440825,
+      "is_maxdd_pct": 30.887357647319657,
+      "is_calmar": 1.0525353195196994,
+      "is_vol_ann_pct": 37.76591679813686,
+      "is_hit_pct": 49.727767695099814,
+      "dsr_n12": 0.773877073698073,
+      "dsr_n12_sr_hat": 0.04503745415456804,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.9307131683665387,
+      "dsr_n1": 0.9307131683665387,
+      "dsr_n1_psr_vs_zero": 0.9307131683665387,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.7139792229917243,
+          "iqr_lo": 0.07587889818689054,
+          "iqr_hi": 1.4997189295216156,
+          "mean": 0.8148882085551683
+        },
+        "ann_pct": {
+          "median": 25.803477963861983,
+          "iqr_lo": 2.5662009401054857,
+          "iqr_hi": 55.86250565283376,
+          "mean": 31.022708665837527
+        },
+        "maxdd_pct": {
+          "median": 21.058689188047463,
+          "iqr_lo": 17.117240488029463,
+          "iqr_hi": 21.974237426717004,
+          "mean": 21.72931807872103
+        },
+        "frac_sharpe_pos": 0.84
+      },
+      "corr_vs_r7": 0.86217376162552
+    },
+    "tau1.5": {
+      "type": "event_driven",
+      "tau": 1.5,
+      "rebals_per_yr": 27.82214156079855,
+      "mean_hold_days": 13.119047619047619,
+      "turn_per_yr": 45.73161900288452,
+      "is_sharpe_daily": 0.782364809588185,
+      "is_ann_pct": 29.99962793588698,
+      "is_maxdd_pct": 31.10118615036559,
+      "is_calmar": 0.9645814725794417,
+      "is_vol_ann_pct": 38.34480739449151,
+      "is_hit_pct": 49.81851179673321,
+      "dsr_n12": 0.7314432457302009,
+      "dsr_n12_sr_hat": 0.04093226129754316,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.9110482068166417,
+      "dsr_n1": 0.9110482068166417,
+      "dsr_n1_psr_vs_zero": 0.9110482068166417,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.9058354257283189,
+          "iqr_lo": 0.36039501648054784,
+          "iqr_hi": 1.0788822085052066,
+          "mean": 0.778412554171516
+        },
+        "ann_pct": {
+          "median": 35.618753963196454,
+          "iqr_lo": 12.768911436170646,
+          "iqr_hi": 43.405323017107364,
+          "mean": 29.81457822667783
+        },
+        "maxdd_pct": {
+          "median": 23.329530841853497,
+          "iqr_lo": 17.117240488029463,
+          "iqr_hi": 23.82604857984577,
+          "mean": 22.355583604307277
+        },
+        "frac_sharpe_pos": 1.0
+      },
+      "corr_vs_r7": 0.8494784604078068
+    },
+    "tau1.6": {
+      "type": "event_driven",
+      "tau": 1.6,
+      "rebals_per_yr": 26.497277676951,
+      "mean_hold_days": 13.775,
+      "turn_per_yr": 45.82307109336947,
+      "is_sharpe_daily": 0.4609143659087092,
+      "is_ann_pct": 17.782339401720577,
+      "is_maxdd_pct": 48.29988736110158,
+      "is_calmar": 0.3681652354336881,
+      "is_vol_ann_pct": 38.58057096281227,
+      "is_hit_pct": 49.09255898366606,
+      "dsr_n12": 0.525459759604177,
+      "dsr_n12_sr_hat": 0.024114411882990214,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.7871043272719933,
+      "dsr_n1": 0.7871043272719933,
+      "dsr_n1_psr_vs_zero": 0.7871043272719933,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.7557539362312441,
+          "iqr_lo": -0.05621825229394633,
+          "iqr_hi": 1.1964177319481228,
+          "mean": 0.48374573747256044
+        },
+        "ann_pct": {
+          "median": 30.716594846621824,
+          "iqr_lo": -2.057984993884536,
+          "iqr_hi": 39.82711562293655,
+          "mean": 17.23958112722563
+        },
+        "maxdd_pct": {
+          "median": 21.974237426717004,
+          "iqr_lo": 19.741751681861686,
+          "iqr_hi": 27.090184145166653,
+          "mean": 24.859229435380694
+        },
+        "frac_sharpe_pos": 0.68
+      },
+      "corr_vs_r7": 0.838448163864909
+    },
+    "tau1.8": {
+      "type": "event_driven",
+      "tau": 1.8,
+      "rebals_per_yr": 20.535390199637025,
+      "mean_hold_days": 17.774193548387096,
+      "turn_per_yr": 39.39677794378364,
+      "is_sharpe_daily": 0.45117015345943934,
+      "is_ann_pct": 17.036622447295343,
+      "is_maxdd_pct": 39.01371107265518,
+      "is_calmar": 0.43668295014458036,
+      "is_vol_ann_pct": 37.760969595757956,
+      "is_hit_pct": 49.09255898366606,
+      "dsr_n12": 0.5187331312203737,
+      "dsr_n12_sr_hat": 0.023604607958754117,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.7819348159523583,
+      "dsr_n1": 0.7819348159523583,
+      "dsr_n1_psr_vs_zero": 0.7819348159523583,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.5279853570154728,
+          "iqr_lo": 0.07766275215143369,
+          "iqr_hi": 1.4763435679225656,
+          "mean": 0.49898941491230997
+        },
+        "ann_pct": {
+          "median": 19.709593887241287,
+          "iqr_lo": 2.6778446549409853,
+          "iqr_hi": 56.63177227487996,
+          "mean": 16.27738068697787
+        },
+        "maxdd_pct": {
+          "median": 23.73535236066402,
+          "iqr_lo": 17.298156683369903,
+          "iqr_hi": 26.458541819128623,
+          "mean": 23.652396108286005
+        },
+        "frac_sharpe_pos": 0.8
+      },
+      "corr_vs_r7": 0.7931741819314513
+    },
+    "tau2.0": {
+      "type": "event_driven",
+      "tau": 2.0,
+      "rebals_per_yr": 16.560798548094375,
+      "mean_hold_days": 22.04,
+      "turn_per_yr": 33.95260371514285,
+      "is_sharpe_daily": 0.6230421119556315,
+      "is_ann_pct": 23.463626647384284,
+      "is_maxdd_pct": 35.02725083756487,
+      "is_calmar": 0.6698677768402191,
+      "is_vol_ann_pct": 37.6597764374797,
+      "is_hit_pct": 49.546279491833026,
+      "dsr_n12": 0.6345768084886243,
+      "dsr_n12_sr_hat": 0.03259671474662167,
+      "dsr_n12_sr_star": 0.022180765539929904,
+      "dsr_n12_psr_vs_zero": 0.8591587994848218,
+      "dsr_n1": 0.8591587994848218,
+      "dsr_n1_psr_vs_zero": 0.8591587994848218,
+      "oos_cpcv": {
+        "n_segments": 25,
+        "sharpe": {
+          "median": 0.32131666651044066,
+          "iqr_lo": -0.15993796641766364,
+          "iqr_hi": 1.1203029044413564,
+          "mean": 0.5919478112161282
+        },
+        "ann_pct": {
+          "median": 12.007265174374904,
+          "iqr_lo": -5.860350904647565,
+          "iqr_hi": 40.80282108981594,
+          "mean": 22.365914491864878
+        },
+        "maxdd_pct": {
+          "median": 19.38655009554211,
+          "iqr_lo": 15.429187834137103,
+          "iqr_hi": 28.91130443346771,
+          "mean": 21.265117879760123
+        },
+        "frac_sharpe_pos": 0.68
+      },
+      "corr_vs_r7": 0.7747799947286597
     }
   },
   "pbo_across_menu": {
-    "pbo": 0.2948717948717949,
+    "pbo": 0.4885780885780886,
     "n_splits": 12870,
-    "n_configs": 7,
+    "n_configs": 12,
     "S": 16,
-    "median_oos_rank": 0.625,
+    "median_oos_rank": 0.5384615384615384,
     "is_best_counts": {
-      "tau1.2": 5442,
-      "tau1.0": 4242,
-      "R7": 3084,
-      "tau0.6": 100,
-      "tau0.8": 2,
+      "tau1.2": 3612,
+      "tau1.0": 2678,
+      "R7": 2290,
+      "tau1.4": 1872,
+      "tau1.5": 1092,
+      "tau2.0": 781,
+      "tau1.8": 487,
+      "tau0.6": 48,
+      "tau1.6": 10,
       "tau0.2": 0,
-      "tau0.4": 0
+      "tau0.4": 0,
+      "tau0.8": 0
     },
-    "note": "N=7 configs → PBO=0.295: fraction of splits where IS-best config ranks below median OOS."
+    "note": "N=12 configs → PBO=0.489: fraction of splits where IS-best config ranks below median OOS."
   },
-  "verdict": "KEEP R7 — EVENT-DRIVEN CONFIGS ARE STATISTICALLY INDISTINGUISHABLE FROM R7.\n\n  All 7 configs (R7 + τ sweep) fall in the DSR WARN zone: the\n  momentum edge is likely real (PSR_vs_0 elevated) but ~3 years of data\n  is insufficient to clear DSR>0.95 even for N=1. No event-driven threshold\n  clears the menu-size multi-test bar.\n\n  All OOS IQR ranges overlap substantially with R7. PBO confirms IS-winner\n  selection among these highly correlated books is unreliable.\n\n  COST TRADEOFF: Higher-tau (tau>=0.6) configs reduce rebalance frequency\n  and turnover vs R7, potentially lowering live costs if real execution\n  costs exceed the modeled 8.5bps — but this is a cost argument only,\n  not a Sharpe argument. It is too weak to override indistinguishability.\n\n  CONCLUSION: Event-driven rebalancing does not deliver a detectable\n  improvement in this dataset. The drift-based approach adds model\n  complexity (path-dependent schedule, causal but harder to audit)\n  without a measurable OOS benefit. Retain R7 as the incumbent.\n  Revisit with 5+ years of data or if live costs materially exceed model.",
+  "verdict": "KEEP R7 — EVENT-DRIVEN CONFIGS ARE STATISTICALLY INDISTINGUISHABLE FROM R7.\n\n  All 12 configs (R7 + τ sweep) fall in the DSR WARN zone: the\n  momentum edge is likely real (PSR_vs_0 elevated) but ~3 years of data\n  is insufficient to clear DSR>0.95 even for N=1. No event-driven threshold\n  clears the menu-size multi-test bar.\n\n  All OOS IQR ranges overlap substantially with R7. PBO confirms IS-winner\n  selection among these highly correlated books is unreliable.\n\n  COST TRADEOFF: Higher-tau (tau>=0.6) configs reduce rebalance frequency\n  and turnover vs R7, potentially lowering live costs if real execution\n  costs exceed the modeled 8.5bps — but this is a cost argument only,\n  not a Sharpe argument. It is too weak to override indistinguishability.\n\n  CONCLUSION: Event-driven rebalancing does not deliver a detectable\n  improvement in this dataset. The drift-based approach adds model\n  complexity (path-dependent schedule, causal but harder to audit)\n  without a measurable OOS benefit. Retain R7 as the incumbent.\n  Revisit with 5+ years of data or if live costs materially exceed model.",
   "dsr_threshold": 0.95,
   "honesty_caveats": [
     "~3 years of data only (1102 days); low statistical power for discriminating between similar strategies — especially when they share nearly all rebalance days.",
     "Survivorship-debiased PT book (the honest version; includes 28 dead/delisted coins). Results are more conservative than the frozen survivor set.",
     "No real crypto bear market or liquidity crisis in the study window (2023-06 to present); event-driven rebalancing might react differently in a crash.",
-    "DSR deflation uses N=7 (full menu size) — conservative because tau configs are not truly independent (they share the same signal, only the rebalance frequency differs). N=1 DSR is the more honest single-strategy view.",
+    "DSR deflation uses N=12 (full menu size) — conservative because tau configs are not truly independent (they share the same signal, only the rebalance frequency differs). N=1 DSR is the more honest single-strategy view.",
     "The drift schedule is CAUSAL (w_target and held are both known at t, no look-ahead) but is computed on the full panel and then sliced for CPCV — same path-dependency caveat as fixed cadence (the CPCV test indices are carved from the precomputed pnl, not re-run with fresh initialization).",
     "The xsec model ignores intra-hold price drift of weights (held vector is constant between rebalances, not re-normalized for mark-to-market moves). This means 'drift' here is purely signal-driven (target vs last rebalance weights), not mark-to-market drift. A mark-to-market drift trigger might behave differently.",
     "The harness (CPCV/DSR/PBO) was validated on reference series previously and imported unchanged."

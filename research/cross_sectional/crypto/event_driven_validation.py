@@ -70,7 +70,7 @@ LOOKBACKS    = survivorship.LOOKBACKS        # (14, 21, 30, 45, 60)
 COSTS_BPS    = survivorship.COSTS_BPS        # 8.5
 
 # Event-driven threshold menu
-TAU_SET      = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
+TAU_SET      = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.5, 1.6, 1.8, 2.0]
 # Labels for each config
 CONFIG_LABELS = ["R7"] + [f"tau{t}" for t in TAU_SET]
 
