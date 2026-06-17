@@ -25,6 +25,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
+from frab.coin_registry import CoinRegistry
 from frab.db.models import Exchange as ExchangeRow, FundingRate as FundingRateRow, Price as PriceRow, Strategy
 from frab.db.session import session_scope
 from frab.events.bus import Event, EventBus
@@ -78,12 +79,16 @@ class EngineLoop:
         minute_interval_s: float = 60.0,
         wallet_coins: list[tuple[str, WalletKind]] | None = None,
         params_loader: Callable[[dict], object] = TwoPhaseParams.from_dict,
+        registry: CoinRegistry | None = None,
     ) -> None:
         self._strategy = strategy
         self._exchange = exchange
         self._ledger = ledger
         self._sf = session_factory
+        # _coins is the static fallback used when no registry is supplied (and as
+        # the initial working set before the first tick resolves open coins).
         self._coins = list(coins)
+        self._registry = registry
         self._bus = event_bus
         self._minute_interval_s = minute_interval_s
         # Default wallet targets for snapshot refresh
@@ -99,6 +104,55 @@ class EngineLoop:
         self._task: asyncio.Task | None = None
         self._last_hour: int | None = None
         self._exchange_id_cache: int | None = None
+        # Last-seen working set: used to detect and log changes (not every tick)
+        self._last_working_set: frozenset[str] | None = None
+
+    # ── Working-set resolution ────────────────────────────────────────────────
+
+    async def _resolve_working_coins(self) -> list[str]:
+        """Derive the current working coin set for this tick.
+
+        working_coins = registry.universe() ∪ {coins with a non-terminal FarbPosition}
+
+        This ensures that:
+        - Newly-activated coins appear immediately (no restart).
+        - Deactivated coins with an open position stay quoted/snapshotted so
+          their PnL marks and exit state machine keep working.
+        - Deactivated coins with no position drop from the set silently.
+
+        Falls back to self._coins when no registry is configured (tests / XSMOM
+        engine loop that does not use a CoinRegistry).
+
+        Changes to the working set are logged at INFO level (not every tick).
+        """
+        if self._registry is None:
+            return self._coins
+
+        universe = set(self._registry.universe())
+
+        # Add coins with any open (non-terminal) FarbPosition so exits still work
+        open_coins = await self._strategy.farb_repo.distinct_open_coins(
+            self._strategy.strategy_id
+        )
+        working = sorted(universe | open_coins)
+
+        # Log working-set changes (not every tick) to aid ops visibility
+        current_frozen = frozenset(working)
+        if current_frozen != self._last_working_set:
+            if self._last_working_set is None:
+                logger.info(
+                    "EngineLoop working_set initialized: %s", working
+                )
+            else:
+                added = sorted(current_frozen - self._last_working_set)
+                removed = sorted(self._last_working_set - current_frozen)
+                logger.info(
+                    "EngineLoop working_set changed: added=%s removed=%s current=%s",
+                    added, removed, working,
+                )
+            self._last_working_set = current_frozen
+
+        return working
 
     # ── Public lifecycle ──────────────────────────────────────────────────────
 
@@ -167,7 +221,7 @@ class EngineLoop:
 
     async def _run(self) -> None:
         """Main loop body. Sleeps to next minute boundary, then ticks."""
-        logger.info("EngineLoop._run: entering loop (coins=%s)", self._coins)
+        logger.info("EngineLoop._run: entering loop (static_coins=%s)", self._coins)
         while True:
             now_ms = utcnow_ms()
             # Sleep to the next minute boundary (or next interval for tests)
@@ -207,7 +261,11 @@ class EngineLoop:
             _stage[name] = now - _t
             _t = now
 
-        quotes = await self._fetch_quotes(now_ms)
+        # Derive the working coin set each tick (cheap snapshot lookup + one DB query).
+        working_coins = await self._resolve_working_coins()
+        _mark("working_coins")
+
+        quotes = await self._fetch_quotes(now_ms, working_coins)
         _mark("quotes")
         if quotes:
             await self._save_prices(quotes, now_ms)
@@ -245,7 +303,7 @@ class EngineLoop:
         # legs at 0 (spot_value collapses → phantom equity drop persisted to the
         # DB and drawn on the graph). If any input is incomplete, log an event
         # and skip the write entirely — a gap is honest, a phantom drop is not.
-        missing_quotes = [c for c in self._coins if c not in quote_map]
+        missing_quotes = [c for c in working_coins if c not in quote_map]
         if missing_quotes or failed_feeds:
             await self._log_error(
                 "equity_snapshot_skipped",
@@ -296,7 +354,8 @@ class EngineLoop:
         except Exception:
             logger.exception("reload_params_failed")
 
-        funding_ticks = await self._fetch_funding(now_ms)
+        working_coins = await self._resolve_working_coins()
+        funding_ticks = await self._fetch_funding(now_ms, working_coins)
         if funding_ticks:
             await self._save_funding(funding_ticks, now_ms)
 
@@ -336,8 +395,8 @@ class EngineLoop:
 
     # ── Data fetching ─────────────────────────────────────────────────────────
 
-    async def _fetch_quotes(self, now_ms: int) -> list:
-        """Fetch quotes for all coins. Per-coin errors are caught; others still run.
+    async def _fetch_quotes(self, now_ms: int, coins: list[str]) -> list:
+        """Fetch quotes for the given coins. Per-coin errors are caught; others still run.
 
         Uses the exchange's batched get_quotes() when available (1 all_mids +
         bounded-parallel l2_book) — far faster than per-coin serial fetch.
@@ -347,14 +406,14 @@ class EngineLoop:
         batch = getattr(self._exchange, "get_quotes", None)
         if batch is not None:
             try:
-                results = await batch(self._coins)
+                results = await batch(coins)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
                 await self._log_error("quotes_batch_failed", exc)
                 results = []
         else:
-            for coin in self._coins:
+            for coin in coins:
                 try:
                     quote = await self._exchange.get_quote(coin)
                     results.append(quote)
@@ -366,18 +425,17 @@ class EngineLoop:
                         exc,
                         extra={"coin": coin},
                     )
-        coin_names = [c for c in self._coins]
         result_map = {r.coin for r in results}
-        missed = set(coin_names) - result_map
+        missed = set(coins) - result_map
         logger.info("_fetch_quotes: coins=%s results_count=%d result_coins=%s missed=%s",
-                     coin_names, len(results), list(result_map), list(missed))
+                     coins, len(results), list(result_map), list(missed))
         return results
 
-    async def _fetch_funding(self, now_ms: int) -> list:
-        """Fetch funding rates for all coins. Per-coin errors are caught."""
+    async def _fetch_funding(self, now_ms: int, coins: list[str]) -> list:
+        """Fetch funding rates for the given coins. Per-coin errors are caught."""
         from frab.exchanges.protocol import FundingTick
         results: list[FundingTick] = []
-        for coin in self._coins:
+        for coin in coins:
             try:
                 tick = await self._exchange.get_funding_rate(coin)
                 results.append(tick)

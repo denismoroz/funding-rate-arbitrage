@@ -1,6 +1,8 @@
 """EntryEvaluator — decides which coins to open new FarbPositions for."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from frab.domain import FarbState
 from frab.engine.two_phase_signals import TwoPhaseDecision, decide_entry
 from frab.repo.farb_repo import FarbRepo
@@ -8,9 +10,19 @@ import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.evaluators.signal import SignalComputer
 
+if TYPE_CHECKING:
+    from frab.coin_registry import CoinRegistry
+
 
 class EntryEvaluator:
-    """Evaluates each coin for entry and creates FarbPositions when signals qualify."""
+    """Evaluates each coin for entry and creates FarbPositions when signals qualify.
+
+    When a ``CoinRegistry`` is supplied (Phase E), the candidate coin universe is
+    read from ``registry.universe()`` on every call (hot re-read, no restart needed).
+    This allows newly-activated coins to be considered immediately.
+    When no registry is supplied, the candidate list falls back to ``params.coins``
+    preserving pre-Phase-E behaviour exactly.
+    """
 
     def __init__(
         self,
@@ -19,11 +31,13 @@ class EntryEvaluator:
         farb_repo: FarbRepo,
         params: TwoPhaseParams,
         signal_computer: SignalComputer,
+        registry: "CoinRegistry | None" = None,
     ) -> None:
         self._strategy_id = strategy_id
         self._farb_repo = farb_repo
         self._params = params
         self._signal_computer = signal_computer
+        self._registry = registry
 
     async def evaluate(self, *, now_ms: int, force_cooldown_bypass: bool) -> None:
         """For each coin: compute signal, check concurrency cap, create new arbs."""
@@ -52,10 +66,19 @@ class EntryEvaluator:
             return
         slots = min(slots, slots_by_budget)
 
+        # Determine the active entry universe:
+        # - With a registry: use registry.universe() (re-read each call, hot re-read).
+        #   Only active+validated coins are offered for new entry.
+        # - Without a registry: fall back to p.coins (pre-Phase-E behaviour).
+        if self._registry is not None:
+            entry_universe: tuple[str, ...] | list[str] = self._registry.universe()
+        else:
+            entry_universe = p.coins
+
         # Evaluate each coin for entry
         candidates: list[tuple[str, float]] = []
         current_hour = now_ms // 3_600_000
-        for coin in p.coins:
+        for coin in entry_universe:
             # Skip if already has a non-terminal position (includes PRE/POST and all transient states)
             # list_by_coin(include_terminal=False) excludes only CLOSED/FAILED
             existing = await self._farb_repo.list_by_coin(

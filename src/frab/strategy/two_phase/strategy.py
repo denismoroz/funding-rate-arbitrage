@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
+from frab.coin_registry import CoinRegistry
 from frab.db.models import Strategy as StrategyRow
 from frab.db.session import session_scope
 from frab.domain import FarbPosition, FarbState, ACTIVE_STATES
@@ -68,6 +69,7 @@ class TwoPhaseStrategy:
         settings: Settings,
         event_bus: EventBus | None = None,
         margin_watchdog: MarginWatchdog | None = None,
+        registry: CoinRegistry | None = None,
     ) -> None:
         self.strategy_id = strategy_id
         self.exchange = exchange
@@ -76,6 +78,7 @@ class TwoPhaseStrategy:
         self._settings = settings
         self._bus = event_bus
         self._margin_watchdog = margin_watchdog
+        self._registry = registry
         # Set by the force-tick API to bypass the same-hour entry cooldown on a
         # single hour_tick invocation. The API resets it after _hour_tick returns.
         self.force_entry_cooldown_bypass = False
@@ -101,6 +104,7 @@ class TwoPhaseStrategy:
             farb_repo=self.farb_repo,
             params=params,
             signal_computer=signal_computer,
+            registry=self._registry,
         )
         self._exit_evaluator = ExitEvaluator(
             strategy_id=self.strategy_id,
@@ -278,7 +282,12 @@ class TwoPhaseStrategy:
         FarbPosition; the engine's minute-tick will drive it to OPEN.
         """
         p = self.params
-        if coin not in p.coins:
+        # Universe gate: use registry.universe() when available (active+validated
+        # only), otherwise fall back to p.coins (pre-Phase-E / no-registry path).
+        entry_universe = (
+            self._registry.universe() if self._registry is not None else p.coins
+        )
+        if coin not in entry_universe:
             raise ManualOpenCoinNotInUniverse(coin)
 
         # list_by_coin(include_terminal=False) excludes CLOSED/FAILED, so it covers

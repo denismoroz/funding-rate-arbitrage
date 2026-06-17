@@ -169,6 +169,23 @@ class FarbRepo:
             rows = result.scalars().all()
             return [_to_domain(r) for r in rows]
 
+    async def distinct_open_coins(self, strategy_id: int) -> set[str]:
+        """Return the set of coins that have at least one non-terminal FarbPosition.
+
+        Used by EngineLoop to build working_coins = registry.universe() ∪ open coins,
+        so that a deactivated coin with an open position is still quoted/snapshotted
+        and can proceed through its exit state machine.
+        """
+        terminal_values = [s.value for s in _TERMINAL_STATES]
+        async with session_scope(self._sf) as session:
+            result = await session.execute(
+                select(FarbPositionRow.coin).distinct().where(
+                    FarbPositionRow.strategy_id == strategy_id,
+                    FarbPositionRow.state.not_in(terminal_values),
+                )
+            )
+            return {row for row in result.scalars().all()}
+
     async def list_by_coin(
         self,
         strategy_id: int,

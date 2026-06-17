@@ -291,6 +291,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             settings=registry_settings,
             event_bus=bus,
             margin_watchdog=margin_watchdog,
+            registry=registry,
         )
 
         # ── local_mode: pause ALL strategies before any loop starts ─────────
@@ -313,6 +314,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             session_factory=session_factory,
             coins=list(active_coins),
             event_bus=bus,
+            registry=registry,
         )
         await engine_loop.start()
 

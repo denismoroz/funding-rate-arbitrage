@@ -53,6 +53,8 @@ def _make_strategy(mocker, *, params: TwoPhaseParams | None = None) -> TwoPhaseS
     strategy.farb_repo = mocker.AsyncMock()
     strategy._signal_computer = mocker.AsyncMock()
     strategy._bus = None
+    # No registry in these tests: manual_open falls back to p.coins (pre-Phase-E behaviour).
+    strategy._registry = None
     strategy.manual_open = TwoPhaseStrategy.manual_open.__get__(strategy)
     return strategy
 

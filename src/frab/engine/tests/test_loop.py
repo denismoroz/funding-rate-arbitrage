@@ -168,7 +168,7 @@ async def test_fetch_quotes_uses_batch_when_available(
         coins=coins,
     )
 
-    results = await loop._fetch_quotes(1_700_000_060_000)
+    results = await loop._fetch_quotes(1_700_000_060_000, coins)
 
     mock_exchange.get_quotes.assert_awaited_once_with(coins)
     mock_exchange.get_quote.assert_not_awaited()
