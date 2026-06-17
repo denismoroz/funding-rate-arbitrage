@@ -80,6 +80,13 @@ def _make_coin_spec(maint_ratio: float = _MAINT_RATIO):
     return spec
 
 
+def _make_mock_registry(mocker, coin_spec_maint: float = _MAINT_RATIO):
+    """Return a mock CoinRegistry whose get_coin_spec always returns the given maint_ratio."""
+    mock_registry = mocker.MagicMock()
+    mock_registry.get_coin_spec.return_value = _make_coin_spec(coin_spec_maint)
+    return mock_registry
+
+
 def _make_watchdog(mocker, *, fps, account_value, coin_spec_maint=_MAINT_RATIO):
     """Build XsmomMarginWatchdog with mocked deps. Returns (watchdog, xsmom_repo, event_bus)."""
     mgr = _make_mgr()
@@ -98,8 +105,7 @@ def _make_watchdog(mocker, *, fps, account_value, coin_spec_maint=_MAINT_RATIO):
     mock_repo.get = mocker.AsyncMock(return_value=fps[0] if fps else None)
     mock_repo.transition = mocker.AsyncMock(return_value=None)
 
-    mock_settings = mocker.MagicMock()
-    mock_settings.get_coin_spec.return_value = _make_coin_spec(coin_spec_maint)
+    mock_registry = _make_mock_registry(mocker, coin_spec_maint)
 
     mock_bus = mocker.MagicMock()
     mock_bus.publish = mocker.AsyncMock()
@@ -109,7 +115,7 @@ def _make_watchdog(mocker, *, fps, account_value, coin_spec_maint=_MAINT_RATIO):
         exchange=mock_exchange,
         xsmom_repo=mock_repo,
         margin_manager=mgr,
-        settings=mock_settings,
+        registry=mock_registry,
         event_bus=mock_bus,
     )
     return watchdog, mock_repo, mock_bus
@@ -154,8 +160,7 @@ async def test_warning_emits_event_no_close(mocker):
     mock_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_repo.transition = mocker.AsyncMock()
 
-    mock_settings = mocker.MagicMock()
-    mock_settings.get_coin_spec.return_value = _make_coin_spec()
+    mock_registry = _make_mock_registry(mocker)
 
     mock_bus = mocker.MagicMock()
     mock_bus.publish = mocker.AsyncMock()
@@ -165,7 +170,7 @@ async def test_warning_emits_event_no_close(mocker):
         exchange=mock_exchange,
         xsmom_repo=mock_repo,
         margin_manager=mgr,
-        settings=mock_settings,
+        registry=mock_registry,
         event_bus=mock_bus,
     )
 
@@ -205,8 +210,7 @@ async def test_forced_close_picks_weakest_virtual(mocker):
     mock_repo.get = mocker.AsyncMock(return_value=fp2)  # weakest is fp2
     mock_repo.transition = mocker.AsyncMock(return_value=None)
 
-    mock_settings = mocker.MagicMock()
-    mock_settings.get_coin_spec.return_value = _make_coin_spec()
+    mock_registry = _make_mock_registry(mocker)
 
     mock_bus = mocker.MagicMock()
     mock_bus.publish = mocker.AsyncMock()
@@ -216,7 +220,7 @@ async def test_forced_close_picks_weakest_virtual(mocker):
         exchange=mock_exchange,
         xsmom_repo=mock_repo,
         margin_manager=mgr,
-        settings=mock_settings,
+        registry=mock_registry,
         event_bus=mock_bus,
     )
 
@@ -258,8 +262,7 @@ async def test_state_conflict_does_not_crash(mocker):
         side_effect=XsmomStateConflict(1, XsmomState.OPENED, XsmomState.CLOSE)
     )
 
-    mock_settings = mocker.MagicMock()
-    mock_settings.get_coin_spec.return_value = _make_coin_spec()
+    mock_registry = _make_mock_registry(mocker)
 
     mock_bus = mocker.MagicMock()
     mock_bus.publish = mocker.AsyncMock()
@@ -269,7 +272,7 @@ async def test_state_conflict_does_not_crash(mocker):
         exchange=mock_exchange,
         xsmom_repo=mock_repo,
         margin_manager=mgr,
-        settings=mock_settings,
+        registry=mock_registry,
         event_bus=mock_bus,
     )
 
@@ -300,8 +303,7 @@ async def test_long_position_uses_abs_szi(mocker):
     mock_repo.list_active = mocker.AsyncMock(return_value=[fp])
     mock_repo.transition = mocker.AsyncMock()
 
-    mock_settings = mocker.MagicMock()
-    mock_settings.get_coin_spec.return_value = _make_coin_spec()
+    mock_registry = _make_mock_registry(mocker)
 
     mock_bus = mocker.MagicMock()
     mock_bus.publish = mocker.AsyncMock()
@@ -311,7 +313,7 @@ async def test_long_position_uses_abs_szi(mocker):
         exchange=mock_exchange,
         xsmom_repo=mock_repo,
         margin_manager=mgr,
-        settings=mock_settings,
+        registry=mock_registry,
         event_bus=mock_bus,
     )
 
@@ -360,8 +362,7 @@ async def test_missing_asset_position_skipped(mocker):
     mock_repo.list_active = mocker.AsyncMock(return_value=fps)
     mock_repo.transition = mocker.AsyncMock()
 
-    mock_settings = mocker.MagicMock()
-    mock_settings.get_coin_spec.return_value = _make_coin_spec()
+    mock_registry = _make_mock_registry(mocker)
 
     mock_bus = mocker.MagicMock()
     mock_bus.publish = mocker.AsyncMock()
@@ -371,7 +372,7 @@ async def test_missing_asset_position_skipped(mocker):
         exchange=mock_exchange,
         xsmom_repo=mock_repo,
         margin_manager=mgr,
-        settings=mock_settings,
+        registry=mock_registry,
         event_bus=mock_bus,
     )
 

@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from frab.coin_registry import CoinRegistry
 from frab.domain import XsmomState
 from frab.engine.margin_manager import (
     AccountAssessment,
@@ -28,7 +29,6 @@ from frab.engine.margin_manager import (
 )
 from frab.events.bus import Event, EventBus
 from frab.repo.xsmom_repo import XsmomRepo, XsmomStateConflict
-from frab.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +55,14 @@ class XsmomMarginWatchdog:
         exchange,  # typed loosely to avoid cycle
         xsmom_repo: XsmomRepo,
         margin_manager: MarginManager,
-        settings: Settings,
+        registry: CoinRegistry,
         event_bus: EventBus,
     ) -> None:
         self._strategy_id = strategy_id
         self._exchange = exchange
         self._repo = xsmom_repo
         self._mgr = margin_manager
-        self._settings = settings
+        self._registry = registry
         self._bus = event_bus
 
     async def run_check(self, *, now_ms: int) -> WatchdogReport:
@@ -153,7 +153,7 @@ class XsmomMarginWatchdog:
                 )
                 continue
 
-            spec = self._settings.get_coin_spec(fp.coin)
+            spec = self._registry.get_coin_spec(fp.coin)
             # abs(szi) works for both LONG (szi > 0) and SHORT (szi < 0)
             size = abs(ap.szi)
             mark = ap.position_value / size if size else 0.0

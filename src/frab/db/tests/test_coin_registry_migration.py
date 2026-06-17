@@ -4,6 +4,9 @@ and asserts all 7 seeded rows are exactly correct.
 Uses alembic.command.upgrade() against a file-based sqlite temp DB so the
 full migration path (including op.bulk_insert) is exercised end-to-end,
 independent of the ORM init_db path used by other tests.
+
+Pinned to revision 294489218bcb (Phase A: create table + seed 7 FRAB coins).
+Phase F1 tests (31 additional coins) live in test_f1_migration.py.
 """
 from __future__ import annotations
 
@@ -15,6 +18,10 @@ import sqlalchemy as sa
 from alembic import command as alembic_command
 from alembic.config import Config
 
+# Pinned to the Phase A revision so the test remains stable as new migrations
+# are added.  Phase F1 (f1a2b3c4d5e6) adds 31 more rows; this test covers
+# only the initial 7.
+_PHASE_A_REVISION = "294489218bcb"
 
 # ── Expected ground truth (mirrors the migration seed exactly) ───────────────
 _EXPECTED_ROWS = {
@@ -57,10 +64,10 @@ def _make_alembic_cfg(db_path: str) -> Config:
 
 @pytest.fixture
 def migrated_db(tmp_path):
-    """Temp SQLite DB upgraded to head via alembic migrations."""
+    """Temp SQLite DB upgraded to Phase A revision (294489218bcb) via alembic."""
     db_path = str(tmp_path / "test_migration.db")
     cfg = _make_alembic_cfg(db_path)
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, _PHASE_A_REVISION)
     yield db_path
 
 
@@ -141,10 +148,10 @@ def test_coin_registry_active_flags(migrated_db):
 
 
 def test_coin_registry_downgrade_drops_table(tmp_path):
-    """downgrade -1 removes the coin_registry table."""
+    """downgrade -1 from Phase A removes the coin_registry table."""
     db_path = str(tmp_path / "test_downgrade.db")
     cfg = _make_alembic_cfg(db_path)
-    alembic_command.upgrade(cfg, "head")
+    alembic_command.upgrade(cfg, _PHASE_A_REVISION)
 
     # Verify table exists
     engine = sa.create_engine(f"sqlite:///{db_path}")

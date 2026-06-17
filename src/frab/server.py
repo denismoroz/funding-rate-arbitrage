@@ -358,7 +358,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
                 exchange=xsmom_exchange,
                 xsmom_repo=xsmom_repo,
                 margin_manager=xsmom_margin_mgr,
-                settings=settings,
+                registry=registry,
                 event_bus=bus,
             )
             xsmom_strategy = XsmomStrategy(
