@@ -299,6 +299,34 @@ class XsmomScan(Base):
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
+class CoinRegistry(Base):
+    """Per-coin configuration: risk parameters + HL market facts.
+
+    Single source of truth for the FRAB universe. Risk fields (leverage,
+    maint_ratio, position_size_usd, active) are user-editable via the
+    settings API. Market-fact fields (spot_token, sz_decimals, bridge_safe,
+    validated_at) are populated by HL discovery (Phase C) and must NOT be
+    set manually (bridge-token footgun prevention).
+
+    A coin is tradeable iff active=True AND validated_at IS NOT NULL.
+    No row → not tradeable (no implicit fallback per design decision).
+    """
+    __tablename__ = "coin_registry"
+    __table_args__ = (
+        Index("ix_coin_registry_active", "active"),
+    )
+
+    coin: Mapped[str] = mapped_column(String, primary_key=True)  # uppercase canonical perp ticker
+    leverage: Mapped[int] = mapped_column(Integer, nullable=False)          # HL initial margin = notional / leverage
+    maint_ratio: Mapped[float] = mapped_column(nullable=False)              # HL maintenance threshold = notional × maint_ratio
+    position_size_usd: Mapped[Optional[float]] = mapped_column(nullable=True)   # NULL = auto from budget
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False)           # in universe / tradeable
+    spot_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)    # e.g. UBTC; NULL = no spot leg
+    sz_decimals: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # from HL perp meta (Phase C)
+    bridge_safe: Mapped[bool] = mapped_column(Boolean, nullable=False)      # spot 1:1 with perp, not EVM bridge
+    validated_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True) # epoch ms; NULL = not validated
+
+
 class XsmomDailyPrice(Base):
     __tablename__ = "xsmom_daily_prices"
     __table_args__ = (
