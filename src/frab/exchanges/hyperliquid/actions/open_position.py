@@ -99,6 +99,7 @@ class OpenPositionAction(HLAction):
                     oid=oid,
                     since_ms=now_ms - 5_000,
                     clock_fn=self._clock_fn,
+                    spot_token_inverse=self._symbols.spot_token_inverse,
                 )
             fee = real_fee if real_fee is not None else estimate
 

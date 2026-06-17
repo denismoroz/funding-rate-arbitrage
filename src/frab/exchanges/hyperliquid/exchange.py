@@ -85,6 +85,7 @@ class HLExchange:
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         # --- Shared order settings ---
         spot_token_map: dict[str, str] | None = None,
+        spot_token_inverse: dict[str, str] | None = None,
         spot_quote_token: str = "USDC",
         slippage: float = 0.01,
         partial_fill_tolerance: float = 0.01,
@@ -129,6 +130,7 @@ class HLExchange:
         self._symbols = HLSymbols(
             client=self._hl_client,
             spot_token_map=spot_token_map,
+            spot_token_inverse=spot_token_inverse,
             spot_quote_token=spot_quote_token,
         )
 

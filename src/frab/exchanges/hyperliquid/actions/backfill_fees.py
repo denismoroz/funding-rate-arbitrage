@@ -14,7 +14,6 @@ from frab.db.models import (
 from frab.db.session import session_scope
 from frab.domain import Instrument, Side
 from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
-from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
 from frab.exchanges.hyperliquid.wire import HLUserFill
 
 logger = logging.getLogger(__name__)
@@ -31,6 +30,7 @@ class BackfillFeesAction(HLAction):
         self._client = ctx.client
         self._sf = ctx.session_factory
         self._address = ctx.address
+        self._symbols = ctx.symbols
 
     async def execute(self, strategy_id: int) -> int:
         if self._address is None:
@@ -105,11 +105,10 @@ class BackfillFeesAction(HLAction):
             return f
         return None
 
-    @staticmethod
-    def _compute_fee_usdc(match: HLUserFill) -> float:
+    def _compute_fee_usdc(self, match: HLUserFill) -> float:
         """Convert HL raw fee (in fee_token) to USDC."""
         if match.fee_token in ("USDC", "USD"):
             return match.fee_raw
-        if match.fee_token in SPOT_TOKEN_INVERSE:
+        if match.fee_token in self._symbols.spot_token_inverse:
             return match.fee_raw * match.px
         return match.fee_raw

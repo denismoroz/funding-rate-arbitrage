@@ -29,13 +29,19 @@ async def fetch_real_fee_usdc(
     clock_fn: Callable[[], datetime] | None = None,
     attempts: int = 3,
     sleep_s: float = 0.5,
+    spot_token_inverse: dict[str, str] | None = None,
 ) -> float | None:
     """Look up the fee for a specific oid from HL userFillsByTime.
 
     Returns fee converted to USDC (wrapped-token fees multiplied by fill price).
     Returns None if the fill hasn't appeared after `attempts` polls — caller should
     fall back to a taker-rate estimate.
+
+    ``spot_token_inverse`` — registry-derived {wrapped_token: canonical_coin} map.
+    Defaults to the module-level SPOT_TOKEN_INVERSE constant when not supplied
+    (Phase F removes that fallback once all callers supply it).
     """
+    _inverse = spot_token_inverse if spot_token_inverse is not None else SPOT_TOKEN_INVERSE
     clock_fn = clock_fn or (lambda: datetime.now(UTC))
     end_ms = int(clock_fn().timestamp() * 1000) + 60_000
     for i in range(attempts):
@@ -51,7 +57,7 @@ async def fetch_real_fee_usdc(
             if fee_token in ("USDC", "USD"):
                 return fee_raw
             px = match.px
-            if fee_token in SPOT_TOKEN_INVERSE and px > 0:
+            if fee_token in _inverse and px > 0:
                 return fee_raw * px
             logger.warning(
                 "unknown feeToken %r oid=%s — skipping conversion", fee_token, oid

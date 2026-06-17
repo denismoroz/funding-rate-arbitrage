@@ -21,6 +21,7 @@ from frab.engine.loop import EngineLoop
 from frab.events.bus import EventBus, EventDbSink
 from frab.exchanges.hyperliquid.exchange import HLExchange
 from frab.ledger.ledger import Ledger
+from frab.coin_registry import CoinRegistry, RegistryAwareSettings
 from frab.repo.farb_repo import FarbRepo
 from frab.repo.xsmom_repo import XsmomRepo
 from frab.settings import Settings, get_settings
@@ -47,10 +48,14 @@ _XSMOM_STRATEGY_NAME = "xsmom"
 _XSMOM_STRATEGY_VERSION = "v1"
 
 
-def _select_coins(settings: Settings, default: tuple[str, ...]) -> tuple[str, ...]:
-    """Universe from settings.hl_universe override, else `default`."""
-    override = settings.universe_tuple()
-    return override if override else default
+def _select_coins(registry: CoinRegistry) -> tuple[str, ...]:
+    """Universe from CoinRegistry (active + validated coins).
+
+    Falls back to DEFAULT_COINS when the registry is empty (e.g. test with
+    no seeded DB), preserving backward compatibility during Phase B.
+    """
+    coins = registry.universe()
+    return coins if coins else DEFAULT_COINS
 
 
 def _hl_info_url(settings: Settings) -> str:
@@ -187,6 +192,30 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         sink_task.add_done_callback(_on_task_done)
         await sink.wait_until_subscribed()
 
+        # ── Load CoinRegistry BEFORE building the exchange/engine ─────────
+        # Registry supplies universe, spot-maps, and coin specs at runtime.
+        # Derived snapshot dicts are passed into HLExchange / EngineLoop so
+        # every deep call-site gets registry values without going async.
+        registry = CoinRegistry(session_factory)
+        await registry.load()
+        app.state.coin_registry = registry
+
+        # RegistryAwareSettings wraps the plain Settings and overrides
+        # get_coin_spec() to read from the registry instead of RESEARCH_LEVERAGE.
+        # All other settings attributes pass through transparently.
+        registry_settings = RegistryAwareSettings(settings, registry)
+
+        # Registry-derived coin universe (active + validated rows).
+        # Falls back to the `coins` arg (CLI / test default) when DB is empty.
+        active_coins = _select_coins(registry) if registry.universe() else coins
+
+        # Spot-token map: from registry on mainnet, empty on testnet.
+        if settings.hl_network == "mainnet":
+            spot_map = registry.spot_token_map()
+        else:
+            spot_map = {}
+        spot_inverse = registry.spot_token_inverse()
+
         # ── Build exchange ────────────────────────────────────────────────
         exchange = HLExchange(
             api_url=_hl_info_url(settings),
@@ -200,7 +229,8 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             account_address=settings.hl_account_address,
             network=settings.hl_network,
             session_factory=session_factory,
-            spot_token_map=_select_spot_token_map(settings.hl_network),
+            spot_token_map=spot_map,
+            spot_token_inverse=spot_inverse,
             slippage=settings.hl_live_slippage,
         )
 
@@ -224,7 +254,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             exchange=exchange,
             farb_repo=farb_repo,
             margin_manager=margin_mgr,
-            settings=settings,
+            settings=registry_settings,
             event_bus=bus,
         )
 
@@ -234,7 +264,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             farb_repo=farb_repo,
             session_factory=session_factory,
             params=params,
-            settings=settings,
+            settings=registry_settings,
             event_bus=bus,
             margin_watchdog=margin_watchdog,
         )
@@ -257,7 +287,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             exchange=exchange,
             ledger=ledger,
             session_factory=session_factory,
-            coins=list(coins),
+            coins=list(active_coins),
             event_bus=bus,
         )
         await engine_loop.start()
@@ -280,7 +310,8 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
                 account_address=settings.xsmom_hl_account_address,
                 network=settings.hl_network,
                 session_factory=session_factory,
-                spot_token_map=_select_spot_token_map(settings.hl_network),
+                spot_token_map=spot_map,
+                spot_token_inverse=spot_inverse,
                 slippage=settings.hl_live_slippage,
             )
             xsmom_strategy_id, xsmom_params = await _get_or_create_xsmom_strategy(

@@ -152,6 +152,7 @@ class ClosePositionAction(HLAction):
             real_fee = await fetch_real_fee_usdc(
                 client=self._client, address=self._address,
                 oid=oid_i, since_ms=now_ms - 5_000, clock_fn=self._clock_fn,
+                spot_token_inverse=self._symbols.spot_token_inverse,
             )
         return qty_i, price_i, real_fee if real_fee is not None else estimate
 

@@ -45,13 +45,22 @@ def select_spot_token_map(network: str) -> dict[str, str]:
     return MAINNET_SPOT_TOKEN_MAP if network == "mainnet" else {}
 
 
-async def validate_spot_pairs(market_data, coins: tuple[str, ...]) -> None:
+async def validate_spot_pairs(
+    market_data,
+    coins: tuple[str, ...],
+    spot_token_map: "dict[str, str] | None" = None,
+) -> None:
     """Verify every coin's spot/USDC pair exists on HL with the expected base token.
 
-    Fail-fast at engine startup if MAINNET_SPOT_TOKEN_MAP entry doesn't resolve
+    Fail-fast at engine startup if the spot_token_map entry doesn't resolve
     to a real HL spot pair quoted in USDC. Prevents accidentally trading the
     canonical perp against a non-1:1 wrapped token (breaks delta-neutrality).
+
+    ``spot_token_map`` — registry-derived {coin: spot_token} map.
+    When not supplied, falls back to MAINNET_SPOT_TOKEN_MAP for backward compat
+    (Phase F removes that fallback once server.py supplies the registry map).
     """
+    _map = spot_token_map if spot_token_map is not None else MAINNET_SPOT_TOKEN_MAP
     meta = await market_data._post({"type": "spotMeta"})
     tokens = {
         t["index"]: t.get("name", "")
@@ -76,7 +85,7 @@ async def validate_spot_pairs(market_data, coins: tuple[str, ...]) -> None:
     missing: list[str] = []
     mismatched: list[str] = []
     for coin in coins:
-        expected_base = MAINNET_SPOT_TOKEN_MAP.get(coin)
+        expected_base = _map.get(coin)
         if expected_base is None:
             missing.append(f"{coin} (no map entry)")
             continue

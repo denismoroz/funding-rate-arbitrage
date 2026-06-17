@@ -17,6 +17,9 @@ from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
 # Inverse of MAINNET_SPOT_TOKEN_MAP: HL wrapped token → canonical perp coin.
 # BRIDGE_TOKEN_BLACKLIST names are explicitly excluded (independent price discovery).
 # This is HL-global knowledge, not user config.
+# NOTE: Phase B — runtime code uses the instance attribute self._spot_token_inverse_dict
+# (seeded from CoinRegistry at startup). This module-level constant is the fallback for
+# paths that don't yet receive a registry-derived dict (Phase F removes it entirely).
 SPOT_TOKEN_INVERSE: dict[str, str] = {
     "UBTC": "BTC",
     "UETH": "ETH",
@@ -34,10 +37,16 @@ class HLSymbols:
         *,
         client: HLClient,
         spot_token_map: dict[str, str] | None = None,
+        spot_token_inverse: dict[str, str] | None = None,
         spot_quote_token: str = "USDC",
     ) -> None:
         self._client = client
         self._spot_token_map: dict[str, str] = spot_token_map if spot_token_map is not None else {}
+        # Registry-derived inverse map (HL wrapped token → canonical perp coin).
+        # Falls back to the module-level SPOT_TOKEN_INVERSE when not provided (Phase F removes it).
+        self._spot_token_inverse_dict: dict[str, str] = (
+            spot_token_inverse if spot_token_inverse is not None else SPOT_TOKEN_INVERSE
+        )
         self._spot_quote_token = spot_quote_token
         self._sz_decimals_cache: dict[str, int] | None = None
         self._spot_idx_to_name: dict[int, str] | None = None
@@ -59,8 +68,8 @@ class HLSymbols:
 
     @property
     def spot_token_inverse(self) -> dict[str, str]:
-        """The global HL wrapped-token → canonical-coin map (read-only)."""
-        return SPOT_TOKEN_INVERSE
+        """The registry-derived HL wrapped-token → canonical-coin map (read-only)."""
+        return self._spot_token_inverse_dict
 
     @property
     def spot_token_map(self) -> dict[str, str]:
@@ -123,7 +132,7 @@ class HLSymbols:
             wrapped, quote = name.split("/", 1)
             if quote != self.spot_quote_token:
                 continue
-            canonical = SPOT_TOKEN_INVERSE.get(wrapped)
+            canonical = self._spot_token_inverse_dict.get(wrapped)
             if canonical is None:
                 continue
             out[canonical] = val
@@ -165,7 +174,7 @@ class HLSymbols:
                         f"HL spot token {wrapped!r} is in BRIDGE_TOKEN_BLACKLIST "
                         f"(independent price discovery — not safe to map to perp coin)"
                     )
-                return SPOT_TOKEN_INVERSE.get(wrapped, wrapped), "spot"
+                return self._spot_token_inverse_dict.get(wrapped, wrapped), "spot"
             return hl_coin, "perp"
         if "/" in hl_coin:
             wrapped = hl_coin.split("/")[0]
@@ -174,7 +183,7 @@ class HLSymbols:
                     f"HL spot token {wrapped!r} is in BRIDGE_TOKEN_BLACKLIST "
                     f"(independent price discovery — not safe to map to perp coin)"
                 )
-            coin = SPOT_TOKEN_INVERSE.get(wrapped, wrapped)
+            coin = self._spot_token_inverse_dict.get(wrapped, wrapped)
             return coin, "spot"
         return hl_coin, "perp"
 

@@ -79,7 +79,15 @@ async def get_summary(request: Request) -> dict:
         elif ap.szi > 0:
             long_notional += ap.position_value
 
-    from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
+    # Prefer the registry-derived inverse map (populated at startup via CoinRegistry.load()).
+    # Fall back to the module-level SPOT_TOKEN_INVERSE when the registry is not on
+    # app.state (e.g. test harness that doesn't wire the full server lifespan).
+    _registry = getattr(request.app.state, "coin_registry", None)
+    if _registry is not None:
+        _spot_inverse = _registry.spot_token_inverse()
+    else:
+        from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
+        _spot_inverse = SPOT_TOKEN_INVERSE
 
     spot_total_usdc = 0.0
     spot_hold_usdc = 0.0
@@ -89,7 +97,7 @@ async def get_summary(request: Request) -> dict:
             spot_total_usdc += bal.total
             spot_hold_usdc += bal.hold
             continue
-        canonical = SPOT_TOKEN_INVERSE.get(bal.coin)
+        canonical = _spot_inverse.get(bal.coin)
         if canonical is None:
             continue
         mid = spot_mids.get(canonical, 0.0)
