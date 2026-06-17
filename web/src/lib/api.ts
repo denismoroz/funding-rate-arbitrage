@@ -564,3 +564,64 @@ export function previewXsmomSizing(
     body,
   );
 }
+
+// ── Coin Registry Types ───────────────────────────────────────────────────────
+
+export type CoinRow = {
+  coin: string;
+  leverage: number;
+  maint_ratio: number;
+  position_size_usd: number | null;
+  active: boolean;
+  spot_token: string | null;
+  sz_decimals: number | null;
+  bridge_safe: boolean;
+  validated_at: number | null; // epoch ms or null
+};
+
+export type AddCoinBody = {
+  coin: string;
+  leverage: number;
+  maint_ratio: number;
+  position_size_usd?: number;
+};
+
+export type PatchCoinBody = {
+  leverage?: number;
+  maint_ratio?: number;
+  position_size_usd?: number | null;
+};
+
+// ── Coin Registry Fetchers ────────────────────────────────────────────────────
+
+export function fetchCoins(): Promise<CoinRow[]> {
+  return apiFetch<CoinRow[]>("/coins");
+}
+
+export function addCoin(body: AddCoinBody): Promise<CoinRow> {
+  return apiPostJson<AddCoinBody, CoinRow>("/coins", body);
+}
+
+export function patchCoin(coin: string, body: PatchCoinBody): Promise<CoinRow> {
+  return apiPatchJson<PatchCoinBody, CoinRow>(`/coins/${coin}`, body);
+}
+
+export function setCoinActive(coin: string, active: boolean): Promise<CoinRow> {
+  return apiPostJson<{ active: boolean }, CoinRow>(`/coins/${coin}/active`, { active });
+}
+
+export async function deleteCoin(coin: string): Promise<void> {
+  const res = await fetch(`${BASE}/coins/${coin}`, { method: "DELETE" });
+  if (!res.ok) {
+    let msg: string;
+    try {
+      const json = (await res.json()) as unknown;
+      msg = typeof json === "object" && json !== null && "detail" in json
+        ? String((json as Record<string, unknown>).detail)
+        : JSON.stringify(json);
+    } catch {
+      msg = res.statusText;
+    }
+    throw new Error(`${res.status}: ${msg}`);
+  }
+}

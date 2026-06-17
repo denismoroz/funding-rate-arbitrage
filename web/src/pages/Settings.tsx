@@ -8,6 +8,8 @@ import {
 import { useLiveEvents } from "../lib/useLiveEvents";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Header } from "./Dashboard";
+import { CoinRegistryTable } from "../components/coins/CoinRegistryTable";
+import { AddCoinForm } from "../components/coins/AddCoinForm";
 
 // ── Field layout helper ───────────────────────────────────────────────────────
 
@@ -539,6 +541,20 @@ export default function Settings() {
             </div>
           </>
         )}
+
+        {/* ── Coin Registry ───────────────────────────────────────────── */}
+        <section className="space-y-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400 border-b border-gray-700 pb-1">
+            Coin Registry
+          </h2>
+          <p className="text-xs text-gray-500">
+            Active, validated coins are eligible for trading on the next engine cycle.
+            Market facts (spot token, sz decimals, bridge safety) are discovered from
+            Hyperliquid server-side — they cannot be edited manually.
+          </p>
+          <CoinRegistryTable />
+          <AddCoinForm />
+        </section>
       </main>
     </div>
   );
