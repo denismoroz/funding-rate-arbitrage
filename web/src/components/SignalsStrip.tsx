@@ -8,6 +8,7 @@ import {
 } from "../lib/api";
 
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
+import { useCoins } from "../lib/useCoins";
 import { Skeleton } from "./ui/Skeleton";
 
 const HOURS_PER_YEAR = 8760;
@@ -119,7 +120,11 @@ export function SignalsStrip() {
   });
 
   const params = stratQ.data?.params_json as Record<string, unknown> | undefined;
-  const coins = (params?.coins as string[] | undefined) ?? ["BTC", "ETH", "SOL"];
+  // Universe is now the registry's active coins (single source of truth), not
+  // the vestigial params_json.coins — so activating a coin in the registry UI
+  // is reflected here without editing strategy params.
+  const coinsQ = useCoins();
+  const coins = (coinsQ.data ?? []).filter((c) => c.active).map((c) => c.coin);
   const entryThreshold = (params?.entry_threshold_apr as number | undefined) ?? 0.10;
   const exitThreshold = (params?.phase2_exit_threshold as number | undefined) ?? -0.10;
   const sigWindow = (params?.signal_window_hours as number | undefined) ?? 12;

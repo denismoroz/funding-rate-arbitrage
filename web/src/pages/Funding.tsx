@@ -1,4 +1,3 @@
-import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart,
@@ -10,16 +9,13 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
-import { fetchFundingHistory, fetchStrategy, tsMsToDate } from "../lib/api";
+import { fetchFundingHistory, tsMsToDate } from "../lib/api";
+import { useCoins } from "../lib/useCoins";
 import { formatNumber, formatRelative } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { useLiveEvents } from "../lib/useLiveEvents";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Header } from "./Dashboard";
-
-// Fallback coin list used while the strategy params query is loading or
-// if no active strategy is configured.
-const FALLBACK_COINS = ["BTC", "ETH", "SOL"];
 
 function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
@@ -146,18 +142,9 @@ function CoinFundingCard({ coin }: { coin: string }) {
 export default function Funding() {
   const strategyId = useActiveStrategyId();
   const { status } = useLiveEvents(strategyId);
-  const stratQ = useQuery({
-    queryKey: ["strategy", strategyId],
-    queryFn: () => fetchStrategy(strategyId!),
-    enabled: !!strategyId,
-  });
-  const [coins, setCoins] = useState<string[]>(FALLBACK_COINS);
-  useEffect(() => {
-    const fromParams = stratQ.data?.params_json?.coins;
-    if (Array.isArray(fromParams) && fromParams.length > 0) {
-      setCoins(fromParams as string[]);
-    }
-  }, [stratQ.data]);
+  // Universe = registry active coins (single source), not vestigial params_json.coins.
+  const coinsQ = useCoins();
+  const coins: string[] = (coinsQ.data ?? []).filter((c) => c.active).map((c) => c.coin);
 
   return (
     <div className="min-h-screen bg-gray-50">
