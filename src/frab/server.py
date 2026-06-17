@@ -22,6 +22,7 @@ from frab.events.bus import EventBus, EventDbSink
 from frab.exchanges.hyperliquid.exchange import HLExchange
 from frab.ledger.ledger import Ledger
 from frab.coin_registry import CoinRegistry, RegistryAwareSettings
+from frab.repo.coin_registry_repo import CoinRegistryRepo
 from frab.repo.farb_repo import FarbRepo
 from frab.repo.xsmom_repo import XsmomRepo
 from frab.settings import Settings, get_settings
@@ -199,6 +200,29 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         registry = CoinRegistry(session_factory)
         await registry.load()
         app.state.coin_registry = registry
+
+        # ── Phase C: startup validation gate ─────────────────────────────
+        # Defensive: universe() already filters active AND validated_at IS NOT NULL
+        # (Phase B invariant).  Log a hard error if somehow a coin slips through.
+        # This should never happen in a well-formed DB, but fail loud if it does.
+        _universe_coins = registry.universe()
+        _all_rows = await CoinRegistryRepo(session_factory).list()
+        _invalid_active = [
+            r.coin for r in _all_rows
+            if r.active and r.validated_at is None
+        ]
+        if _invalid_active:
+            # Log at ERROR level and abort startup — a coin is active but not validated.
+            raise RuntimeError(
+                f"Startup validation gate: the following coin(s) are active=True but "
+                f"validated_at IS NULL in coin_registry — they must be validated before "
+                f"activation (Phase C gate): {_invalid_active}.  "
+                f"Deactivate or validate these coins before starting the engine."
+            )
+        logger.info(
+            "Startup validation gate: OK — active universe=%s, all active coins have validated_at set.",
+            _universe_coins,
+        )
 
         # RegistryAwareSettings wraps the plain Settings and overrides
         # get_coin_spec() to read from the registry instead of RESEARCH_LEVERAGE.
