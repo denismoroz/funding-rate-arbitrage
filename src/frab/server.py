@@ -191,6 +191,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         exchange = HLExchange(
             api_url=_hl_info_url(settings),
             timeout_s=settings.hl_request_timeout_s,
+            sdk_timeout_s=settings.hl_sdk_timeout_s,
             private_key=(
                 settings.hl_private_key.get_secret_value()
                 if settings.hl_private_key is not None
@@ -274,6 +275,7 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
             xsmom_exchange = HLExchange(
                 api_url=_hl_info_url(settings),
                 timeout_s=settings.hl_request_timeout_s,
+                sdk_timeout_s=settings.hl_sdk_timeout_s,
                 private_key=settings.xsmom_hl_private_key.get_secret_value(),
                 account_address=settings.xsmom_hl_account_address,
                 network=settings.hl_network,

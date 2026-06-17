@@ -73,6 +73,7 @@ class HLExchange:
         # --- Read-side (httpx) ---
         api_url: str = "https://api.hyperliquid.xyz/info",
         timeout_s: float = 10.0,
+        sdk_timeout_s: float = 30.0,
         client: httpx.AsyncClient | None = None,
         # --- Write-side (SDK) ---
         private_key: str | None = None,
@@ -91,13 +92,17 @@ class HLExchange:
     ) -> None:
         # --- SDK objects for write methods ---
         if info is None:
-            info = Info(_base_url(network), skip_ws=True)
+            # timeout is REQUIRED: the SDK defaults to timeout=None (infinite wait),
+            # so a dead socket during a connection-reset storm hangs the to_thread
+            # call forever and freezes the awaiting EngineLoop.
+            info = Info(_base_url(network), skip_ws=True, timeout=sdk_timeout_s)
         if exchange is None and (private_key is not None and account_address is not None):
             wallet = Account.from_key(private_key)
             exchange = Exchange(
                 wallet=wallet,
                 base_url=_base_url(network),
                 account_address=account_address,
+                timeout=sdk_timeout_s,
             )
 
         # Build the transport client

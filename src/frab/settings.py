@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     hl_api_url: str = Field(default="https://api.hyperliquid.xyz/info")
     hl_request_timeout_s: float = Field(default=10.0)
+    # Timeout for the HL SDK (Info/Exchange) requests path. Higher than the httpx
+    # read timeout because it also covers write calls (orders/cancels/transfers),
+    # and because SDK calls have NO default timeout (=> infinite hang on a dead
+    # socket during a connection-reset storm, which freezes the awaiting EngineLoop).
+    hl_sdk_timeout_s: float = Field(default=30.0)
     hl_min_request_interval_ms: int = Field(default=200)
 
     strategy_name: str = Field(default="strategy_a")  # "strategy_a" | "two_phase_dynamic"
