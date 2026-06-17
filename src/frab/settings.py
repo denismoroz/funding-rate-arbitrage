@@ -1,4 +1,3 @@
-import json
 import re
 from pathlib import Path
 from typing import Literal
@@ -11,7 +10,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 
 _ETH_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
-_TICKER_RE = re.compile(r"^[A-Z]{3,5}$")
 
 
 class Settings(BaseSettings):
@@ -44,19 +42,12 @@ class Settings(BaseSettings):
     hl_network: Literal["testnet", "mainnet"] = Field(default="mainnet")
     hl_private_key: SecretStr | None = Field(default=None)
     hl_account_address: str | None = Field(default=None)
-    # Comma-separated coin list in env (e.g. "PURR,HYPE" or "BTC,ETH,SOL,AVAX,LINK,AAVE")
-    # Empty default = use the server.py-side DEFAULT_COINS for the engine universe override.
-    hl_universe: str = Field(default="")
     # Risk caps for live engine
     hl_max_open_positions: int = Field(default=5)
     hl_position_size_usd: float = Field(default=10.0)
     hl_live_slippage: float = Field(default=0.01)
 
     # --- Margin-policy settings (Phase B1) ---
-    # Per-coin params JSON. Empty string = use legacy hl_position_size_usd uniform sizing.
-    # When non-empty, expected shape:
-    #   {"BTC": {"position_size_usd": 100.0, "leverage": 20, "maint_ratio": 0.01}, ...}
-    per_coin_params_json: str = Field(default="")
     # Total budget the strategy will manage.
     budget_cap_usd: float = Field(default=1000.0, gt=0)
     # Multiplier over initial margin kept as buffer.
@@ -112,111 +103,6 @@ class Settings(BaseSettings):
                 f"< top_up_trigger ({self.top_up_trigger}) <= healthy_ratio ({self.healthy_ratio})"
             )
         return self
-
-    def per_coin_params(self) -> "dict[str, dict] | None":
-        """Parse per_coin_params_json into a validated dict, or None if empty.
-
-        Returns None when per_coin_params_json is empty (legacy uniform-sizing mode).
-        Raises ValueError on any parse or validation error.
-
-        Expected shape::
-
-            {
-                "BTC": {"position_size_usd": 100.0, "leverage": 20, "maint_ratio": 0.01},
-                ...
-            }
-        """
-        raw = self.per_coin_params_json.strip()
-        if not raw:
-            return None
-
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"per_coin_params_json is not valid JSON: {exc}") from exc
-
-        if not isinstance(data, dict):
-            raise ValueError("per_coin_params_json must be a JSON object (dict)")
-
-        result: dict[str, dict] = {}
-        sizes_present: list[bool] = []
-        for ticker, params in data.items():
-            if not isinstance(ticker, str) or not _TICKER_RE.match(ticker):
-                raise ValueError(
-                    f"per_coin_params_json key {ticker!r} must be an uppercase 3-5 letter ticker"
-                )
-            if not isinstance(params, dict):
-                raise ValueError(
-                    f"per_coin_params_json[{ticker!r}] must be a dict, got {type(params).__name__}"
-                )
-            # leverage + maint_ratio are required; position_size_usd is optional
-            # (auto-derived from budget_cap/K/buffer when omitted for all coins).
-            for required_key in ("leverage", "maint_ratio"):
-                if required_key not in params:
-                    raise ValueError(
-                        f"per_coin_params_json[{ticker!r}] missing required key {required_key!r}"
-                    )
-            leverage = params["leverage"]
-            maint_ratio = params["maint_ratio"]
-            if not isinstance(leverage, int) or not (1 <= leverage <= 50):
-                raise ValueError(
-                    f"per_coin_params_json[{ticker!r}].leverage must be int in [1, 50], got {leverage!r}"
-                )
-            if not isinstance(maint_ratio, (int, float)) or not (0 < maint_ratio < 0.5):
-                raise ValueError(
-                    f"per_coin_params_json[{ticker!r}].maint_ratio must be float in (0, 0.5), got {maint_ratio!r}"
-                )
-
-            entry: dict = {
-                "leverage": int(leverage),
-                "maint_ratio": float(maint_ratio),
-            }
-            if "position_size_usd" in params:
-                pos_size = params["position_size_usd"]
-                if not isinstance(pos_size, (int, float)) or pos_size <= 0:
-                    raise ValueError(
-                        f"per_coin_params_json[{ticker!r}].position_size_usd must be float > 0, "
-                        f"got {pos_size!r}"
-                    )
-                entry["position_size_usd"] = float(pos_size)
-                sizes_present.append(True)
-            else:
-                sizes_present.append(False)
-            result[ticker] = entry
-
-        # Mixed mode (some coins with position_size_usd, some without) is ambiguous
-        # — fail loud so the user picks one mode.
-        if any(sizes_present) and not all(sizes_present):
-            missing = [t for t, p in result.items() if "position_size_usd" not in p]
-            raise ValueError(
-                "per_coin_params_json: position_size_usd must be set for all coins "
-                f"or none (mixed mode unsupported). Missing in: {missing}"
-            )
-        return result
-
-    def get_coin_spec(self, coin: str) -> "CoinMarginSpec":
-        from frab.constants import (
-            CoinMarginSpec, RESEARCH_LEVERAGE, RESEARCH_MAINT_RATIO,
-            FALLBACK_LEVERAGE, FALLBACK_MAINT_RATIO,
-        )
-        overrides = self.per_coin_params() or {}
-        if coin in overrides:
-            spec = overrides[coin]
-            return CoinMarginSpec(
-                leverage=spec["leverage"],
-                maint_ratio=spec["maint_ratio"],
-            )
-        return CoinMarginSpec(
-            leverage=RESEARCH_LEVERAGE.get(coin, FALLBACK_LEVERAGE),
-            maint_ratio=RESEARCH_MAINT_RATIO.get(coin, FALLBACK_MAINT_RATIO),
-        )
-
-    def universe_tuple(self) -> tuple[str, ...]:
-        """Parse hl_universe env string into tuple of coin names. Empty → ()."""
-        raw = self.hl_universe.strip()
-        if not raw:
-            return ()
-        return tuple(c.strip().upper() for c in raw.split(",") if c.strip())
 
     def has_xsmom_credentials(self) -> bool:
         """True when both xsmom HL credentials are configured."""

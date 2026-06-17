@@ -60,6 +60,7 @@ async def test_converts_wrapped_token_fee_to_usdc(client):
     result = await fetch_real_fee_usdc(
         client=client, address="0xabc", oid=2, since_ms=0,
         clock_fn=lambda: FIXED_CLOCK, attempts=1,
+        spot_token_inverse={"UBTC": "BTC"},
     )
 
     assert result == pytest.approx(50.0)

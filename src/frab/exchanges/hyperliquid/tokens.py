@@ -27,28 +27,11 @@ from __future__ import annotations
 # to the other silently breaks delta-neutrality and cost real money in testing (-$3 incident).
 BRIDGE_TOKEN_BLACKLIST: frozenset[str] = frozenset({"AVAX0", "LINK0", "AAVE0"})
 
-MAINNET_SPOT_TOKEN_MAP: dict[str, str] = {
-    "BTC": "UBTC",
-    "ETH": "UETH",
-    "SOL": "USOL",
-    # Native HL spot tokens — wrapped name == canonical perp coin
-    # (HL-first-class, not bridged), so identity mapping is safe.
-    "HYPE": "HYPE",
-    "PURR": "PURR",
-    "ZEC": "ZEC",
-    "XPL": "XPL",
-}
-
-
-def select_spot_token_map(network: str) -> dict[str, str]:
-    """Spot base-token map; only mainnet uses wrapped names."""
-    return MAINNET_SPOT_TOKEN_MAP if network == "mainnet" else {}
-
 
 async def validate_spot_pairs(
     market_data,
     coins: tuple[str, ...],
-    spot_token_map: "dict[str, str] | None" = None,
+    spot_token_map: "dict[str, str]",
 ) -> None:
     """Verify every coin's spot/USDC pair exists on HL with the expected base token.
 
@@ -56,11 +39,9 @@ async def validate_spot_pairs(
     to a real HL spot pair quoted in USDC. Prevents accidentally trading the
     canonical perp against a non-1:1 wrapped token (breaks delta-neutrality).
 
-    ``spot_token_map`` — registry-derived {coin: spot_token} map.
-    When not supplied, falls back to MAINNET_SPOT_TOKEN_MAP for backward compat
-    (Phase F removes that fallback once server.py supplies the registry map).
+    ``spot_token_map`` — registry-derived {coin: spot_token} map (required).
     """
-    _map = spot_token_map if spot_token_map is not None else MAINNET_SPOT_TOKEN_MAP
+    _map = spot_token_map
     meta = await market_data._post({"type": "spotMeta"})
     tokens = {
         t["index"]: t.get("name", "")
@@ -97,5 +78,5 @@ async def validate_spot_pairs(
             "Spot-pair validation failed for HL mainnet. "
             f"missing_map: {missing}; not_on_hl: {mismatched}. "
             "Either remove these coins from the universe or fix "
-            "MAINNET_SPOT_TOKEN_MAP."
+            "the coin_registry spot_token mapping."
         )

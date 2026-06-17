@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 from frab.exchanges.hyperliquid.client import HLClient
-from frab.exchanges.hyperliquid.symbols import HLSymbols, SPOT_TOKEN_INVERSE
+from frab.exchanges.hyperliquid.symbols import HLSymbols
 from frab.exchanges.hyperliquid.wire import (
     HLPerpMarketSpec,
     HLSpotMeta,
@@ -91,11 +91,19 @@ def test_normalize_spot_coin_unknown_passes_through(mock_client):
 # ---------------------------------------------------------------------------
 
 def test_spot_token_inverse_property(mock_client):
-    sym = HLSymbols(client=mock_client)
+    """spot_token_inverse returns the registry-derived dict passed at construction."""
+    registry_inverse = {"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL"}
+    sym = HLSymbols(client=mock_client, spot_token_inverse=registry_inverse)
     inv = sym.spot_token_inverse
     assert inv["UBTC"] == "BTC"
     assert inv["UETH"] == "ETH"
     assert inv["USOL"] == "SOL"
+
+
+def test_spot_token_inverse_property_default_empty(mock_client):
+    """Without a registry-derived inverse, spot_token_inverse is empty (no module const fallback)."""
+    sym = HLSymbols(client=mock_client)
+    assert sym.spot_token_inverse == {}
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +243,7 @@ async def test_normalize_hl_coin_perp_ticker_passthrough(mock_client):
 
 @pytest.mark.asyncio
 async def test_normalize_hl_coin_at_idx_resolves_to_spot(mock_client):
-    sym = HLSymbols(client=mock_client)
+    sym = HLSymbols(client=mock_client, spot_token_inverse={"UBTC": "BTC"})
     coin, leg = await sym.normalize_hl_coin("@142")
     assert coin == "BTC"
     assert leg == "spot"
@@ -247,7 +255,7 @@ async def test_normalize_hl_coin_at_idx_resolves_to_spot(mock_client):
 
 @pytest.mark.asyncio
 async def test_normalize_hl_coin_pair_symbol_resolves_to_spot(mock_client):
-    sym = HLSymbols(client=mock_client)
+    sym = HLSymbols(client=mock_client, spot_token_inverse={"UBTC": "BTC"})
     coin, leg = await sym.normalize_hl_coin("UBTC/USDC")
     assert coin == "BTC"
     assert leg == "spot"
@@ -335,7 +343,11 @@ async def test_spot_mids_by_coin_happy_path(mocker):
             HLSpotPair(index=2, name="UETH/USDC"),
         ],
     ))
-    sym = HLSymbols(client=client, spot_token_map={"BTC": "UBTC", "ETH": "UETH"})
+    sym = HLSymbols(
+        client=client,
+        spot_token_map={"BTC": "UBTC", "ETH": "UETH"},
+        spot_token_inverse={"UBTC": "BTC", "UETH": "ETH"},
+    )
     result = await sym.spot_mids_by_coin()
     assert result == {"BTC": 60000.0, "ETH": 3000.0}
 
@@ -391,7 +403,7 @@ async def test_spot_mids_by_coin_symbolic_key_resolved(mocker):
         tokens={0: "PURR"},
         pairs=[HLSpotPair(index=0, name="PURR/USDC")],
     ))
-    sym = HLSymbols(client=client)
+    sym = HLSymbols(client=client, spot_token_inverse={"PURR": "PURR"})
     result = await sym.spot_mids_by_coin()
     assert result == {"PURR": 0.137}
 

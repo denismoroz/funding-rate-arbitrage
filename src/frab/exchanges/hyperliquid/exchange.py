@@ -33,7 +33,7 @@ from frab.exchanges.hyperliquid.actions.load_positions import LoadOpenPositionsA
 from frab.exchanges.hyperliquid.actions.open_position import OpenPositionAction, PartialFillError
 from frab.exchanges.hyperliquid.actions.transfer import TransferAction
 from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
-from frab.exchanges.hyperliquid.symbols import HLSymbols, SPOT_TOKEN_INVERSE
+from frab.exchanges.hyperliquid.symbols import HLSymbols
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
 from frab.exchanges.hyperliquid.wire import HLCandle, HLPerpState, HLSpotState, HLUserFill
 from frab.exchanges.protocol import (
@@ -47,7 +47,7 @@ from frab.exchanges.protocol import (
 logger = logging.getLogger(__name__)
 
 # Re-export so existing importers of HLTransferError / PartialFillError from exchange.py still work.
-__all__ = ["HLExchange", "HLTransferError", "PartialFillError", "BRIDGE_TOKEN_BLACKLIST", "SPOT_TOKEN_INVERSE"]
+__all__ = ["HLExchange", "HLTransferError", "PartialFillError", "BRIDGE_TOKEN_BLACKLIST"]
 
 _PERIODS_PER_YEAR = 24 * 365  # HL funds hourly
 

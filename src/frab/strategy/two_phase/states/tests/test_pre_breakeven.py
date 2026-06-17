@@ -11,7 +11,7 @@ import pytest
 
 from frab.domain import FarbPosition, FarbState
 from frab.repo.farb_repo import StateConflict
-from frab.settings import Settings
+from frab.coin_registry import RegistryAwareSettings
 from frab.strategy.two_phase.evaluators.signal import SignalComputer
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states.pre_breakeven import PreBreakevenHandler
@@ -61,7 +61,7 @@ def _make_handler(mocker, *, params=None, signal_value=None):
     farb_repo = mocker.AsyncMock()
     signal_computer = mocker.AsyncMock(spec=SignalComputer)
     signal_computer.compute.return_value = signal_value
-    settings = mocker.MagicMock(spec=Settings)
+    settings = mocker.MagicMock(spec=RegistryAwareSettings)
     coin_spec = mocker.MagicMock()
     coin_spec.leverage = 10
     settings.get_coin_spec.return_value = coin_spec

@@ -7,7 +7,6 @@ from datetime import datetime, UTC
 from typing import Callable
 
 from frab.exchanges.hyperliquid.client import HLClient
-from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
 from frab.exchanges.hyperliquid.wire import HLUserFill
 
 logger = logging.getLogger(__name__)
@@ -38,10 +37,9 @@ async def fetch_real_fee_usdc(
     fall back to a taker-rate estimate.
 
     ``spot_token_inverse`` — registry-derived {wrapped_token: canonical_coin} map.
-    Defaults to the module-level SPOT_TOKEN_INVERSE constant when not supplied
-    (Phase F removes that fallback once all callers supply it).
+    When not supplied, an empty dict is used (fee token falls through to raw return).
     """
-    _inverse = spot_token_inverse if spot_token_inverse is not None else SPOT_TOKEN_INVERSE
+    _inverse = spot_token_inverse if spot_token_inverse is not None else {}
     clock_fn = clock_fn or (lambda: datetime.now(UTC))
     end_ms = int(clock_fn().timestamp() * 1000) + 60_000
     for i in range(attempts):

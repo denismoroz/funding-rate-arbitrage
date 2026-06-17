@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from frab.constants import CoinMarginSpec
 from frab.domain import FarbPosition, FarbState, Instrument
 from frab.exchanges.protocol import WalletKind
-from frab.settings import Settings
+from frab.coin_registry import RegistryAwareSettings
 from frab.strategy.two_phase.params import TwoPhaseParams
 from frab.strategy.two_phase.states._base import StrategyContext
 from frab.strategy.two_phase.states.opening_long import OpeningLongState
@@ -41,7 +41,7 @@ def _make_params(**overrides) -> TwoPhaseParams:
 
 
 def _make_settings(mocker, coin="BTC", leverage=5, maint_ratio=0.025):
-    settings = mocker.MagicMock(spec=Settings)
+    settings = mocker.MagicMock(spec=RegistryAwareSettings)
     settings.get_coin_spec.return_value = CoinMarginSpec(leverage=leverage, maint_ratio=maint_ratio)
     return settings
 

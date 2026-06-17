@@ -14,23 +14,6 @@ logger = logging.getLogger(__name__)
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
 
 
-# Inverse of MAINNET_SPOT_TOKEN_MAP: HL wrapped token → canonical perp coin.
-# BRIDGE_TOKEN_BLACKLIST names are explicitly excluded (independent price discovery).
-# This is HL-global knowledge, not user config.
-# NOTE: Phase B — runtime code uses the instance attribute self._spot_token_inverse_dict
-# (seeded from CoinRegistry at startup). This module-level constant is the fallback for
-# paths that don't yet receive a registry-derived dict (Phase F removes it entirely).
-SPOT_TOKEN_INVERSE: dict[str, str] = {
-    "UBTC": "BTC",
-    "UETH": "ETH",
-    "USOL": "SOL",
-    "HYPE": "HYPE",
-    "PURR": "PURR",
-    "ZEC": "ZEC",
-    "XPL": "XPL",
-}
-
-
 class HLSymbols:
     def __init__(
         self,
@@ -43,9 +26,9 @@ class HLSymbols:
         self._client = client
         self._spot_token_map: dict[str, str] = spot_token_map if spot_token_map is not None else {}
         # Registry-derived inverse map (HL wrapped token → canonical perp coin).
-        # Falls back to the module-level SPOT_TOKEN_INVERSE when not provided (Phase F removes it).
+        # Empty dict when no registry is wired (e.g. test without spot legs).
         self._spot_token_inverse_dict: dict[str, str] = (
-            spot_token_inverse if spot_token_inverse is not None else SPOT_TOKEN_INVERSE
+            spot_token_inverse if spot_token_inverse is not None else {}
         )
         self._spot_quote_token = spot_quote_token
         self._sz_decimals_cache: dict[str, int] | None = None

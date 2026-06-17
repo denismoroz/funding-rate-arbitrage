@@ -1,9 +1,12 @@
 """Phase F1 — XSMOM maint_ratio provenance test.
 
 Verifies that for ALL 34 XSMOM coins, registry.get_coin_spec(coin).maint_ratio
-equals the value that old settings.get_coin_spec(coin).maint_ratio returned:
-  - BTC=0.01, ETH=0.01, SOL=0.025 (from RESEARCH_MAINT_RATIO)
-  - all other 31 coins → 0.05 (FALLBACK_MAINT_RATIO)
+matches what the F1 migration seeded:
+  - BTC=0.01, ETH=0.01, SOL=0.025 (FRAB research values)
+  - all other 31 coins → 0.05 (XSMOM fallback seed value)
+
+Phase F2 note: RESEARCH_MAINT_RATIO and FALLBACK_MAINT_RATIO constants are deleted.
+Expected values are now inlined as the seeded row data is the single source of truth.
 
 This test seeds an in-memory DB with all 38 rows (7 FRAB + 31 new XSMOM)
 matching exactly what the F1 migration inserts.
@@ -15,13 +18,16 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from frab.coin_registry import CoinRegistry
-from frab.constants import (
-    FALLBACK_MAINT_RATIO,
-    RESEARCH_MAINT_RATIO,
-)
 from frab.db.session import init_db, make_session_factory
 from frab.repo.coin_registry_repo import CoinRegistryRepo
 from frab.strategy.xsmom.params import DEFAULT_XSMOM_UNIVERSE
+
+# Maint ratios as seeded by the migrations (inlined — constants deleted in F2).
+_RESEARCH_MAINT_RATIO: dict[str, float] = {
+    "BTC": 0.01, "ETH": 0.01, "SOL": 0.025,
+    "HYPE": 0.025, "ZEC": 0.025, "PURR": 0.025, "XPL": 0.025,
+}
+_FALLBACK_MAINT_RATIO: float = 0.05
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -125,35 +131,35 @@ async def full_registry(session_factory):
 
 # ── Provenance: all 34 XSMOM coins ───────────────────────────────────────────
 
-def _old_settings_maint_ratio(coin: str) -> float:
-    """Reproduce exactly what settings.get_coin_spec(coin).maint_ratio returned.
+def _seeded_maint_ratio(coin: str) -> float:
+    """Return the maint_ratio seeded by the migrations for a given coin.
 
-    Old logic in Settings.get_coin_spec():
-      1. If per_coin_params_json override → use that (not applicable here).
-      2. If coin in RESEARCH_MAINT_RATIO → use RESEARCH_MAINT_RATIO[coin].
-      3. Else → FALLBACK_MAINT_RATIO (0.05).
+    Logic mirrors what the old Settings.get_coin_spec() returned and what
+    the migrations used to seed the DB:
+      - If coin in _RESEARCH_MAINT_RATIO → that value.
+      - Else → _FALLBACK_MAINT_RATIO (0.05, for 31 new XSMOM coins).
     """
-    if coin in RESEARCH_MAINT_RATIO:
-        return RESEARCH_MAINT_RATIO[coin]
-    return FALLBACK_MAINT_RATIO
+    if coin in _RESEARCH_MAINT_RATIO:
+        return _RESEARCH_MAINT_RATIO[coin]
+    return _FALLBACK_MAINT_RATIO
 
 
 @pytest.mark.asyncio
 async def test_xsmom_provenance_maint_ratio_all_34_coins(full_registry):
     """For every coin in DEFAULT_XSMOM_UNIVERSE:
-    registry.get_coin_spec(coin).maint_ratio == old settings.get_coin_spec(coin).maint_ratio.
+    registry.get_coin_spec(coin).maint_ratio == the migration-seeded value.
 
     Critical pairs:
-      BTC=0.01, ETH=0.01, SOL=0.025 (in RESEARCH_MAINT_RATIO)
-      all other 31 → 0.05 (FALLBACK_MAINT_RATIO)
+      BTC=0.01, ETH=0.01, SOL=0.025 (FRAB research values)
+      all other 31 → 0.05 (XSMOM fallback seed value)
     """
     mismatches = []
     for coin in DEFAULT_XSMOM_UNIVERSE:
-        expected = _old_settings_maint_ratio(coin)
+        expected = _seeded_maint_ratio(coin)
         actual = full_registry.get_coin_spec(coin).maint_ratio
         if actual != expected:
             mismatches.append(
-                f"{coin}: registry={actual!r} != old_settings={expected!r}"
+                f"{coin}: registry={actual!r} != seeded={expected!r}"
             )
 
     assert not mismatches, (
@@ -164,7 +170,7 @@ async def test_xsmom_provenance_maint_ratio_all_34_coins(full_registry):
 
 @pytest.mark.asyncio
 async def test_xsmom_provenance_btc_eth_sol_research_values(full_registry):
-    """BTC/ETH/SOL use RESEARCH_MAINT_RATIO values (0.01/0.01/0.025)."""
+    """BTC/ETH/SOL use the FRAB research maint_ratio values (0.01/0.01/0.025)."""
     assert full_registry.get_coin_spec("BTC").maint_ratio == 0.01
     assert full_registry.get_coin_spec("ETH").maint_ratio == 0.01
     assert full_registry.get_coin_spec("SOL").maint_ratio == 0.025
@@ -172,12 +178,12 @@ async def test_xsmom_provenance_btc_eth_sol_research_values(full_registry):
 
 @pytest.mark.asyncio
 async def test_xsmom_provenance_new_31_coins_fallback_maint_ratio(full_registry):
-    """All 31 new XSMOM-only coins have maint_ratio=0.05 (FALLBACK_MAINT_RATIO)."""
+    """All 31 new XSMOM-only coins have maint_ratio=0.05 (XSMOM fallback seed value)."""
     new_coins = [r["coin"] for r in _XSMOM_NEW_SEED]
     for coin in new_coins:
         actual = full_registry.get_coin_spec(coin).maint_ratio
-        assert actual == FALLBACK_MAINT_RATIO, (
-            f"{coin}: expected {FALLBACK_MAINT_RATIO!r} got {actual!r}"
+        assert actual == _FALLBACK_MAINT_RATIO, (
+            f"{coin}: expected {_FALLBACK_MAINT_RATIO!r} got {actual!r}"
         )
 
 

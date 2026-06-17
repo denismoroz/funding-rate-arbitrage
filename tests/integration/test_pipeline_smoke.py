@@ -35,9 +35,9 @@ from frab.domain import FarbState, Instrument, PositionStatus, Side
 from frab.domain.position import Position as DomainPosition
 from frab.engine.loop import EngineLoop
 from frab.exchanges.protocol import FundingTick, Quote, WalletKind
+from frab.coin_registry import RegistryAwareSettings
 from frab.ledger.ledger import Ledger
 from frab.repo.farb_repo import FarbRepo
-from frab.settings import Settings
 from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 
 _NOW_MS = 1_704_067_200_000  # 2024-01-01 00:00:00 UTC
@@ -200,7 +200,7 @@ async def test_pipeline_smoke(session_factory, seeded):
         phase1_negative_patience=72,
         phase1_breakeven_cap_hours=720,
     )
-    settings = MagicMock(spec=Settings)
+    settings = MagicMock(spec=RegistryAwareSettings)
     from frab.constants import CoinMarginSpec
     settings.get_coin_spec.return_value = CoinMarginSpec(leverage=5, maint_ratio=0.025)
     strategy = TwoPhaseStrategy(

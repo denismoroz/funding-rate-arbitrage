@@ -31,15 +31,12 @@ from frab.strategy.xsmom.params import XsmomParams
 from frab.strategy.xsmom.strategy import XsmomStrategy
 from frab.strategy.xsmom.protection.margin_watchdog import XsmomMarginWatchdog
 from frab.exchanges.hyperliquid.tokens import (  # noqa: E402
-    MAINNET_SPOT_TOKEN_MAP,
-    select_spot_token_map as _select_spot_token_map,
     validate_spot_pairs as _validate_spot_pairs,
 )
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_COINS: tuple[str, ...] = ("BTC", "ETH", "SOL", "HYPE", "PURR")
 EXCHANGE_NAME = "hyperliquid"
 
 _STRATEGY_NAME = "two_phase"
@@ -47,16 +44,6 @@ _STRATEGY_VERSION = "v2"
 
 _XSMOM_STRATEGY_NAME = "xsmom"
 _XSMOM_STRATEGY_VERSION = "v1"
-
-
-def _select_coins(registry: CoinRegistry) -> tuple[str, ...]:
-    """Universe from CoinRegistry (active + validated coins).
-
-    Falls back to DEFAULT_COINS when the registry is empty (e.g. test with
-    no seeded DB), preserving backward compatibility during Phase B.
-    """
-    coins = registry.universe()
-    return coins if coins else DEFAULT_COINS
 
 
 def _hl_info_url(settings: Settings) -> str:
@@ -173,7 +160,7 @@ async def _get_or_create_xsmom_strategy(
     return strategy_id, params
 
 
-def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) -> FastAPI:
+def build_app(coins: tuple[str, ...] = (), *, dry_run: bool = False) -> FastAPI:
     settings = get_settings()
     db_engine = create_engine(settings.db_url)
     session_factory = make_session_factory(db_engine)
@@ -230,8 +217,9 @@ def build_app(coins: tuple[str, ...] = DEFAULT_COINS, *, dry_run: bool = False) 
         registry_settings = RegistryAwareSettings(settings, registry)
 
         # Registry-derived coin universe (active + validated rows).
-        # Falls back to the `coins` arg (CLI / test default) when DB is empty.
-        active_coins = _select_coins(registry) if registry.universe() else coins
+        # If the registry is empty, there is no FRAB universe — that is correct,
+        # not a bug to paper over with a fallback.
+        active_coins = registry.universe()
 
         # Spot-token map: from registry on mainnet, empty on testnet.
         if settings.hl_network == "mainnet":

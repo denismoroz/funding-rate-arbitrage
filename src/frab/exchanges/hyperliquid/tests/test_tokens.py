@@ -1,38 +1,18 @@
-"""Tests for tokens.py — token map, bridge-token blacklist, and spot-pair validator."""
+"""Tests for tokens.py — bridge-token blacklist and spot-pair validator.
+
+Removed (Phase F2 cleanup):
+- test_mainnet_token_map_contains_wrappeds — MAINNET_SPOT_TOKEN_MAP deleted (registry is source)
+- test_select_spot_token_map_* — select_spot_token_map() deleted (registry is source)
+- test_server_back_compat_re_export — stale re-exports removed from server.py
+"""
 from __future__ import annotations
 
 import pytest
 
 from frab.exchanges.hyperliquid.tokens import (
     BRIDGE_TOKEN_BLACKLIST,
-    MAINNET_SPOT_TOKEN_MAP,
-    select_spot_token_map,
     validate_spot_pairs,
 )
-
-
-def test_mainnet_token_map_contains_wrappeds():
-    assert MAINNET_SPOT_TOKEN_MAP == {
-        "BTC": "UBTC",
-        "ETH": "UETH",
-        "SOL": "USOL",
-        "HYPE": "HYPE",
-        "PURR": "PURR",
-        "ZEC": "ZEC",
-        "XPL": "XPL",
-    }
-
-
-def test_select_spot_token_map_mainnet():
-    assert select_spot_token_map("mainnet") == MAINNET_SPOT_TOKEN_MAP
-
-
-def test_select_spot_token_map_testnet_empty():
-    assert select_spot_token_map("testnet") == {}
-
-
-def test_select_spot_token_map_unknown_network_empty():
-    assert select_spot_token_map("nonsense") == {}
 
 
 def _spot_meta_payload(*, pairs: list[tuple[str, str]] = ()) -> dict:
@@ -57,6 +37,9 @@ class _FakeMarketData:
         return self._payload
 
 
+_SPOT_MAP = {"BTC": "UBTC", "ETH": "UETH", "SOL": "USOL"}
+
+
 @pytest.mark.asyncio
 async def test_validate_spot_pairs_happy_path():
     market_data = _FakeMarketData(_spot_meta_payload(pairs=[
@@ -64,28 +47,30 @@ async def test_validate_spot_pairs_happy_path():
         ("UETH/USDC", "UETH"),
         ("USOL/USDC", "USOL"),
     ]))
-    assert await validate_spot_pairs(market_data, ("BTC", "ETH", "SOL")) is None
+    assert await validate_spot_pairs(market_data, ("BTC", "ETH", "SOL"), spot_token_map=_SPOT_MAP) is None
 
 
 @pytest.mark.asyncio
 async def test_validate_spot_pairs_missing_usdc_raises():
     market_data = _FakeMarketData({"tokens": [], "universe": []})
     with pytest.raises(RuntimeError, match="USDC token not found"):
-        await validate_spot_pairs(market_data, ("BTC",))
+        await validate_spot_pairs(market_data, ("BTC",), spot_token_map=_SPOT_MAP)
 
 
 @pytest.mark.asyncio
 async def test_validate_spot_pairs_unknown_coin_in_universe_raises():
     market_data = _FakeMarketData(_spot_meta_payload(pairs=[("UBTC/USDC", "UBTC")]))
     with pytest.raises(RuntimeError, match="missing_map"):
-        await validate_spot_pairs(market_data, ("BTC", "DOGE"))
+        # DOGE is not in _SPOT_MAP → missing_map
+        await validate_spot_pairs(market_data, ("BTC", "DOGE"), spot_token_map=_SPOT_MAP)
 
 
 @pytest.mark.asyncio
 async def test_validate_spot_pairs_token_not_on_hl_raises():
     market_data = _FakeMarketData(_spot_meta_payload(pairs=[("UBTC/USDC", "UBTC")]))
     with pytest.raises(RuntimeError, match="not_on_hl"):
-        await validate_spot_pairs(market_data, ("BTC", "ETH"))
+        # ETH is in map but UETH is not in the fake spotMeta
+        await validate_spot_pairs(market_data, ("BTC", "ETH"), spot_token_map=_SPOT_MAP)
 
 
 # ---------------------------------------------------------------------------
@@ -149,14 +134,7 @@ async def test_normalize_hl_coin_future_bridge_token_rejected():
         await ex._symbols.normalize_hl_coin(f"{fake_token}/USDC")
 
 
-def test_server_back_compat_re_export():
-    """server.py re-exports the new names so cli.py and existing tests
-    can keep importing from frab.server until F2.6/F2.8 cleans up."""
-    from frab.server import (
-        MAINNET_SPOT_TOKEN_MAP as ServerMap,
-        _select_spot_token_map as server_select,
-        _validate_spot_pairs as server_validate,
-    )
-    assert ServerMap is MAINNET_SPOT_TOKEN_MAP
-    assert server_select is select_spot_token_map
+def test_server_re_exports_validate_spot_pairs():
+    """server.py still imports _validate_spot_pairs (used in Phase C discovery)."""
+    from frab.server import _validate_spot_pairs as server_validate
     assert server_validate is validate_spot_pairs

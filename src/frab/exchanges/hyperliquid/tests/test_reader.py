@@ -344,17 +344,17 @@ async def test_injected_client_not_closed():
 # ---------------------------------------------------------------------------
 # Safety: HL EVM bridge tokens (LINK0/AAVE0/AVAX0) must NOT be aliased to the
 # canonical perp coin.
+# The module-level SPOT_TOKEN_INVERSE constant was removed in Phase F2; the
+# invariant is now enforced by CoinRegistry.spot_token_inverse() which filters
+# out bridge-blacklisted tokens at load time.
 # ---------------------------------------------------------------------------
 
-def test_spot_token_inverse_does_not_alias_bridge_tokens():
-    """The reverse map must NOT contain any EVM bridge token (independent price discovery)."""
-    from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
+def test_bridge_token_blacklist_excludes_bridge_tokens_from_inverse():
+    """The BRIDGE_TOKEN_BLACKLIST must contain the known EVM bridge tokens.
 
-    # Wrapped tokens 1:1 with the canonical perp coin must be present.
-    assert SPOT_TOKEN_INVERSE["UBTC"] == "BTC"
-    assert SPOT_TOKEN_INVERSE["UETH"] == "ETH"
-    assert SPOT_TOKEN_INVERSE["USOL"] == "SOL"
-    # Bridge tokens (LINK0/AAVE0/AVAX0) have independent price discovery and must
-    # NEVER be aliased to the canonical perp.
+    CoinRegistry._fetch_and_build() filters these out of spot_token_inverse;
+    the correctness of that filtering is tested in test_coin_registry_service.py.
+    """
+    from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
     for forbidden in ("LINK0", "AAVE0", "AVAX0"):
-        assert forbidden not in SPOT_TOKEN_INVERSE
+        assert forbidden in BRIDGE_TOKEN_BLACKLIST

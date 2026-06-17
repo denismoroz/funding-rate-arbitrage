@@ -79,15 +79,11 @@ async def get_summary(request: Request) -> dict:
         elif ap.szi > 0:
             long_notional += ap.position_value
 
-    # Prefer the registry-derived inverse map (populated at startup via CoinRegistry.load()).
-    # Fall back to the module-level SPOT_TOKEN_INVERSE when the registry is not on
-    # app.state (e.g. test harness that doesn't wire the full server lifespan).
+    # Registry-derived inverse map (populated at startup via CoinRegistry.load()).
     _registry = getattr(request.app.state, "coin_registry", None)
-    if _registry is not None:
-        _spot_inverse = _registry.spot_token_inverse()
-    else:
-        from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
-        _spot_inverse = SPOT_TOKEN_INVERSE
+    if _registry is None:
+        raise HTTPException(status_code=503, detail="CoinRegistry not available")
+    _spot_inverse = _registry.spot_token_inverse()
 
     spot_total_usdc = 0.0
     spot_hold_usdc = 0.0

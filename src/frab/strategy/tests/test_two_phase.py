@@ -17,7 +17,7 @@ from frab.db.session import session_scope
 from frab.exchanges.protocol import WalletKind
 from frab.repo.farb_repo import FarbRepo, StateConflict
 from frab.constants import CoinMarginSpec
-from frab.settings import Settings
+from frab.coin_registry import RegistryAwareSettings
 from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 
 from .conftest import make_position, _NOW_MS
@@ -130,7 +130,7 @@ def _make_exchange(session_factory=None, exchange_id: int = 1) -> AsyncMock:
 
 def _make_strategy(exchange, farb_repo, session_factory, **param_overrides) -> TwoPhaseStrategy:
     params = _make_params(**param_overrides)
-    settings = MagicMock(spec=Settings)
+    settings = MagicMock(spec=RegistryAwareSettings)
     settings.get_coin_spec.return_value = CoinMarginSpec(leverage=5, maint_ratio=0.025)
     return TwoPhaseStrategy(
         strategy_id=1,
@@ -1139,7 +1139,7 @@ async def test_on_hour_tick_calls_watchdog_when_configured(
 
     exchange = _make_exchange()
     params = _make_params()
-    settings = MagicMock(spec=Settings)
+    settings = MagicMock(spec=RegistryAwareSettings)
     from frab.constants import CoinMarginSpec
     settings.get_coin_spec.return_value = CoinMarginSpec(leverage=5, maint_ratio=0.025)
 

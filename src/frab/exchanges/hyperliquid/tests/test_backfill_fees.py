@@ -52,7 +52,12 @@ def mock_client(mocker):
 
 
 def _make_symbols(mock_client):
-    return HLSymbols(client=mock_client, spot_token_map={}, spot_quote_token="USDC")
+    return HLSymbols(
+        client=mock_client,
+        spot_token_map={"BTC": "UBTC", "ETH": "UETH", "SOL": "USOL"},
+        spot_token_inverse={"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL"},
+        spot_quote_token="USDC",
+    )
 
 
 def make_action(session_factory, mock_client, *, address="0xabc"):

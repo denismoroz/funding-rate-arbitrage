@@ -1,12 +1,25 @@
-import pytest
+"""Phase F2: CoinRegistry is the single source of coin specs.
 
-from frab.constants import (
-    CoinMarginSpec,
-    FALLBACK_LEVERAGE,
-    FALLBACK_MAINT_RATIO,
-    RESEARCH_LEVERAGE,
-    RESEARCH_MAINT_RATIO,
-)
+Tests that were previously exercising Settings.get_coin_spec() / per_coin_params_json /
+hl_universe are now replaced by registry-sourced tests.
+
+Removed:
+- test_returns_research_default_when_no_override — tested Settings.get_coin_spec() which is deleted
+- test_returns_override_when_env_set — tested per_coin_params_json env layer which is deleted
+- test_falls_back_for_unknown_coin — tested FALLBACK_LEVERAGE which is deleted (no-fallback policy)
+- test_research_table_has_seven_coins — tested RESEARCH_LEVERAGE constant which is deleted
+- test_research_and_maint_keys_match — tested RESEARCH_* constants which are deleted
+
+Kept intent: coin spec resolution must be correct and sourced from the registry.
+"""
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from frab.coin_registry import CoinRegistry, RegistryAwareSettings
+from frab.constants import CoinMarginSpec
+from frab.db.session import init_db, make_session_factory
+from frab.repo.coin_registry_repo import CoinRegistryRepo
 from frab.settings import Settings
 
 
@@ -16,48 +29,78 @@ _CREDS = dict(
     _env_file=None,
 )
 
+_SEED_ROWS = [
+    {"coin": "BTC",  "leverage": 40, "maint_ratio": 0.010, "active": True,  "spot_token": "UBTC"},
+    {"coin": "ETH",  "leverage": 25, "maint_ratio": 0.010, "active": True,  "spot_token": "UETH"},
+    {"coin": "SOL",  "leverage": 20, "maint_ratio": 0.025, "active": True,  "spot_token": "USOL"},
+]
 
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    import os
-    for k in list(os.environ):
-        if k.startswith("FRAB_"):
-            monkeypatch.delenv(k, raising=False)
-
-
-def test_returns_research_default_when_no_override():
-    s = Settings(**_CREDS)
-    spec = s.get_coin_spec("BTC")
-    assert spec.leverage == 40
-    assert spec.maint_ratio == 0.01
+_NOW_MS = 1_750_000_000_000
 
 
-def test_returns_override_when_env_set():
-    s = Settings(
-        per_coin_params_json='{"BTC": {"leverage": 10, "maint_ratio": 0.02}}',
-        **_CREDS,
-    )
-    spec = s.get_coin_spec("BTC")
-    assert spec.leverage == 10
-    assert spec.maint_ratio == 0.02
+@pytest_asyncio.fixture
+async def session_factory():
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:", future=True, echo=False)
+    await init_db(eng)
+    sf = make_session_factory(eng)
+    yield sf
+    await eng.dispose()
 
 
-def test_falls_back_for_unknown_coin():
-    s = Settings(**_CREDS)
-    spec = s.get_coin_spec("WIF")
-    assert spec.leverage == FALLBACK_LEVERAGE
-    assert spec.maint_ratio == FALLBACK_MAINT_RATIO
+@pytest_asyncio.fixture
+async def registry(session_factory):
+    repo = CoinRegistryRepo(session_factory)
+    for row in _SEED_ROWS:
+        await repo.upsert(
+            row["coin"],
+            leverage=row["leverage"],
+            maint_ratio=row["maint_ratio"],
+            position_size_usd=None,
+            active=row["active"],
+            spot_token=row["spot_token"],
+            sz_decimals=None,
+            bridge_safe=True,
+            validated_at=_NOW_MS,
+        )
+    reg = CoinRegistry(session_factory)
+    await reg.load()
+    return reg
 
 
-def test_research_table_has_seven_coins():
-    assert set(RESEARCH_LEVERAGE.keys()) == {"BTC", "ETH", "SOL", "HYPE", "PURR", "ZEC", "XPL"}
+@pytest.mark.asyncio
+async def test_registry_returns_correct_spec_btc(registry):
+    """BTC spec from registry is the seeded value."""
+    spec = registry.get_coin_spec("BTC")
+    assert spec == CoinMarginSpec(leverage=40, maint_ratio=0.010)
 
 
-def test_research_and_maint_keys_match():
-    assert set(RESEARCH_LEVERAGE.keys()) == set(RESEARCH_MAINT_RATIO.keys())
-
-
-def test_returns_correct_type():
-    s = Settings(**_CREDS)
-    spec = s.get_coin_spec("ETH")
+@pytest.mark.asyncio
+async def test_registry_returns_correct_type(registry):
+    """get_coin_spec returns a CoinMarginSpec instance."""
+    spec = registry.get_coin_spec("ETH")
     assert isinstance(spec, CoinMarginSpec)
+
+
+@pytest.mark.asyncio
+async def test_registry_raises_for_unknown_coin(registry):
+    """Unknown coin raises KeyError — no silent fallback (design decision 3)."""
+    with pytest.raises(KeyError, match="WIF"):
+        registry.get_coin_spec("WIF")
+
+
+@pytest.mark.asyncio
+async def test_registry_aware_settings_delegates_get_coin_spec(registry):
+    """RegistryAwareSettings.get_coin_spec() delegates to the registry."""
+    settings = Settings(**_CREDS)
+    ras = RegistryAwareSettings(settings, registry)
+    spec = ras.get_coin_spec("SOL")
+    assert spec == CoinMarginSpec(leverage=20, maint_ratio=0.025)
+
+
+@pytest.mark.asyncio
+async def test_registry_aware_settings_raises_for_unknown_coin(registry):
+    """RegistryAwareSettings.get_coin_spec() raises KeyError for unknown coins."""
+    settings = Settings(**_CREDS)
+    ras = RegistryAwareSettings(settings, registry)
+    with pytest.raises(KeyError):
+        ras.get_coin_spec("UNKNOWN")

@@ -7,7 +7,7 @@ import typer
 from frab.settings import get_settings
 from frab.exchanges.hyperliquid.exchange import HLExchange as HLExchangeReader
 from frab.exchanges.hyperliquid.exchange import HLExchange as LiveHLExecutor
-from frab.server import _hl_info_url, _select_spot_token_map
+from frab.server import _hl_info_url
 
 live_smoke = typer.Typer(help="HL testnet API smoke (read + tiny round-trip orders)")
 
@@ -34,7 +34,6 @@ def _build_smoke_clients(settings, slippage: float | None = None):
         private_key=settings.hl_private_key.get_secret_value(),
         account_address=settings.hl_account_address,
         network=settings.hl_network,
-        spot_token_map=_select_spot_token_map(settings.hl_network),
         slippage=resolved_slippage,
     )
     return market_data, executor

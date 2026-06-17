@@ -5,6 +5,10 @@ Provenance invariant: registry-derived coin specs / universe / spot-maps for the
 
 No-fallback invariant: a coin NOT in the registry is NOT in universe(), and
 get_coin_spec() raises KeyError (never silently applies FALLBACK_LEVERAGE).
+
+Phase F2 note: RESEARCH_LEVERAGE, RESEARCH_MAINT_RATIO, SPOT_TOKEN_INVERSE, and
+MAINNET_SPOT_TOKEN_MAP are deleted. Tests that compared against those constants now
+use the known seed values directly (the values haven't changed, just the source).
 """
 from __future__ import annotations
 
@@ -13,14 +17,8 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from frab.coin_registry import CoinRegistry
-from frab.constants import (
-    CoinMarginSpec,
-    RESEARCH_LEVERAGE,
-    RESEARCH_MAINT_RATIO,
-)
+from frab.constants import CoinMarginSpec
 from frab.db.session import init_db, make_session_factory
-from frab.exchanges.hyperliquid.symbols import SPOT_TOKEN_INVERSE
-from frab.exchanges.hyperliquid.tokens import MAINNET_SPOT_TOKEN_MAP
 from frab.repo.coin_registry_repo import CoinRegistryRepo
 
 
@@ -78,27 +76,19 @@ async def seeded_registry(session_factory):
 
 @pytest.mark.asyncio
 async def test_provenance_get_coin_spec_btc(seeded_registry):
-    """BTC spec from registry == RESEARCH_LEVERAGE / RESEARCH_MAINT_RATIO constants."""
+    """BTC spec from registry matches seeded values."""
     spec = seeded_registry.get_coin_spec("BTC")
-    assert spec == CoinMarginSpec(
-        leverage=RESEARCH_LEVERAGE["BTC"],
-        maint_ratio=RESEARCH_MAINT_RATIO["BTC"],
-    )
+    assert spec == CoinMarginSpec(leverage=40, maint_ratio=0.010)
 
 
 @pytest.mark.asyncio
 async def test_provenance_get_coin_spec_all_seven(seeded_registry):
-    """All 7 seeded coins match their research constants exactly (bit-for-bit)."""
-    all_coins = [r["coin"] for r in _SEED_ROWS]
-    for coin in all_coins:
+    """All 7 seeded coins return the exact seeded spec values (bit-for-bit)."""
+    for row in _SEED_ROWS:
+        coin = row["coin"]
         spec = seeded_registry.get_coin_spec(coin)
-        expected = CoinMarginSpec(
-            leverage=RESEARCH_LEVERAGE[coin],
-            maint_ratio=RESEARCH_MAINT_RATIO[coin],
-        )
-        assert spec == expected, (
-            f"{coin}: registry={spec!r} != constants={expected!r}"
-        )
+        expected = CoinMarginSpec(leverage=row["leverage"], maint_ratio=row["maint_ratio"])
+        assert spec == expected, f"{coin}: registry={spec!r} != expected={expected!r}"
 
 
 @pytest.mark.asyncio
@@ -135,17 +125,21 @@ async def test_provenance_universe_sorted(seeded_registry):
 # ── Provenance: spot_token_map() ──────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_provenance_spot_token_map_equals_mainnet_map(seeded_registry):
-    """spot_token_map() must equal MAINNET_SPOT_TOKEN_MAP (all 7 seeded rows)."""
-    assert seeded_registry.spot_token_map() == MAINNET_SPOT_TOKEN_MAP
+async def test_provenance_spot_token_map_equals_seeded_map(seeded_registry):
+    """spot_token_map() must equal the seeded {coin: spot_token} mapping."""
+    expected = {r["coin"]: r["spot_token"] for r in _SEED_ROWS if r["spot_token"] is not None}
+    assert seeded_registry.spot_token_map() == expected
 
 
 # ── Provenance: spot_token_inverse() ─────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_provenance_spot_token_inverse_equals_module_const(seeded_registry):
-    """spot_token_inverse() must equal the old SPOT_TOKEN_INVERSE module constant."""
-    assert seeded_registry.spot_token_inverse() == SPOT_TOKEN_INVERSE
+async def test_provenance_spot_token_inverse_is_inverse_of_spot_token_map(seeded_registry):
+    """spot_token_inverse() is exactly the inverse of spot_token_map()."""
+    fwd = seeded_registry.spot_token_map()
+    inv = seeded_registry.spot_token_inverse()
+    expected_inv = {v: k for k, v in fwd.items()}
+    assert inv == expected_inv
 
 
 @pytest.mark.asyncio

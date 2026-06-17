@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from frab.constants import CoinMarginSpec
-from frab.settings import Settings
+from frab.coin_registry import RegistryAwareSettings
 from frab.strategy.two_phase.params import TwoPhaseParams
 
 
@@ -17,7 +17,7 @@ def _make_params(budget=100.0, K=3, buffer=3.0) -> TwoPhaseParams:
 
 
 def _make_settings(mocker, leverage: int, maint_ratio: float = 0.025):
-    settings = mocker.MagicMock(spec=Settings)
+    settings = mocker.MagicMock(spec=RegistryAwareSettings)
     settings.get_coin_spec.return_value = CoinMarginSpec(leverage=leverage, maint_ratio=maint_ratio)
     return settings
 
