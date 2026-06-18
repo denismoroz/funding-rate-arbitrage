@@ -22,7 +22,7 @@ Design notes:
 - ``RegistryAwareSettings`` is a thin adapter that wraps a ``Settings`` object
   and overrides ``get_coin_spec`` to delegate to the registry.  All other
   attribute accesses fall through to the underlying Settings so no other
-  behaviour changes.  Phase F replaces this with the single-source cleanup.
+  behaviour changes.
 """
 from __future__ import annotations
 
@@ -180,8 +180,8 @@ class RegistryAwareSettings:
     underlying ``Settings`` object, so the adapter is a transparent replacement
     in every call-site that receives a settings argument.
 
-    Phase F will replace this with the final single-source cleanup once
-    constants.py is deleted.
+    This adapter is the permanent bridge: constants.py has been deleted and
+    the registry is now the sole source of coin specs.
     """
 
     def __init__(self, settings: "Settings", registry: CoinRegistry) -> None:

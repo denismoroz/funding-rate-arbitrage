@@ -380,8 +380,9 @@ export default function Settings() {
     patchMutation.isPending;
 
   // Per-position footprint preview (auto-derived — mirrors TwoPhaseParams.compute_size_for).
-  // Leverage table mirrors src/frab/constants.py RESEARCH_LEVERAGE.
-  const RESEARCH_LEVERAGE: Record<string, number> = {
+  // Per-coin leverage for the footprint preview only — display purposes, not trading.
+  // Source of truth for actual leverage is the coin_registry table (see Coin Registry section).
+  const COIN_LEVERAGE_PREVIEW: Record<string, number> = {
     BTC: 40, ETH: 25, SOL: 20, HYPE: 10, ZEC: 10, PURR: 3, XPL: 10,
   };
   const footprintPreview = (() => {
@@ -393,7 +394,7 @@ export default function Settings() {
     const slot = budget / K;
     const coins = coinsStr.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean);
     const perCoin = coins.map((coin) => {
-      const lev = RESEARCH_LEVERAGE[coin] ?? 3;
+      const lev = COIN_LEVERAGE_PREVIEW[coin] ?? 3;
       const size = slot / (1 + buf / lev);
       const margin = slot - size;
       return { coin, lev, size, margin };

@@ -2,10 +2,7 @@
 
 Centralizes wrapped-token names and the fail-fast startup check that
 ensures every coin in the universe maps to a real HL USDC-quoted spot
-pair. Lives under exchanges/ (not hyperliquid/) for F2.3 because the
-hyperliquid/ package doesn't exist yet — F2.6 will consolidate
-hyperliquid.py + hyperliquid_live.py + atomic.py into hyperliquid/ and
-this file will move there too.
+pair.
 
 CRITICAL: spot leg only safe to use when the wrapped token is BOTH
   (a) priced 1:1 with the HL canonical perp coin (real bridge, not separate

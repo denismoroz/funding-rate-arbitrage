@@ -1,10 +1,4 @@
-"""Tests for tokens.py — bridge-token blacklist and spot-pair validator.
-
-Removed (Phase F2 cleanup):
-- test_mainnet_token_map_contains_wrappeds — MAINNET_SPOT_TOKEN_MAP deleted (registry is source)
-- test_select_spot_token_map_* — select_spot_token_map() deleted (registry is source)
-- test_server_back_compat_re_export — stale re-exports removed from server.py
-"""
+"""Tests for tokens.py — bridge-token blacklist and spot-pair validator."""
 from __future__ import annotations
 
 import pytest
@@ -132,9 +126,3 @@ async def test_normalize_hl_coin_future_bridge_token_rejected():
     ex = HLExchange(client=httpx.AsyncClient())
     with pytest.raises(ValueError, match="BRIDGE_TOKEN_BLACKLIST"):
         await ex._symbols.normalize_hl_coin(f"{fake_token}/USDC")
-
-
-def test_server_re_exports_validate_spot_pairs():
-    """server.py still imports _validate_spot_pairs (used in Phase C discovery)."""
-    from frab.server import _validate_spot_pairs as server_validate
-    assert server_validate is validate_spot_pairs

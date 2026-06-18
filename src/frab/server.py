@@ -30,9 +30,6 @@ from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 from frab.strategy.xsmom.params import XsmomParams
 from frab.strategy.xsmom.strategy import XsmomStrategy
 from frab.strategy.xsmom.protection.margin_watchdog import XsmomMarginWatchdog
-from frab.exchanges.hyperliquid.tokens import (  # noqa: E402
-    validate_spot_pairs as _validate_spot_pairs,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +211,7 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         )
 
         # RegistryAwareSettings wraps the plain Settings and overrides
-        # get_coin_spec() to read from the registry instead of RESEARCH_LEVERAGE.
+        # get_coin_spec() to read from the registry (single source of truth).
         # All other settings attributes pass through transparently.
         registry_settings = RegistryAwareSettings(settings, registry)
 

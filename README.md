@@ -21,8 +21,8 @@ uv run frab backfill --hours 24  # populate 24h of funding history
 
 ```bash
 # engine + API (uvicorn) on :8765
-uv run frab serve --host 127.0.0.1 --port 8765 \
-  --coins BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE
+# Universe is sourced from the coin_registry table (configured via UI Settings)
+uv run frab serve --host 127.0.0.1 --port 8765
 
 # web dashboard (vite dev server) on :5173 — proxies /api and /ws to :8765
 cd web && npm run dev
