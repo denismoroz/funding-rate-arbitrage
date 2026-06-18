@@ -160,7 +160,9 @@ async def _get_or_create_xsmom_strategy(
     return strategy_id, params
 
 
-def build_app(coins: tuple[str, ...] = (), *, dry_run: bool = False) -> FastAPI:
+def build_app(*, dry_run: bool = False) -> FastAPI:
+    # Universe comes solely from coin_registry (registry.universe()); there is no
+    # coins argument / DEFAULT_COINS fallback — the DB is the single source.
     settings = get_settings()
     db_engine = create_engine(settings.db_url)
     session_factory = make_session_factory(db_engine)

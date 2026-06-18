@@ -184,10 +184,11 @@ def test_serve_invokes_uvicorn(tmp_path, monkeypatch, mocker):
     build_spy = mocker.patch("frab.server.build_app", return_value=fake_app)
     run_spy = mocker.patch("frab.cli.serve.uvicorn.run")
 
-    result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "9999", "--coins", "BTC,ETH"])
+    result = runner.invoke(app, ["serve", "--host", "127.0.0.1", "--port", "9999"])
 
     assert result.exit_code == 0, result.output
-    build_spy.assert_called_once_with(("BTC", "ETH"), dry_run=False)
+    # No --coins arg: universe comes solely from coin_registry in the DB.
+    build_spy.assert_called_once_with(dry_run=False)
     run_spy.assert_called_once_with(fake_app, host="127.0.0.1", port=9999, log_level="info")
 
 

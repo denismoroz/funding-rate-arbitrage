@@ -8,7 +8,6 @@ from frab.settings import get_settings
 def serve(
     host: str = "127.0.0.1",
     port: int = 8000,
-    coins: str = "BTC,ETH,SOL,HYPE,PURR",
     log_level: str = "INFO",
     dry_run: bool | None = typer.Option(
         None,
@@ -34,8 +33,8 @@ def serve(
         "cli flag" if dry_run is not None else "settings/env",
     )
 
-    coin_tuple = tuple(c.strip().upper() for c in coins.split(",") if c.strip())
-    asgi_app = build_app(coin_tuple, dry_run=resolved_dry_run)
+    # Universe is sourced from coin_registry in the DB — no --coins argument.
+    asgi_app = build_app(dry_run=resolved_dry_run)
     uvicorn.run(asgi_app, host=host, port=port, log_level=log_level.lower())
 
 
