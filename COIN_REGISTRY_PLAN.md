@@ -184,9 +184,15 @@ settings-API (`src/frab/api/routes/xsmom.py:458` get/patch params). Таблиц
 - `ssh dis@10.8.0.5`, repo `/Users/dis/prj/funding-rate-arbitrage`: `git pull`.
 - **Перед миграцией — бэкап прод-БД** (`data/frab.db` → копия с таймстампом).
 - Остановить агенты (`launchctl` `com.frab.{engine,web}`), `.venv/bin/alembic upgrade head`
-  (seed-миграция засеет `coin_registry` из текущих прод-констант → те же живые монеты).
+  (seed-миграции `294489218bcb`+`f1a2b3c4d5e6` засеют `coin_registry` 38 монет → те же живые 5).
+- **БЛОКЕР — поправить prod plist:** `~/Library/LaunchAgents/com.frab.engine.plist` сейчас
+  запускает `frab serve ... --coins BTC,ETH,SOL,HYPE,PURR ...`. Арг `--coins` УДАЛЁН из кода →
+  после деплоя рестарт упадёт «no such option --coins». Убрать `--coins BTC,ETH,SOL,HYPE,PURR`
+  из `ProgramArguments` (бэкап .plist, `plutil`/правка, `launchctl unload`+`load`).
+- **Почистить prod .env:** удалить мёртвую `FRAB_HL_UNIVERSE` (settings её больше не читает;
+  не блокер, но гигиена единого источника).
 - **Sanity на проде после миграции, движок ещё OFF:** проверить, что `coin_registry` засеян
-  ровно текущим живым юниверсом и spec/spot-карта совпадают (provenance) — *до* рестарта.
+  (38 строк, 5 active = текущий живой юниверс) и spec/spot-карта совпадают (provenance) — *до* рестарта.
 - Рестарт агентов → убедиться, что движок поднялся на тех же монетах, открытые позиции целы,
   торговое поведение не изменилось. Rollback-план: восстановить бэкап БД + откатить git.
 **Deliverable:** прод мигрирован, живой юниверс не изменился, реестр редактируется через UI.
