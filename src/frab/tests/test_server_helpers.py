@@ -97,7 +97,7 @@ async def test_get_or_create_xsmom_creates_paused_row(session_factory):
     assert params.budget_cap == 1000.0   # XsmomParams default
     assert params.leverage == 1          # XsmomParams default
     assert "BTC" in params.universe      # seeded from backtest-validated default universe
-    assert len(params.universe) == 34
+    assert len(params.universe) == 32
 
     # Row must be paused
     status = await _get_status(session_factory, strategy_id)

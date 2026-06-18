@@ -5,14 +5,16 @@ import math
 from dataclasses import dataclass, field
 
 # Default candidate universe = the frozen, backtest-validated HL set
-# (research/cross_sectional/crypto/universe.json, snapshot 2026-06-12, 34 coins:
+# (research/cross_sectional/crypto/universe.json, snapshot 2026-06-12, originally 34 coins:
 # vol≥$1M, ≥547d history, fresh ≤5d). Starting on the exact validated universe keeps
 # live == backtest risk. Operators narrow/override it via the UI (PATCH /api/xsmom/params).
+# HMSTR and TON dropped post-launch (2026-06-18): HMSTR too thin (~$100k/day on HL),
+# TON delisted on HL (isDelisted=true, $0 volume/OI) → 32 coins.
 DEFAULT_XSMOM_UNIVERSE: tuple[str, ...] = (
     "AAVE", "ADA", "APT", "ARB", "ATOM", "AVAX", "BCH", "BNB", "BTC", "CRV",
-    "DOGE", "DOT", "EIGEN", "ENA", "ETH", "HMSTR", "INJ", "JTO", "JUP", "LINK",
-    "LTC", "NEAR", "PENDLE", "PYTH", "SOL", "SUI", "TAO", "TON", "TRX", "UNI",
-    "WLD", "XLM", "XRP", "ZRO",
+    "DOGE", "DOT", "EIGEN", "ENA", "ETH", "INJ", "JTO", "JUP", "LINK", "LTC",
+    "NEAR", "PENDLE", "PYTH", "SOL", "SUI", "TAO", "TRX", "UNI", "WLD", "XLM",
+    "XRP", "ZRO",
 )
 
 

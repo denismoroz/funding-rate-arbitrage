@@ -1,9 +1,9 @@
 """Phase F1 — XSMOM maint_ratio provenance test.
 
-Verifies that for ALL 34 XSMOM coins, registry.get_coin_spec(coin).maint_ratio
-matches what the F1 migration seeded:
+Verifies that for ALL XSMOM coins (DEFAULT_XSMOM_UNIVERSE, 32 after dropping
+HMSTR/TON), registry.get_coin_spec(coin).maint_ratio matches what the F1 migration seeded:
   - BTC=0.01, ETH=0.01, SOL=0.025 (FRAB research values)
-  - all other 31 coins → 0.05 (XSMOM fallback seed value)
+  - all other coins → 0.05 (XSMOM fallback seed value)
 
 Phase F2 note: RESEARCH_MAINT_RATIO and FALLBACK_MAINT_RATIO constants are deleted.
 Expected values are now inlined as the seeded row data is the single source of truth.
@@ -129,7 +129,7 @@ async def full_registry(session_factory):
     return registry
 
 
-# ── Provenance: all 34 XSMOM coins ───────────────────────────────────────────
+# ── Provenance: all XSMOM coins ──────────────────────────────────────────────
 
 def _seeded_maint_ratio(coin: str) -> float:
     """Return the maint_ratio seeded by the migrations for a given coin.
@@ -145,7 +145,7 @@ def _seeded_maint_ratio(coin: str) -> float:
 
 
 @pytest.mark.asyncio
-async def test_xsmom_provenance_maint_ratio_all_34_coins(full_registry):
+async def test_xsmom_provenance_maint_ratio_all_coins(full_registry):
     """For every coin in DEFAULT_XSMOM_UNIVERSE:
     registry.get_coin_spec(coin).maint_ratio == the migration-seeded value.
 
@@ -188,7 +188,7 @@ async def test_xsmom_provenance_new_31_coins_fallback_maint_ratio(full_registry)
 
 
 @pytest.mark.asyncio
-async def test_xsmom_provenance_registry_has_all_34_xsmom_coins(full_registry):
+async def test_xsmom_provenance_registry_has_all_xsmom_coins(full_registry):
     """registry.get_coin_spec(coin) does not raise for any DEFAULT_XSMOM_UNIVERSE coin."""
     missing = []
     for coin in DEFAULT_XSMOM_UNIVERSE:
