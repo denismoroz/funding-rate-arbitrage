@@ -408,7 +408,7 @@ export default function Settings() {
     <div className="min-h-screen bg-gray-900">
       <Header wsStatus={status} route="settings" />
 
-      <main className="mx-auto max-w-2xl p-6 space-y-6">
+      <main className="mx-auto max-w-5xl p-6 space-y-6">
         <h1 className="text-xl font-bold text-white">Strategy Settings</h1>
 
         {stratQ.isLoading && (
