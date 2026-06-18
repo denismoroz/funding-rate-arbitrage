@@ -27,7 +27,7 @@ def _make_fp(*, spot_position_id: int | None = 22, state_data: dict | None = Non
 
 
 def _make_params() -> TwoPhaseParams:
-    return TwoPhaseParams(coins=["ETH"], position_size_usdc=1000.0, margin_buffer_factor=3.0)
+    return TwoPhaseParams(position_size_usdc=1000.0, margin_buffer_factor=3.0)
 
 
 def _make_ctx(mocker, *, exchange=None, farb_repo=None, session_factory=None, event_bus=None) -> StrategyContext:

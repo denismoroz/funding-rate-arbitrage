@@ -7,6 +7,7 @@ import {
 } from "../lib/api";
 import { useLiveEvents } from "../lib/useLiveEvents";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
+import { useCoins } from "../lib/useCoins";
 import { Header } from "./Dashboard";
 import { CoinRegistryTable } from "../components/coins/CoinRegistryTable";
 import { AddCoinForm } from "../components/coins/AddCoinForm";
@@ -68,33 +69,9 @@ function NumberInput({
   );
 }
 
-function TextInput({
-  value,
-  onChange,
-  placeholder,
-  hasError,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  hasError?: boolean;
-}) {
-  return (
-    <input
-      type="text"
-      value={value}
-      placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
-      className={`rounded border px-3 py-1.5 bg-gray-800 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-        hasError ? "border-red-500" : "border-gray-600"
-      }`}
-    />
-  );
-}
-
 // ── Field definitions for TwoPhaseParams ─────────────────────────────────────
 
-type FieldType = "float" | "int" | "coins";
+type FieldType = "float" | "int";
 
 interface FieldDef {
   key: string;
@@ -137,13 +114,6 @@ const FIELD_DEFS: FieldDef[] = [
     group: "capital",
   },
   // Entry / Exit
-  {
-    key: "coins",
-    label: "Coins (comma-separated)",
-    type: "coins",
-    helper: "e.g. BTC,ETH,SOL,AVAX,LINK,AAVE,DOGE",
-    group: "entry_exit",
-  },
   {
     key: "entry_threshold_apr",
     label: "Entry threshold APR",
@@ -234,15 +204,7 @@ const GROUP_LABELS: Record<string, string> = {
 function validateField(
   def: FieldDef,
   raw: string,
-): { val: number | string[]; error: null } | { val: null; error: string } {
-  if (def.type === "coins") {
-    const parts = raw.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-    if (parts.length === 0) {
-      return { val: null, error: "At least one coin required" };
-    }
-    return { val: parts, error: null };
-  }
-
+): { val: number; error: null } | { val: null; error: string } {
   const num = def.type === "int" ? parseInt(raw, 10) : parseFloat(raw);
   if (!isFinite(num)) {
     return { val: null, error: `Invalid ${def.type}` };
@@ -282,11 +244,7 @@ export default function Settings() {
     const init: Record<string, string> = {};
     for (const def of FIELD_DEFS) {
       const v = params[def.key];
-      if (def.type === "coins") {
-        init[def.key] = Array.isArray(v) ? (v as string[]).join(", ") : String(v ?? "");
-      } else {
-        init[def.key] = v != null ? String(v) : "";
-      }
+      init[def.key] = v != null ? String(v) : "";
     }
     setFormValues(init);
     setFormErrors({});
@@ -314,11 +272,7 @@ export default function Settings() {
       const updated: Record<string, string> = {};
       for (const def of FIELD_DEFS) {
         const v = returned[def.key];
-        if (def.type === "coins") {
-          updated[def.key] = Array.isArray(v) ? (v as string[]).join(", ") : String(v ?? "");
-        } else {
-          updated[def.key] = v != null ? String(v) : "";
-        }
+        updated[def.key] = v != null ? String(v) : "";
       }
       setFormValues(updated);
       setFormErrors({});
@@ -363,9 +317,7 @@ export default function Settings() {
     const params = stratQ.data.params_json;
     for (const def of FIELD_DEFS) {
       const server = params[def.key];
-      const serverStr = def.type === "coins"
-        ? Array.isArray(server) ? (server as string[]).join(", ") : String(server ?? "")
-        : server != null ? String(server) : "";
+      const serverStr = server != null ? String(server) : "";
       if (formValues[def.key] !== serverStr) return true;
     }
     return false;
@@ -380,24 +332,20 @@ export default function Settings() {
     patchMutation.isPending;
 
   // Per-position footprint preview (auto-derived — mirrors TwoPhaseParams.compute_size_for).
-  // Per-coin leverage for the footprint preview only — display purposes, not trading.
-  // Source of truth for actual leverage is the coin_registry table (see Coin Registry section).
-  const COIN_LEVERAGE_PREVIEW: Record<string, number> = {
-    BTC: 40, ETH: 25, SOL: 20, HYPE: 10, ZEC: 10, PURR: 3, XPL: 10,
-  };
+  // Coin universe and leverage come from the registry (source of truth), not params.
+  const coinsQuery = useCoins();
+  const activeRegistryCoins = (coinsQuery.data ?? []).filter((c) => c.active);
   const footprintPreview = (() => {
     const budget = parseFloat(formValues["budget_cap_usdc"] ?? "");
     const K = parseFloat(formValues["concurrency_cap"] ?? "");
     const buf = parseFloat(formValues["margin_buffer_factor"] ?? "");
-    const coinsStr = formValues["coins"] ?? "";
     if (!isFinite(budget) || !isFinite(K) || !isFinite(buf) || K === 0) return null;
     const slot = budget / K;
-    const coins = coinsStr.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean);
-    const perCoin = coins.map((coin) => {
-      const lev = COIN_LEVERAGE_PREVIEW[coin] ?? 3;
+    const perCoin = activeRegistryCoins.map((c) => {
+      const lev = c.leverage;
       const size = slot / (1 + buf / lev);
       const margin = slot - size;
-      return { coin, lev, size, margin };
+      return { coin: c.coin, lev, size, margin };
     });
     return { slot, buf, perCoin };
   })();
@@ -494,23 +442,14 @@ export default function Settings() {
                       helper={def.helper}
                       error={formErrors[def.key]}
                     >
-                      {def.type === "coins" ? (
-                        <TextInput
-                          value={formValues[def.key] ?? ""}
-                          onChange={(v) => handleFieldChange(def.key, v)}
-                          placeholder="BTC, ETH, SOL, ..."
-                          hasError={!!formErrors[def.key]}
-                        />
-                      ) : (
-                        <NumberInput
-                          value={formValues[def.key] ?? ""}
-                          onChange={(v) => handleFieldChange(def.key, v)}
-                          step={def.step}
-                          min={def.min}
-                          max={def.max}
-                          hasError={!!formErrors[def.key]}
-                        />
-                      )}
+                      <NumberInput
+                        value={formValues[def.key] ?? ""}
+                        onChange={(v) => handleFieldChange(def.key, v)}
+                        step={def.step}
+                        min={def.min}
+                        max={def.max}
+                        hasError={!!formErrors[def.key]}
+                      />
                     </FieldRow>
                   ))}
                 </section>

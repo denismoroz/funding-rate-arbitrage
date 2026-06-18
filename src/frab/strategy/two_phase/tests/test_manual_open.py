@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 from frab.domain import FarbPosition, FarbState
 from frab.strategy.two_phase.params import TwoPhaseParams
@@ -17,10 +18,18 @@ from frab.strategy.two_phase.strategy import (
 
 _NOW_MS = 1_700_000_000_000
 
+_DEFAULT_UNIVERSE = ("BTC", "ETH", "SOL")
+
+
+def _make_registry(universe: tuple[str, ...] = _DEFAULT_UNIVERSE) -> MagicMock:
+    """Minimal CoinRegistry stub whose universe() returns the given tuple."""
+    reg = MagicMock()
+    reg.universe.return_value = universe
+    return reg
+
 
 def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
-        coins=["BTC", "ETH", "SOL"],
         concurrency_cap=3,
         budget_cap_usdc=3000.0,
         position_size_usdc=1000.0,
@@ -45,7 +54,12 @@ def _make_fp(coin: str = "BTC", state: FarbState = FarbState.PRE_BREAKEVEN) -> F
     )
 
 
-def _make_strategy(mocker, *, params: TwoPhaseParams | None = None) -> TwoPhaseStrategy:
+def _make_strategy(
+    mocker,
+    *,
+    params: TwoPhaseParams | None = None,
+    registry_universe: tuple[str, ...] | None = None,
+) -> TwoPhaseStrategy:
     p = params or _make_params()
     strategy = mocker.MagicMock(spec=TwoPhaseStrategy)
     strategy.strategy_id = 1
@@ -53,8 +67,10 @@ def _make_strategy(mocker, *, params: TwoPhaseParams | None = None) -> TwoPhaseS
     strategy.farb_repo = mocker.AsyncMock()
     strategy._signal_computer = mocker.AsyncMock()
     strategy._bus = None
-    # No registry in these tests: manual_open falls back to p.coins (pre-Phase-E behaviour).
-    strategy._registry = None
+    # Provide a stub registry whose universe matches the expected set.
+    strategy._registry = _make_registry(
+        registry_universe if registry_universe is not None else _DEFAULT_UNIVERSE
+    )
     strategy.manual_open = TwoPhaseStrategy.manual_open.__get__(strategy)
     return strategy
 
@@ -65,6 +81,18 @@ async def test_manual_open_rejects_coin_not_in_universe(mocker):
 
     with pytest.raises(ManualOpenCoinNotInUniverse):
         await strategy.manual_open(coin="DOGE", now_ms=_NOW_MS)
+
+    strategy.farb_repo.list_by_coin.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_manual_open_rejects_when_registry_is_none(mocker):
+    """When _registry is None (misconfigured path), any coin is rejected."""
+    strategy = _make_strategy(mocker)
+    strategy._registry = None  # override to simulate no-registry scenario
+
+    with pytest.raises(ManualOpenCoinNotInUniverse):
+        await strategy.manual_open(coin="BTC", now_ms=_NOW_MS)
 
     strategy.farb_repo.list_by_coin.assert_not_awaited()
 

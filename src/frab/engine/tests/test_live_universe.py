@@ -3,7 +3,7 @@
 Covers the five required scenarios:
 
 1. Provenance: static registry (universe = 5 live coins) → quote set and entry
-   candidates identical to the old _coins / p.coins behaviour; sizing unchanged.
+   candidates driven entirely by registry.universe(); sizing unchanged.
 
 2. Activate: registry.universe() grows by one coin → next tick's working set
    includes it; next hour-tick's entry candidates include it. No restart.
@@ -69,8 +69,7 @@ async def strategy_id(sf) -> int:
     async with session_scope(sf) as s:
         row = StrategyRow(
             name="two_phase", version="v2",
-            params_json=TwoPhaseParams().to_dict() if hasattr(TwoPhaseParams(), "to_dict")
-                        else {"coins": list(_LIVE_COINS)},
+            params_json={},
         )
         s.add(row)
         await s.flush()
@@ -261,7 +260,7 @@ async def test_deactivate_with_open_position_stays_in_working_set(sf, strategy_i
     # Entry universe: SOL must NOT appear (registry.universe() only, no open coins)
     # Build an EntryEvaluator with registry and verify iteration skips SOL
     mock_signal = AsyncMock(return_value=None)  # signal returns None → no entries created
-    params = TwoPhaseParams(coins=list(_LIVE_COINS), concurrency_cap=10, budget_cap_usdc=100_000.0)
+    params = TwoPhaseParams(concurrency_cap=10, budget_cap_usdc=100_000.0)
     evaluator = EntryEvaluator(
         strategy_id=strategy_id,
         farb_repo=farb_repo,

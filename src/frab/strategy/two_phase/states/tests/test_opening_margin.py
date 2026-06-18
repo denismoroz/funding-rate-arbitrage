@@ -29,7 +29,6 @@ def _make_fp(state: FarbState = FarbState.OPENING_MARGIN, state_data: dict | Non
 
 def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
-        coins=["ETH"],
         position_size_usdc=1000.0,
         margin_buffer_factor=3.0,
         budget_cap_usdc=10000.0,

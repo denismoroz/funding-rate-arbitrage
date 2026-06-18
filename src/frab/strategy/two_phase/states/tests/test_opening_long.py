@@ -30,7 +30,6 @@ def _make_fp(state_data: dict | None = None) -> FarbPosition:
 
 def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
-        coins=["BTC"],
         position_size_usdc=1000.0,
         margin_buffer_factor=3.0,
         budget_cap_usdc=10000.0,

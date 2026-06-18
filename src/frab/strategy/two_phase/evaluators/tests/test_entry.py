@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,7 +19,6 @@ _CURRENT_HOUR = _NOW_MS // 3_600_000
 
 def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
-        coins=["BTC", "ETH", "SOL"],
         entry_threshold_apr=0.10,
         phase2_exit_threshold=-0.10,
         base_min_hold_hours=24,
@@ -34,6 +34,12 @@ def _make_params(**overrides) -> TwoPhaseParams:
     )
     defaults.update(overrides)
     return TwoPhaseParams(**defaults)
+
+
+def _make_registry(universe: tuple[str, ...]) -> MagicMock:
+    reg = MagicMock()
+    reg.universe.return_value = universe
+    return reg
 
 
 def _make_fp(*, coin: str = "BTC", state: FarbState = FarbState.PRE_BREAKEVEN,
@@ -54,7 +60,7 @@ def _make_fp(*, coin: str = "BTC", state: FarbState = FarbState.PRE_BREAKEVEN,
 
 def _make_evaluator(mocker, *, params=None, signal_side_effect=None,
                     non_terminal=None, by_coin_terminal=None,
-                    by_coin_nonterminal=None):
+                    by_coin_nonterminal=None, registry_universe=("BTC", "ETH", "SOL")):
     """Return (evaluator, farb_repo_mock, signal_computer_mock)."""
     if params is None:
         params = _make_params()
@@ -80,6 +86,7 @@ def _make_evaluator(mocker, *, params=None, signal_side_effect=None,
         farb_repo=farb_repo,
         params=params,
         signal_computer=signal_computer,
+        registry=_make_registry(registry_universe),
     )
     return evaluator, farb_repo, signal_computer
 
@@ -106,12 +113,13 @@ async def test_skips_when_no_slots_available(mocker):
 @pytest.mark.asyncio
 async def test_skips_coin_with_existing_nonterminal_position(mocker):
     """Coin already has a non-terminal position → skipped."""
-    params = _make_params(coins=["BTC"], concurrency_cap=3)
+    params = _make_params(concurrency_cap=3)
     btc_pre = _make_fp(coin="BTC", state=FarbState.PRE_BREAKEVEN, id=1)
 
     evaluator, farb_repo, signal_computer = _make_evaluator(
         mocker,
         params=params,
+        registry_universe=("BTC",),
         non_terminal=[],
         # list_by_coin non-terminal returns existing BTC position → skip
         by_coin_nonterminal={"BTC": [btc_pre]},
@@ -126,7 +134,7 @@ async def test_skips_coin_with_existing_nonterminal_position(mocker):
 @pytest.mark.asyncio
 async def test_cooldown_blocks_and_bypass_overrides(mocker):
     """Failed in same hour → blocked by cooldown; force_cooldown_bypass=True overrides."""
-    params = _make_params(coins=["BTC"], concurrency_cap=3, signal_window_hours=3)
+    params = _make_params(concurrency_cap=3, signal_window_hours=3)
 
     # FP that failed exactly in the current hour
     failed_fp = replace(
@@ -140,6 +148,7 @@ async def test_cooldown_blocks_and_bypass_overrides(mocker):
     evaluator, farb_repo, signal_computer = _make_evaluator(
         mocker,
         params=params,
+        registry_universe=("BTC",),
         non_terminal=[],
         by_coin_nonterminal={"BTC": []},
         by_coin_terminal={"BTC": [failed_fp]},
@@ -160,7 +169,6 @@ async def test_cooldown_blocks_and_bypass_overrides(mocker):
 async def test_top_k_selection_picks_strongest_signals(mocker):
     """3 coins with signals [0.5, 0.3, 0.7] and K=2 → creates FPs for 0.7 and 0.5."""
     params = _make_params(
-        coins=["BTC", "ETH", "SOL"],
         concurrency_cap=2,
         budget_cap_usdc=99999.0,
     )
@@ -174,6 +182,7 @@ async def test_top_k_selection_picks_strongest_signals(mocker):
     evaluator, farb_repo, signal_computer = _make_evaluator(
         mocker,
         params=params,
+        registry_universe=("BTC", "ETH", "SOL"),
         non_terminal=[],
         by_coin_nonterminal={"BTC": [], "ETH": [], "SOL": []},
         by_coin_terminal={"BTC": [], "ETH": [], "SOL": []},
@@ -195,7 +204,6 @@ async def test_budget_cap_blocks_all_entries(mocker):
     """Budget cap fully consumed → no new FPs created even with qualifying signals."""
     # footprint = budget/K = 1600/1 = 1600; 1 OPEN position consumes the entire budget
     params = _make_params(
-        coins=["BTC", "ETH"],
         concurrency_cap=1,
         budget_cap_usdc=1600.0,
         position_size_usdc=1000.0,
@@ -207,6 +215,7 @@ async def test_budget_cap_blocks_all_entries(mocker):
     evaluator, farb_repo, signal_computer = _make_evaluator(
         mocker,
         params=params,
+        registry_universe=("BTC", "ETH"),
         non_terminal=[existing_pre],
         by_coin_nonterminal={"BTC": [], "ETH": []},
         by_coin_terminal={"BTC": [], "ETH": []},
@@ -215,3 +224,27 @@ async def test_budget_cap_blocks_all_entries(mocker):
 
     await evaluator.evaluate(now_ms=_NOW_MS, force_cooldown_bypass=False)
     farb_repo.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_no_registry_produces_empty_universe(mocker):
+    """When registry=None the entry universe is empty — no FPs created."""
+    params = _make_params(concurrency_cap=3)
+
+    farb_repo = mocker.AsyncMock()
+    farb_repo.list_non_terminal.return_value = []
+
+    signal_computer = mocker.AsyncMock(spec=SignalComputer)
+    signal_computer.compute.return_value = 0.50
+
+    evaluator = EntryEvaluator(
+        strategy_id=1,
+        farb_repo=farb_repo,
+        params=params,
+        signal_computer=signal_computer,
+        registry=None,
+    )
+
+    await evaluator.evaluate(now_ms=_NOW_MS, force_cooldown_bypass=False)
+    farb_repo.create.assert_not_called()
+    signal_computer.compute.assert_not_called()

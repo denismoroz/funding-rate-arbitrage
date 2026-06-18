@@ -27,7 +27,7 @@ def _make_fp(state: FarbState = FarbState.CLOSING_SHORT, *, perp_position_id: in
 
 
 def _make_params() -> TwoPhaseParams:
-    return TwoPhaseParams(coins=["BTC"], position_size_usdc=1000.0, margin_buffer_factor=3.0)
+    return TwoPhaseParams(position_size_usdc=1000.0, margin_buffer_factor=3.0)
 
 
 def _make_ctx(mocker, *, exchange=None, farb_repo=None, session_factory=None) -> StrategyContext:

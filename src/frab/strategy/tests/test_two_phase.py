@@ -27,7 +27,6 @@ from .conftest import make_position, _NOW_MS
 
 def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
-        coins=["BTC", "ETH"],
         entry_threshold_apr=0.10,
         phase2_exit_threshold=-0.10,
         base_min_hold_hours=24,
@@ -128,7 +127,19 @@ def _make_exchange(session_factory=None, exchange_id: int = 1) -> AsyncMock:
     return mock
 
 
+def _make_registry(universe: tuple[str, ...]) -> MagicMock:
+    """Minimal CoinRegistry stub."""
+    reg = MagicMock()
+    reg.universe.return_value = universe
+    return reg
+
+
 def _make_strategy(exchange, farb_repo, session_factory, **param_overrides) -> TwoPhaseStrategy:
+    # Extract `coins` from param_overrides to wire it as the registry universe.
+    # `coins` is no longer a TwoPhaseParams field; it drives the stub registry.
+    coins_for_registry = param_overrides.pop("coins", ("BTC", "ETH"))
+    if isinstance(coins_for_registry, list):
+        coins_for_registry = tuple(coins_for_registry)
     params = _make_params(**param_overrides)
     settings = MagicMock(spec=RegistryAwareSettings)
     settings.get_coin_spec.return_value = CoinMarginSpec(leverage=5, maint_ratio=0.025)
@@ -139,6 +150,7 @@ def _make_strategy(exchange, farb_repo, session_factory, **param_overrides) -> T
         session_factory=session_factory,
         params=params,
         settings=settings,
+        registry=_make_registry(coins_for_registry),
     )
 
 
@@ -1188,7 +1200,7 @@ async def test_on_hour_tick_calls_watchdog_when_configured(
 def test_reload_params_propagates_to_evaluators(session_factory, farb_repo, mocker):
     """reload_params rebuilds evaluators with new params (object identity changes)."""
     exchange = _make_exchange()
-    params_v1 = _make_params(entry_threshold_apr=0.10, coins=["BTC", "ETH"])
+    params_v1 = _make_params(entry_threshold_apr=0.10)
     strat = _make_strategy(exchange, farb_repo, session_factory)
     strat.params = params_v1
     strat._build_internals(params_v1)
@@ -1196,7 +1208,7 @@ def test_reload_params_propagates_to_evaluators(session_factory, farb_repo, mock
     old_entry_evaluator = strat._entry_evaluator
     old_exit_evaluator = strat._exit_evaluator
 
-    params_v2 = _make_params(entry_threshold_apr=0.99, coins=["BTC"])
+    params_v2 = _make_params(entry_threshold_apr=0.99)
     strat.reload_params(params_v2)
 
     assert strat.params == params_v2

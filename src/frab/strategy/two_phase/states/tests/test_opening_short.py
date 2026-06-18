@@ -29,7 +29,6 @@ def _make_fp(state_data: dict | None = None) -> FarbPosition:
 
 def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
-        coins=["SOL"],
         position_size_usdc=1000.0,
         margin_buffer_factor=3.0,
         budget_cap_usdc=10000.0,
@@ -221,7 +220,7 @@ async def test_perp_hedge_uses_round_qty_to_nearest(mocker):
     For a spot delta of 0.000149895 BTC (post-fee balance), the perp short
     must round to 0.00015, not 0.00014.
     """
-    params = _make_params(coins=["BTC"])
+    params = _make_params()
     settings = _make_settings(mocker, coin="BTC", leverage=3)
 
     spot_delta = 0.000149895  # post-fee wallet balance after spot BUY

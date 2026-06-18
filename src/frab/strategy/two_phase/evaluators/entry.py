@@ -17,11 +17,13 @@ if TYPE_CHECKING:
 class EntryEvaluator:
     """Evaluates each coin for entry and creates FarbPositions when signals qualify.
 
-    When a ``CoinRegistry`` is supplied (Phase E), the candidate coin universe is
-    read from ``registry.universe()`` on every call (hot re-read, no restart needed).
-    This allows newly-activated coins to be considered immediately.
-    When no registry is supplied, the candidate list falls back to ``params.coins``
-    preserving pre-Phase-E behaviour exactly.
+    The candidate coin universe is read from ``registry.universe()`` on every call
+    (hot re-read, no restart needed).  This allows newly-activated coins to be
+    considered immediately.
+
+    A ``CoinRegistry`` must be provided in production.  When ``registry`` is
+    ``None`` (some unit-test scenarios), the entry universe is empty — no new
+    positions will be created.
     """
 
     def __init__(
@@ -66,14 +68,13 @@ class EntryEvaluator:
             return
         slots = min(slots, slots_by_budget)
 
-        # Determine the active entry universe:
-        # - With a registry: use registry.universe() (re-read each call, hot re-read).
-        #   Only active+validated coins are offered for new entry.
-        # - Without a registry: fall back to p.coins (pre-Phase-E behaviour).
-        if self._registry is not None:
-            entry_universe: tuple[str, ...] | list[str] = self._registry.universe()
-        else:
-            entry_universe = p.coins
+        # Determine the active entry universe from the registry (hot re-read each call).
+        # Only active+validated coins are offered for new entry.
+        # If no registry is configured (unit-test / misconfigured path), produce no
+        # entries rather than falling back to a hardcoded list.
+        entry_universe: tuple[str, ...] = (
+            self._registry.universe() if self._registry is not None else ()
+        )
 
         # Evaluate each coin for entry
         candidates: list[tuple[str, float]] = []

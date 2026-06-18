@@ -68,7 +68,11 @@ def test_compute_footprint_independent_of_coin():
     assert params.compute_footprint() == pytest.approx(300.0, rel=1e-9)
 
 
-def test_from_dict_ignores_perp_leverage():
-    """from_dict silently ignores legacy perp_leverage key."""
-    params = TwoPhaseParams.from_dict({"perp_leverage": 5.0, "coins": ["BTC"]})
-    assert params.coins == ["BTC"]
+def test_from_dict_ignores_unknown_keys():
+    """from_dict silently ignores legacy / unknown keys such as perp_leverage and coins."""
+    params = TwoPhaseParams.from_dict(
+        {"perp_leverage": 5.0, "coins": ["BTC", "ETH", "SOL"], "entry_threshold_apr": 0.12}
+    )
+    # 'coins' and 'perp_leverage' are dropped; known key survives
+    assert params.entry_threshold_apr == 0.12
+    assert not hasattr(params, "coins")

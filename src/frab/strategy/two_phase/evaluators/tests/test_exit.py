@@ -21,7 +21,6 @@ _OPENED_MS = _NOW_MS - 100 * 3_600_000
 
 def _make_params(**overrides) -> TwoPhaseParams:
     defaults = dict(
-        coins=["BTC", "ETH"],
         entry_threshold_apr=0.10,
         phase2_exit_threshold=-0.10,
         base_min_hold_hours=24,

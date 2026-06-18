@@ -187,7 +187,6 @@ async def test_pipeline_smoke(session_factory, seeded):
     ledger = Ledger(session_factory)
 
     params = TwoPhaseParams(
-        coins=["BTC"],
         entry_threshold_apr=0.10,
         phase2_exit_threshold=-0.10,
         base_min_hold_hours=24,
@@ -203,6 +202,8 @@ async def test_pipeline_smoke(session_factory, seeded):
     settings = MagicMock(spec=RegistryAwareSettings)
     from frab.constants import CoinMarginSpec
     settings.get_coin_spec.return_value = CoinMarginSpec(leverage=5, maint_ratio=0.025)
+    registry = MagicMock()
+    registry.universe.return_value = ("BTC",)
     strategy = TwoPhaseStrategy(
         strategy_id=strategy_id,
         exchange=exchange,
@@ -210,6 +211,7 @@ async def test_pipeline_smoke(session_factory, seeded):
         session_factory=session_factory,
         params=params,
         settings=settings,
+        registry=registry,
     )
 
     loop = EngineLoop(

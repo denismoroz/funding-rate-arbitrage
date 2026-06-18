@@ -3,8 +3,8 @@
 State machine is driven one step per FarbPosition per tick.
 NO in-memory accumulators: all state lives in FarbRepo / Exchange / DB.
 
+Trading universe is read at runtime from CoinRegistry.universe() — not from params.
 Params sourced from research/two_phase_dynamic_stability.py "Candidate C":
-    coins:           ["BTC", "ETH", "SOL", "AVAX", "LINK", "AAVE", "DOGE"]
     K=3, entry_threshold=0.10 (annualized), signal_window=12h, base_min_hold=24h
     safety_mult=5.0, cap_min_hold=720h
     phase1_negative_patience=72, phase1_breakeven_cap_hours=720
@@ -282,12 +282,12 @@ class TwoPhaseStrategy:
         FarbPosition; the engine's minute-tick will drive it to OPEN.
         """
         p = self.params
-        # Universe gate: use registry.universe() when available (active+validated
-        # only), otherwise fall back to p.coins (pre-Phase-E / no-registry path).
-        entry_universe = (
-            self._registry.universe() if self._registry is not None else p.coins
-        )
-        if coin not in entry_universe:
+        # Universe gate: registry is required; without it no coin is in-universe.
+        if self._registry is None:
+            raise ManualOpenCoinNotInUniverse(
+                f"{coin} — registry not configured"
+            )
+        if coin not in self._registry.universe():
             raise ManualOpenCoinNotInUniverse(coin)
 
         # list_by_coin(include_terminal=False) excludes CLOSED/FAILED, so it covers
