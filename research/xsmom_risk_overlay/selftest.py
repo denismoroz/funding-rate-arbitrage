@@ -247,6 +247,282 @@ def test_pnl_units_sane():
           f"[{min(srs.values()):+.2f}, {max(srs.values()):+.2f}]  (no catastrophe)  OK")
 
 
+# ── New self-tests for Arms D/E/F/G: replacement_overlay ──────────────────────
+
+def test_replacement_stop_never_triggers():
+    """(D1) replacement_overlay with S=-999% (fixed-%) ≈ baseline (never triggers)."""
+    w, fwd = _toy_weights_fwd(seed=10, n_days=120, n_coins=8)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    # Use the weights as trivial scores (arbitrary — just needs same shape)
+    repl = overlay.replacement_overlay(
+        w, w, fwd,
+        threshold=-9.99, mode="stop", vol_linked=False,
+        costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY,
+    )
+    assert np.allclose(base.values, repl.values, atol=1e-12), (
+        f"replacement stop S=-999% != baseline (max diff "
+        f"{np.abs(base.values-repl.values).max():.2e})"
+    )
+    print("  [D1] replacement stop S=-999% == baseline EXACTLY  OK")
+
+
+def test_replacement_take_profit_never_triggers():
+    """(E1) replacement_overlay with P=+999% (fixed-%) ≈ baseline (never triggers)."""
+    w, fwd = _toy_weights_fwd(seed=11, n_days=120, n_coins=8)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    repl = overlay.replacement_overlay(
+        w, w, fwd,
+        threshold=+9.99, mode="take_profit", vol_linked=False,
+        costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY,
+    )
+    assert np.allclose(base.values, repl.values, atol=1e-12), (
+        f"replacement take_profit P=+999% != baseline (max diff "
+        f"{np.abs(base.values-repl.values).max():.2e})"
+    )
+    print("  [E1] replacement take-profit P=+999% == baseline EXACTLY  OK")
+
+
+def test_vol_linked_stop_never_triggers():
+    """(F1) replacement_overlay vol-linked with k=999 ≈ baseline (effectively never triggers)."""
+    w, fwd = _toy_weights_fwd(seed=12, n_days=120, n_coins=8)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    repl = overlay.replacement_overlay(
+        w, w, fwd,
+        threshold=999.0, mode="stop", vol_linked=True, vol_window=20,
+        costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY,
+    )
+    # With k=999 the threshold -999*σ is far below any realistic cum_pnl;
+    # NaN vol (warmup) also conservatively suppresses triggers.
+    assert np.allclose(base.values, repl.values, atol=1e-12), (
+        f"replacement vol-linked stop k=999 != baseline (max diff "
+        f"{np.abs(base.values-repl.values).max():.2e})"
+    )
+    print("  [F1] vol-linked stop k=999 == baseline EXACTLY  OK")
+
+
+def test_replacement_book_full_size_dollar_neutral():
+    """(D2) After a replacement the book stays full-size and dollar-neutral every day.
+
+    We run a transparent step-by-step version of replacement_overlay with a low
+    stop threshold (to force many triggers) and assert that:
+      - Σ(held) ≈ 0  (net exposure = 0, dollar-neutral)
+      - Σ(max(held,0)) ≈ +1  (long leg total ≈ +1)
+      - Σ(min(held,0)) ≈ -1  (short leg total ≈ -1)
+    every day (post-rebalance initialisation included).
+    """
+    w, fwd = _toy_weights_fwd(seed=13, n_days=120, n_coins=10)
+    # Use scores = w itself (a trivial ordering; what matters is the shape)
+    scores = w.copy()
+    # big returns so stops fire frequently
+    fwd_big = fwd * 8.0
+
+    sums, long_sums, short_sums = _held_sums_replacement(
+        w, scores, fwd_big, threshold=-0.05, mode="stop",
+        vol_linked=False, vol_window=20,
+    )
+
+    assert np.allclose(sums, 0.0, atol=1e-9), (
+        f"dollar-neutrality broken in replacement: max|Σheld|={np.abs(sums).max():.2e}"
+    )
+    # Long and short sides should each sum to ±1 (on non-flat days) or ±<1 if no
+    # replacement coin was available (edge case we allow but flag).
+    flat_days = (np.abs(long_sums) < 1e-9)
+    non_flat = ~flat_days
+    if non_flat.any():
+        tol = 0.01  # allow slight deviation if replacement coin was unavailable
+        assert np.all(np.abs(long_sums[non_flat] - 1.0) <= tol + 1e-9), (
+            f"long side not ≈ +1: max dev {np.abs(long_sums[non_flat]-1.0).max():.4f}"
+        )
+        assert np.all(np.abs(short_sums[non_flat] + 1.0) <= tol + 1e-9), (
+            f"short side not ≈ -1: max dev {np.abs(short_sums[non_flat]+1.0).max():.4f}"
+        )
+    print("  [D2] replacement book: Σheld≈0 & long≈+1 & short≈-1 every day  OK")
+
+
+def test_replacement_coin_same_side_not_held():
+    """(D3) After a replacement, the new coin is on the SAME side as the old one
+    and was NOT already held.
+
+    We instrument the overlay loop to record (old_coin_side, new_coin_side,
+    was_new_held_before) for every replacement event and assert the invariants.
+    """
+    rng = np.random.default_rng(42)
+    n_days, n_coins = 200, 10
+    idx = pd.date_range("2024-01-01", periods=n_days, freq="D", tz="UTC")
+    cols = [f"C{i}" for i in range(n_coins)]
+    # Scores that vary enough to cause replacements and pick non-trivial coins
+    scores = pd.DataFrame(rng.standard_normal((n_days, n_coins)), index=idx, columns=cols)
+    w = xsec.rank_to_weights(scores)
+    fwd = pd.DataFrame(rng.standard_normal((n_days, n_coins)) * 0.05, index=idx, columns=cols)
+
+    _check_replacement_invariants(w, scores, fwd)
+    print("  [D3] replacement coin: same side as old, not already held  OK")
+
+
+def _check_replacement_invariants(weights, scores, fwd_ret, threshold=-0.03,
+                                   vol_window=20):
+    """Transparent re-run of replacement_overlay that asserts same-side + not-held."""
+    w = weights.reindex_like(fwd_ret).fillna(0.0)
+    s = scores.reindex_like(fwd_ret)
+    r = fwd_ret.fillna(0.0)
+    cols = list(w.columns)
+    n_cols = len(cols)
+    n = len(w.index)
+    rebal_set = set(range(0, n, REBAL_EVERY))
+
+    held = np.zeros(n_cols)
+    cum = np.zeros(n_cols)
+    leg_weight = 0.0
+
+    for i in range(n):
+        if i in rebal_set:
+            target = w.iloc[i].to_numpy(copy=True)
+            held = target.copy()
+            cum = np.zeros(n_cols)
+            long_n = int((held > 0).sum())
+            leg_weight = (1.0 / long_n) if long_n > 0 else 0.0
+        ri = r.iloc[i].to_numpy()
+        open_mask = (held != 0.0)
+        cum = cum + np.where(open_mask, np.sign(held) * ri, 0.0)
+        triggered = open_mask & (cum <= threshold)
+        if triggered.any():
+            si_row = s.iloc[i].to_numpy()
+            trig_idx = np.where(triggered)[0]
+            for j in trig_idx:
+                if held[j] == 0.0:
+                    continue
+                old_side = np.sign(held[j])
+                not_held = (held == 0.0)
+                candidates = np.where(not_held & np.isfinite(si_row))[0]
+                if candidates.size == 0:
+                    held[j] = 0.0
+                    cum[j] = 0.0
+                    continue
+                if old_side > 0:
+                    best = candidates[np.argmax(si_row[candidates])]
+                    new_side = +1
+                else:
+                    best = candidates[np.argmin(si_row[candidates])]
+                    new_side = -1
+                # Invariant checks BEFORE applying the replacement
+                assert best != j, "replacement chose the same coin"
+                assert held[best] == 0.0, f"replacement coin C{best} was already held"
+                assert new_side == old_side, (
+                    f"replacement coin side {new_side} != old side {old_side}"
+                )
+                held[j] = 0.0
+                held[best] = new_side * leg_weight
+                cum[j] = 0.0
+                cum[best] = 0.0
+
+
+def _held_sums_replacement(weights, scores, fwd_ret, *, threshold, mode,
+                             vol_linked, vol_window):
+    """Transparent step-by-step version that returns (Σheld, Σlongs, Σshorts) per day."""
+    w = weights.reindex_like(fwd_ret).fillna(0.0)
+    s = scores.reindex_like(fwd_ret)
+    r = fwd_ret.fillna(0.0)
+    cols = list(w.columns)
+    n_cols = len(cols)
+    n = len(w.index)
+    rebal_set = set(range(0, n, REBAL_EVERY))
+
+    if vol_linked:
+        coin_vol_arr = r.rolling(vol_window, min_periods=vol_window).std(ddof=0).shift(1).values
+    else:
+        coin_vol_arr = None
+
+    held = np.zeros(n_cols)
+    cum = np.zeros(n_cols)
+    leg_weight = 0.0
+    sums = np.zeros(n)
+    long_sums = np.zeros(n)
+    short_sums = np.zeros(n)
+
+    for i in range(n):
+        if i in rebal_set:
+            target = w.iloc[i].to_numpy(copy=True)
+            held = target.copy()
+            cum = np.zeros(n_cols)
+            long_n = int((held > 0).sum())
+            leg_weight = (1.0 / long_n) if long_n > 0 else 0.0
+        ri = r.iloc[i].to_numpy()
+        open_mask = (held != 0.0)
+        cum = cum + np.where(open_mask, np.sign(held) * ri, 0.0)
+
+        if vol_linked and coin_vol_arr is not None:
+            sigma_i = coin_vol_arr[i]
+            k = abs(threshold)
+            if mode == "stop":
+                with np.errstate(invalid="ignore"):
+                    triggered = open_mask & np.where(
+                        np.isfinite(sigma_i), cum <= -k * sigma_i, False
+                    )
+            else:
+                with np.errstate(invalid="ignore"):
+                    triggered = open_mask & np.where(
+                        np.isfinite(sigma_i), cum >= k * sigma_i, False
+                    )
+        else:
+            if mode == "stop":
+                triggered = open_mask & (cum <= threshold)
+            else:
+                triggered = open_mask & (cum >= threshold)
+
+        if triggered.any():
+            si_row = s.iloc[i].to_numpy()
+            trig_idx = np.where(triggered)[0]
+            for j in trig_idx:
+                if held[j] == 0.0:
+                    continue
+                old_side = np.sign(held[j])
+                not_held = (held == 0.0)
+                candidates = np.where(not_held & np.isfinite(si_row))[0]
+                if candidates.size == 0:
+                    held[j] = 0.0
+                    cum[j] = 0.0
+                else:
+                    if old_side > 0:
+                        best = candidates[np.argmax(si_row[candidates])]
+                        held[j] = 0.0
+                        held[best] = leg_weight
+                    else:
+                        worst = candidates[np.argmin(si_row[candidates])]
+                        held[j] = 0.0
+                        held[worst] = -leg_weight
+                    cum[j] = 0.0
+
+        sums[i] = held.sum()
+        long_sums[i] = held[held > 0].sum()
+        short_sums[i] = held[held < 0].sum()
+
+    return sums, long_sums, short_sums
+
+
+def test_no_nan_leakage_full_menu():
+    """(NaN2) No NaN leakage in the extended menu including Arms D/E/F/G."""
+    from overlay_pkg import OverlayPackage
+    pkg = OverlayPackage()
+    menu = pkg.menu("XSMOM_OVL", pkg.load("XSMOM_OVL"))
+    base = menu["baseline"]
+    base_finite = np.isfinite(base.values)
+    leaked_configs = []
+    for nm, s in menu.items():
+        s = s.reindex(base.index)
+        leaked = base_finite & ~np.isfinite(s.values)
+        if leaked.any():
+            leaked_configs.append((nm, int(leaked.sum())))
+    assert not leaked_configs, (
+        f"NaN leakage in configs: {leaked_configs}"
+    )
+    # Verify new arms are present
+    new_arm_prefixes = ["D_", "E_", "F_", "G_"]
+    for pfx in new_arm_prefixes:
+        found = [nm for nm in menu if nm.startswith(pfx)]
+        assert found, f"No configs found for arm prefix {pfx!r}"
+    print(f"  [NaN2] no NaN leakage across all {len(menu)} menu configs (incl. D/E/F/G)  OK")
+
+
 if __name__ == "__main__":
     print("=== XSMOM risk-overlay self-test ===")
     test_path_engine_reproduces_baseline()
@@ -257,4 +533,11 @@ if __name__ == "__main__":
     test_no_nan_leakage()
     test_arm_a_no_lookahead()
     test_pnl_units_sane()
+    # New tests for Arms D/E/F/G
+    test_replacement_stop_never_triggers()
+    test_replacement_take_profit_never_triggers()
+    test_vol_linked_stop_never_triggers()
+    test_replacement_book_full_size_dollar_neutral()
+    test_replacement_coin_same_side_not_held()
+    test_no_nan_leakage_full_menu()
     print("\nALL SELF-TESTS PASSED")

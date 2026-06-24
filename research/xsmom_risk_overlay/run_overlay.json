@@ -295,6 +295,102 @@
       "max_drawdown": -0.2457,
       "calmar": 0.748,
       "n_days": 1101
+    },
+    "D_stop-8": {
+      "ann_return": 0.3311,
+      "ann_vol": 0.3295,
+      "sharpe": 1.005,
+      "max_drawdown": -0.2264,
+      "calmar": 1.462,
+      "n_days": 1101
+    },
+    "D_stop-12": {
+      "ann_return": 0.3149,
+      "ann_vol": 0.3398,
+      "sharpe": 0.927,
+      "max_drawdown": -0.2342,
+      "calmar": 1.344,
+      "n_days": 1101
+    },
+    "D_stop-20": {
+      "ann_return": 0.2502,
+      "ann_vol": 0.3375,
+      "sharpe": 0.741,
+      "max_drawdown": -0.258,
+      "calmar": 0.97,
+      "n_days": 1101
+    },
+    "E_tp8": {
+      "ann_return": 0.3008,
+      "ann_vol": 0.3286,
+      "sharpe": 0.915,
+      "max_drawdown": -0.237,
+      "calmar": 1.269,
+      "n_days": 1101
+    },
+    "E_tp12": {
+      "ann_return": 0.3376,
+      "ann_vol": 0.3273,
+      "sharpe": 1.031,
+      "max_drawdown": -0.2503,
+      "calmar": 1.348,
+      "n_days": 1101
+    },
+    "E_tp20": {
+      "ann_return": 0.2823,
+      "ann_vol": 0.3305,
+      "sharpe": 0.854,
+      "max_drawdown": -0.2304,
+      "calmar": 1.225,
+      "n_days": 1101
+    },
+    "F_vstop_k1.5": {
+      "ann_return": 0.339,
+      "ann_vol": 0.3305,
+      "sharpe": 1.026,
+      "max_drawdown": -0.2318,
+      "calmar": 1.463,
+      "n_days": 1101
+    },
+    "F_vstop_k2.5": {
+      "ann_return": 0.2763,
+      "ann_vol": 0.3412,
+      "sharpe": 0.81,
+      "max_drawdown": -0.251,
+      "calmar": 1.101,
+      "n_days": 1101
+    },
+    "F_vstop_k4.0": {
+      "ann_return": 0.2841,
+      "ann_vol": 0.3402,
+      "sharpe": 0.835,
+      "max_drawdown": -0.2392,
+      "calmar": 1.188,
+      "n_days": 1101
+    },
+    "G_vtp_k1.5": {
+      "ann_return": 0.3026,
+      "ann_vol": 0.3221,
+      "sharpe": 0.94,
+      "max_drawdown": -0.2695,
+      "calmar": 1.123,
+      "n_days": 1101
+    },
+    "G_vtp_k2.5": {
+      "ann_return": 0.2704,
+      "ann_vol": 0.3284,
+      "sharpe": 0.823,
+      "max_drawdown": -0.2486,
+      "calmar": 1.088,
+      "n_days": 1101
+    },
+    "G_vtp_k4.0": {
+      "ann_return": 0.2539,
+      "ann_vol": 0.3325,
+      "sharpe": 0.764,
+      "max_drawdown": -0.2548,
+      "calmar": 0.997,
+      "n_days": 1101
     }
   },
   "baseline_daily": {
@@ -306,13 +402,13 @@
     "n_days": 1101
   },
   "harness": {
-    "name": "XSMOM intra-week risk overlay (vol-target / paired stop / take-profit)",
+    "name": "XSMOM intra-week risk overlay (vol-target / paired stop / take-profit / replacement)",
     "selected_name": "baseline",
     "coins": [
       "XSMOM_OVL"
     ],
     "n_portfolio_hours": 1101,
-    "menu_size": 31,
+    "menu_size": 43,
     "pooled_oos": {
       "n_segments": 25,
       "dist": {
@@ -341,51 +437,63 @@
       "frac_sharpe_pos": 1.0
     },
     "pbo": {
-      "pbo": 0.8055944055944056,
+      "pbo": 0.7299145299145299,
       "n_splits": 12870,
       "S": 16,
-      "median_oos_rank": 0.34375,
+      "median_oos_rank": 0.29545454545454547,
       "is_best_counts": {
-        "C_tp8_wo_reb": 3340,
-        "B_stop-8_wo_reb": 1465,
-        "C_tp8_wo_non": 1322,
-        "C_tp20_sr_reb": 886,
-        "baseline": 820,
-        "C_tp20_wo_reb": 745,
-        "B_stop-8_sr_reb": 722,
-        "A_vt0.15_w20": 703,
-        "C_tp12_wo_non": 537,
-        "B_stop-12_wo_reb": 438,
-        "A_vt0.20_w20": 374,
-        "A_vt0.10_w20": 348,
-        "C_tp12_wo_reb": 228,
-        "C_tp8_sr_non": 222,
-        "B_stop-8_wo_non": 213,
-        "C_tp8_sr_reb": 180,
-        "B_stop-12_wo_non": 84,
-        "B_stop-12_sr_reb": 81,
-        "B_stop-20_wo_reb": 75,
-        "B_stop-12_sr_non": 38,
-        "C_tp12_sr_non": 22,
-        "C_tp20_sr_non": 9,
-        "A_vt0.10_w40": 9,
-        "C_tp12_sr_reb": 4,
+        "C_tp8_wo_reb": 2626,
+        "E_tp12": 1427,
+        "B_stop-8_wo_reb": 1254,
+        "C_tp8_wo_non": 1137,
+        "D_stop-8": 1101,
+        "F_vstop_k1.5": 833,
+        "G_vtp_k1.5": 803,
+        "B_stop-8_sr_reb": 552,
+        "C_tp20_sr_reb": 451,
+        "C_tp12_wo_non": 419,
+        "D_stop-12": 412,
+        "B_stop-12_wo_reb": 281,
+        "A_vt0.15_w20": 255,
+        "C_tp20_wo_reb": 253,
+        "C_tp8_sr_non": 186,
+        "B_stop-8_wo_non": 167,
+        "A_vt0.10_w20": 130,
+        "C_tp12_wo_reb": 126,
+        "C_tp8_sr_reb": 93,
+        "E_tp8": 77,
+        "baseline": 71,
+        "A_vt0.20_w20": 70,
+        "B_stop-12_sr_reb": 50,
+        "B_stop-12_wo_non": 50,
+        "B_stop-12_sr_non": 23,
+        "C_tp20_sr_non": 8,
+        "C_tp12_sr_non": 6,
         "C_tp20_wo_non": 4,
-        "A_vt0.15_w40": 1,
+        "E_tp20": 2,
+        "B_stop-20_wo_reb": 2,
+        "C_tp12_sr_reb": 1,
         "B_stop-8_sr_non": 0,
+        "D_stop-20": 0,
+        "A_vt0.20_w40": 0,
         "B_stop-20_wo_non": 0,
-        "B_stop-20_sr_reb": 0,
         "B_stop-20_sr_non": 0,
-        "A_vt0.20_w40": 0
+        "A_vt0.15_w40": 0,
+        "F_vstop_k2.5": 0,
+        "F_vstop_k4.0": 0,
+        "A_vt0.10_w40": 0,
+        "G_vtp_k2.5": 0,
+        "G_vtp_k4.0": 0,
+        "B_stop-20_sr_reb": 0
       }
     },
     "dsr": {
-      "dsr": 0.8350528503902498,
+      "dsr": 0.8327016582234325,
       "sr_hat": 0.06059113561555505,
-      "sr_star_deflated": 0.03098458621025083,
+      "sr_star_deflated": 0.03127114356667328,
       "psr_vs_zero": 0.9769241722370205,
-      "n_trials": 31,
-      "var_sr_trials": 0.00022044386246947937,
+      "n_trials": 43,
+      "var_sr_trials": 0.00019879185129272327,
       "T": 1101,
       "skew": -0.18777452110403703,
       "kurt": 5.693038125819158,
@@ -395,13 +503,13 @@
       "XSMOM_OVL": 43.1
     }
   },
-  "pbo": 0.8055944055944056,
-  "dsr": 0.8350528503902498,
+  "pbo": 0.7299145299145299,
+  "dsr": 0.8327016582234325,
   "oos_summary": {
     "median_sharpe_hourly_scale": 5.5,
     "median_calmar_hourly_scale": 43.1,
     "median_maxdd_hourly_scale": 0.01,
     "frac_sharpe_pos": 1.0
   },
-  "verdict_notes": "Pre-committed criteria (PLAN.md): GO requires vs baseline: (1) Calmar improves OR maxDD reduces, (2) Sharpe does NOT degrade (tolerance 0.05), (3) PBO < 0.5. DSR informational only. OOS Sharpe/Calmar/maxDD are on harness hourly scale (~×5.9 Sharpe); full_period_daily_metrics are √252-annualized (daily-correct). PBO reflects the full menu (baseline + all Arm A/B/C cells), correctly penalising multiple testing across arms."
+  "verdict_notes": "Pre-committed criteria (PLAN.md): GO requires vs baseline: (1) Calmar improves OR maxDD reduces, (2) Sharpe does NOT degrade (tolerance 0.05), (3) PBO < 0.5. DSR informational only. OOS Sharpe/Calmar/maxDD are on harness hourly scale (~×5.9 Sharpe); full_period_daily_metrics are √252-annualized (daily-correct). PBO reflects the full menu (baseline + all Arm A/B/C/D/E/F/G cells), correctly penalising multiple testing across arms."
 }

@@ -55,6 +55,7 @@ from costs import TAKER
 from overlay_pkg import (
     OverlayPackage, SELECTED, MAX_LOOKBACK_DAYS,
     A_TARGET_VOLS, A_VOL_WINDOWS, B_STOPS, C_TAKES, PAIR_RULES, REENTRIES,
+    D_STOPS, E_TAKES, FG_KS,
     COSTS_BPS, REBAL_EVERY,
 )
 
@@ -97,6 +98,14 @@ def _arm_label(nm: str) -> str:
         return "Arm B"
     if nm.startswith("C_"):
         return "Arm C"
+    if nm.startswith("D_"):
+        return "Arm D"
+    if nm.startswith("E_"):
+        return "Arm E"
+    if nm.startswith("F_"):
+        return "Arm F"
+    if nm.startswith("G_"):
+        return "Arm G"
     return "?"
 
 
@@ -118,9 +127,11 @@ def main() -> None:
     print("#" * 72)
     print(f"\nPURGE={PURGE}d  N_GROUPS={N_GROUPS}  K={K}  EMBARGO={EMBARGO}d")
     print(f"COSTS_BPS={COSTS_BPS}/leg  REBAL_EVERY={REBAL_EVERY}d")
-    print(f"Menu: 1 baseline + {len(A_TARGET_VOLS)*len(A_VOL_WINDOWS)} Arm-A "
-          f"+ {2*len(B_STOPS)*len(PAIR_RULES)*len(REENTRIES)} Arm-B "
-          f"+ {2*len(C_TAKES)*len(PAIR_RULES)*len(REENTRIES)} Arm-C configs\n")
+    n_a = len(A_TARGET_VOLS) * len(A_VOL_WINDOWS)
+    n_bc = 2 * len(B_STOPS) * len(PAIR_RULES) * len(REENTRIES)
+    n_defg = len(D_STOPS) + len(E_TAKES) + len(FG_KS) + len(FG_KS)
+    print(f"Menu: 1 baseline + {n_a} Arm-A + {n_bc} Arm-B/C "
+          f"+ {n_defg} Arm-D/E/F/G = {1+n_a+n_bc+n_defg} configs total\n")
 
     # ── Build package ──────────────────────────────────────────────────────────
     pkg = OverlayPackage()
@@ -184,7 +195,11 @@ def main() -> None:
 
     # ── Arm-level summary ──────────────────────────────────────────────────────
     print("\n=== Arm-level summary (best cell per arm by full-period Calmar) ===")
-    for arm_prefix, arm_name in [("A_", "Arm A"), ("B_", "Arm B"), ("C_", "Arm C")]:
+    arm_prefixes = [
+        ("A_", "Arm A"), ("B_", "Arm B"), ("C_", "Arm C"),
+        ("D_", "Arm D"), ("E_", "Arm E"), ("F_", "Arm F"), ("G_", "Arm G"),
+    ]
+    for arm_prefix, arm_name in arm_prefixes:
         arm_configs = {nm: m for nm, m in full_metrics.items()
                        if nm.startswith(arm_prefix)}
         if not arm_configs:
@@ -252,7 +267,7 @@ def main() -> None:
             "DSR informational only. "
             "OOS Sharpe/Calmar/maxDD are on harness hourly scale (~×5.9 Sharpe); "
             "full_period_daily_metrics are √252-annualized (daily-correct). "
-            "PBO reflects the full menu (baseline + all Arm A/B/C cells), "
+            "PBO reflects the full menu (baseline + all Arm A/B/C/D/E/F/G cells), "
             "correctly penalising multiple testing across arms."
         ),
     }
@@ -282,9 +297,11 @@ def main() -> None:
     else:
         print("NO configs passed all pre-committed criteria → ALL arms: NO-GO")
 
-    for arm_prefix, arm_name in [("A_", "Arm A"), ("B_", "Arm B"), ("C_", "Arm C")]:
+    for arm_prefix, arm_name in arm_prefixes:
         arm_go = [n for n in go_configs if n.startswith(arm_prefix)]
         arm_all = [n for n in menu if n.startswith(arm_prefix)]
+        if not arm_all:
+            continue
         if arm_go:
             print(f"  {arm_name}: GO ({len(arm_go)}/{len(arm_all)} cells pass)")
         else:

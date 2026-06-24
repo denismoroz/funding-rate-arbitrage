@@ -11,6 +11,10 @@ The menu is the FULL pre-registered grid (PLAN.md):
   - Arm A vol-target          (3 target_vol × 2 vol_window = 6)
   - Arm B paired stop         (3 S × 2 R × 2 E = 12)
   - Arm C paired take-profit  (3 P × 2 R × 2 E = 12)
+  - Arm D replacement stop    (3 S = 3)
+  - Arm E replacement take-profit (3 P = 3)
+  - Arm F vol-linked replacement stop (3 k = 3)
+  - Arm G vol-linked replacement take-profit (3 k = 3)
 Putting EVERY arm cell in the menu makes the PBO honestly penalise multiple
 testing: if an arm only wins via its luckiest cell, PBO catches it.
 
@@ -25,6 +29,8 @@ SEAM-SAFETY (critical, identical rationale to crypto_pkg):
     earlier, so run_overlay.py MUST pass purge >= MAX_LOOKBACK_DAYS.
   - Arm A vol scaler shifts the trailing vol by 1 (no same-day look-ahead).
   - Arms B/C realise the triggering day's move (no retroactive avoidance).
+  - Arms D/E/F/G: same timing as B/C for trigger; σ_coin shifted by 1 (causal);
+    replacement coin picked from scores[d] (info ≤ d); new leg earns from d+1.
 
 Bit-for-bit live parity: the score is signals.momentum_ensemble (the same z-score
 momentum ensemble the live XSMOM ranks on); the engine is xsec.rank_to_weights +
@@ -73,6 +79,14 @@ C_TAKES = (+0.08, +0.12, +0.20)
 PAIR_RULES = ("worst_opposite", "symmetric_rank")
 REENTRIES = ("next_rebalance", "none")
 
+# Arm D / E grids (fixed-% replacement; same thresholds as B/C for apples-to-apples)
+D_STOPS = (-0.08, -0.12, -0.20)
+E_TAKES = (+0.08, +0.12, +0.20)
+
+# Arm F / G grids (vol-linked replacement; k multiplier)
+FG_KS = (1.5, 2.5, 4.0)
+VOL_WINDOW = 20   # trailing daily vol window for F/G σ_coin
+
 SELECTED = "baseline"
 
 
@@ -93,9 +107,9 @@ class _OverlayStrategy:
 
 
 class OverlayPackage:
-    """Package: one synthetic coin XSMOM_OVL, menu = baseline + Arms A/B/C grid."""
+    """Package: one synthetic coin XSMOM_OVL, menu = baseline + Arms A–G grid."""
 
-    name = "XSMOM intra-week risk overlay (vol-target / paired stop / take-profit)"
+    name = "XSMOM intra-week risk overlay (vol-target / paired stop / take-profit / replacement)"
     selected_name = SELECTED
     coins = ["XSMOM_OVL"]
 
@@ -107,6 +121,7 @@ class OverlayPackage:
         self._frozen = _frozen_universe()
         self._panel: dict | None = None
         self._weights: pd.DataFrame | None = None
+        self._scores: pd.DataFrame | None = None   # full daily scores for replacement
         self._menu_cache: dict[str, pd.Series] | None = None
 
     # ── panel / signals / target weights (computed ONCE on the full panel) ──────
@@ -114,6 +129,18 @@ class OverlayPackage:
         if self._panel is None:
             self._panel = cryptodata.load_panel(coins=self._frozen)
         return self._panel
+
+    def _momentum_scores(self) -> pd.DataFrame:
+        """Full daily momentum_ensemble scores (all coins, all dates).
+
+        Computed ONCE on the full panel (seam-safe).  Used by Arms D/E/F/G to pick
+        the best-ranked replacement coin.  Same scores that drive rank_to_weights,
+        so the replacement picks from the same ranking the live book uses.
+        """
+        if self._scores is None:
+            P = self._panels()
+            self._scores = signals.momentum_ensemble(P, lookbacks=ENSEMBLE_LOOKBACKS)
+        return self._scores
 
     def _target_weights(self) -> pd.DataFrame:
         """Weekly XSMOM target book (dollar-neutral terciles on momentum_ensemble).
@@ -124,9 +151,7 @@ class OverlayPackage:
         every overlay sample it on the same rebalance grid → identical entry books.
         """
         if self._weights is None:
-            P = self._panels()
-            score = signals.momentum_ensemble(P, lookbacks=ENSEMBLE_LOOKBACKS)
-            self._weights = xsec.rank_to_weights(score)
+            self._weights = xsec.rank_to_weights(self._momentum_scores())
         return self._weights
 
     # ── per-config PnL builders ─────────────────────────────────────────────────
@@ -148,6 +173,16 @@ class OverlayPackage:
         return overlay.path_aware_overlay(
             self._target_weights(), P["fwd_ret"],
             threshold=threshold, mode=mode, pair_rule=pair_rule, reentry=reentry,
+            costs_bps=self.costs_bps, rebal_every=self.rebal_every,
+        )
+
+    def _replacement_pnl(self, mode: str, threshold: float,
+                         vol_linked: bool) -> pd.Series:
+        P = self._panels()
+        return overlay.replacement_overlay(
+            self._target_weights(), self._momentum_scores(), P["fwd_ret"],
+            threshold=threshold, mode=mode, vol_linked=vol_linked,
+            vol_window=VOL_WINDOW,
             costs_bps=self.costs_bps, rebal_every=self.rebal_every,
         )
 
@@ -177,6 +212,26 @@ class OverlayPackage:
                 for e in REENTRIES:
                     nm = f"C_tp{int(p*100)}_{_abbr(pr)}_{_abbr(e)}"
                     menu[nm] = self._path_pnl("take_profit", p, pr, e)
+
+        # Arm D — replacement stop, fixed %
+        for s in D_STOPS:
+            nm = f"D_stop{int(s*100)}"
+            menu[nm] = self._replacement_pnl("stop", s, vol_linked=False)
+
+        # Arm E — replacement take-profit, fixed %
+        for p in E_TAKES:
+            nm = f"E_tp{int(p*100)}"
+            menu[nm] = self._replacement_pnl("take_profit", p, vol_linked=False)
+
+        # Arm F — replacement stop, vol-linked
+        for k in FG_KS:
+            nm = f"F_vstop_k{k}"
+            menu[nm] = self._replacement_pnl("stop", k, vol_linked=True)
+
+        # Arm G — replacement take-profit, vol-linked
+        for k in FG_KS:
+            nm = f"G_vtp_k{k}"
+            menu[nm] = self._replacement_pnl("take_profit", k, vol_linked=True)
 
         # Align every config on the union of dates so the harness portfolio matrix
         # (which dropna's rows where ANY config is NaN) keeps the common valid span.
@@ -218,8 +273,15 @@ if __name__ == "__main__":
     print(f"panel days: {len(df)}  {df.index.min().date()} -> {df.index.max().date()}")
     print(f"menu configs ({len(m)})")
     assert SELECTED in m, "selected must be in menu"
-    expected = 1 + len(A_TARGET_VOLS) * len(A_VOL_WINDOWS) \
-        + 2 * len(B_STOPS) * len(PAIR_RULES) * len(REENTRIES)
+    expected = (
+        1                                                        # baseline
+        + len(A_TARGET_VOLS) * len(A_VOL_WINDOWS)               # Arm A
+        + 2 * len(B_STOPS) * len(PAIR_RULES) * len(REENTRIES)   # Arm B + C
+        + len(D_STOPS)                                           # Arm D
+        + len(E_TAKES)                                           # Arm E
+        + len(FG_KS)                                             # Arm F
+        + len(FG_KS)                                             # Arm G
+    )
     assert len(m) == expected, f"menu size {len(m)} != expected {expected}"
 
     def _q(s):
