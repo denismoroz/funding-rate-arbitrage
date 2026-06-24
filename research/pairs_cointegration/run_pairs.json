@@ -1,0 +1,147 @@
+{
+  "name": "Pairs Cointegration Mean-Reversion (crypto, BTC-neutral)",
+  "selected_name": "z60_e2.0",
+  "coins": [
+    "SOL/AVAX",
+    "SOL/NEAR",
+    "SOL/ADA",
+    "SOL/DOT",
+    "SOL/ATOM",
+    "SOL/APT",
+    "SOL/SUI",
+    "AVAX/NEAR",
+    "AVAX/ADA",
+    "AVAX/DOT",
+    "AVAX/ATOM",
+    "AVAX/APT",
+    "AVAX/SUI",
+    "NEAR/ADA",
+    "NEAR/DOT",
+    "NEAR/ATOM",
+    "NEAR/APT",
+    "NEAR/SUI",
+    "ADA/DOT",
+    "ADA/ATOM",
+    "ADA/APT",
+    "ADA/SUI",
+    "DOT/ATOM",
+    "DOT/APT",
+    "DOT/SUI",
+    "ATOM/APT",
+    "ATOM/SUI",
+    "APT/SUI",
+    "AAVE/UNI",
+    "AAVE/CRV",
+    "UNI/CRV",
+    "ETHFI/EIGEN"
+  ],
+  "n_portfolio_hours": 531,
+  "menu_size": 12,
+  "pooled_oos": {
+    "n_segments": 800,
+    "dist": {
+      "annual_pct": {
+        "median": -76.57,
+        "iqr_lo": -411.0625,
+        "iqr_hi": 202.545
+      },
+      "sharpe": {
+        "median": -0.775,
+        "iqr_lo": -4.46,
+        "iqr_hi": 2.9325
+      },
+      "max_dd_pct": {
+        "median": 11.76,
+        "iqr_lo": 7.0975,
+        "iqr_hi": 18.94
+      },
+      "calmar": {
+        "median": -5.835,
+        "iqr_lo": -25.0875,
+        "iqr_hi": 27.65
+      }
+    },
+    "frac_calmar_pos": 0.43375,
+    "frac_sharpe_pos": 0.43375
+  },
+  "pbo": {
+    "pbo": 0.04794094794094794,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.9230769230769231,
+    "is_best_counts": {
+      "z60_e2.5": 9504,
+      "z90_e2.5": 2648,
+      "z30_e2.5": 434,
+      "z60_e1.5": 118,
+      "z60_e2.0": 75,
+      "z45_e2.5": 33,
+      "z30_e1.5": 25,
+      "z90_e1.5": 16,
+      "z90_e2.0": 10,
+      "z30_e2.0": 7,
+      "z45_e1.5": 0,
+      "z45_e2.0": 0
+    }
+  },
+  "dsr": {
+    "dsr": 0.09363540778155666,
+    "sr_hat": -0.017438930497074314,
+    "sr_star_deflated": 0.04012594471598499,
+    "psr_vs_zero": 0.3447657546814075,
+    "n_trials": 12,
+    "var_sr_trials": 0.0005809255328323671,
+    "T": 531,
+    "skew": 0.4993393497384991,
+    "kurt": 17.393294725898063,
+    "selected": "z60_e2.0"
+  },
+  "per_coin_calmar_median": {
+    "SOL/AVAX": -14.48,
+    "SOL/NEAR": -6.67,
+    "SOL/ADA": -13.18,
+    "SOL/DOT": 8.54,
+    "SOL/ATOM": -13.98,
+    "SOL/APT": 0.0,
+    "SOL/SUI": 3.45,
+    "AVAX/NEAR": -24.77,
+    "AVAX/ADA": -12.68,
+    "AVAX/DOT": 10.4,
+    "AVAX/ATOM": -7.12,
+    "AVAX/APT": -14.63,
+    "AVAX/SUI": -18.63,
+    "NEAR/ADA": -6.4,
+    "NEAR/DOT": 6.23,
+    "NEAR/ATOM": -10.0,
+    "NEAR/APT": 13.13,
+    "NEAR/SUI": -15.95,
+    "ADA/DOT": 20.72,
+    "ADA/ATOM": -3.79,
+    "ADA/APT": -20.73,
+    "ADA/SUI": -16.33,
+    "DOT/ATOM": 25.55,
+    "DOT/APT": 22.19,
+    "DOT/SUI": -2.7,
+    "ATOM/APT": -8.22,
+    "ATOM/SUI": -4.87,
+    "APT/SUI": -3.5,
+    "AAVE/UNI": -20.49,
+    "AAVE/CRV": 2.98,
+    "UNI/CRV": 6.89,
+    "ETHFI/EIGEN": -4.02
+  },
+  "purge_days": 240,
+  "orthogonality": {
+    "corr_BTC_buyhold": -0.08110832667807248,
+    "corr_FRAB_carry": -0.02994511488690972,
+    "corr_XSMOM_momentum": 0.025149035026891396
+  },
+  "book_pnl_sum": -65.80215715190963,
+  "book_pnl_days": 531,
+  "verdict": "NO-GO",
+  "gates": {
+    "dsr_pass": false,
+    "pbo_pass": true,
+    "orth_pass": true
+  }
+}
