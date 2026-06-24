@@ -1,0 +1,162 @@
+{
+  "name": "FX Pairs Cointegration Mean-Reversion (G10, USD-neutral)",
+  "selected_name": "z60_e2.0",
+  "coins": [
+    "AUD/CAD",
+    "AUD/CHF",
+    "AUD/EUR",
+    "AUD/GBP",
+    "AUD/JPY",
+    "AUD/NOK",
+    "AUD/NZD",
+    "AUD/SEK",
+    "CAD/CHF",
+    "CAD/EUR",
+    "CAD/GBP",
+    "CAD/JPY",
+    "CAD/NOK",
+    "CAD/NZD",
+    "CAD/SEK",
+    "CHF/EUR",
+    "CHF/GBP",
+    "CHF/JPY",
+    "CHF/NOK",
+    "CHF/NZD",
+    "CHF/SEK",
+    "EUR/GBP",
+    "EUR/JPY",
+    "EUR/NOK",
+    "EUR/NZD",
+    "EUR/SEK",
+    "GBP/JPY",
+    "GBP/NOK",
+    "GBP/NZD",
+    "GBP/SEK",
+    "JPY/NOK",
+    "JPY/NZD",
+    "JPY/SEK",
+    "NOK/NZD",
+    "NOK/SEK",
+    "NZD/SEK"
+  ],
+  "n_portfolio_hours": 5151,
+  "menu_size": 12,
+  "pooled_oos": {
+    "n_segments": 900,
+    "dist": {
+      "annual_pct": {
+        "median": -9.355,
+        "iqr_lo": -40.075,
+        "iqr_hi": 27.32
+      },
+      "sharpe": {
+        "median": -0.625,
+        "iqr_lo": -2.64,
+        "iqr_hi": 1.7025
+      },
+      "max_dd_pct": {
+        "median": 5.71,
+        "iqr_lo": 3.4975,
+        "iqr_hi": 8.67
+      },
+      "calmar": {
+        "median": -1.72,
+        "iqr_lo": -5.2,
+        "iqr_hi": 6.615
+      }
+    },
+    "frac_calmar_pos": 0.4122222222222222,
+    "frac_sharpe_pos": 0.41
+  },
+  "pbo": {
+    "pbo": 0.01756021756021756,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.9230769230769231,
+    "is_best_counts": {
+      "z90_e2.5": 10054,
+      "z60_e2.0": 1386,
+      "z45_e2.5": 972,
+      "z60_e2.5": 275,
+      "z30_e1.5": 159,
+      "z30_e2.5": 24,
+      "z30_e2.0": 0,
+      "z45_e1.5": 0,
+      "z45_e2.0": 0,
+      "z60_e1.5": 0,
+      "z90_e1.5": 0,
+      "z90_e2.0": 0
+    }
+  },
+  "dsr": {
+    "dsr": 0.34216964202730965,
+    "sr_hat": 0.009809224371425252,
+    "sr_star_deflated": 0.015327594767579332,
+    "psr_vs_zero": 0.7650569663809933,
+    "n_trials": 12,
+    "var_sr_trials": 8.476526888974789e-05,
+    "T": 5151,
+    "skew": 5.532616131239172,
+    "kurt": 131.2411979149414,
+    "selected": "z60_e2.0"
+  },
+  "per_coin_calmar_median": {
+    "AUD/CAD": 0.86,
+    "AUD/CHF": -4.14,
+    "AUD/EUR": 2.8,
+    "AUD/GBP": -2.88,
+    "AUD/JPY": 4.38,
+    "AUD/NOK": -4.59,
+    "AUD/NZD": -4.09,
+    "AUD/SEK": -4.38,
+    "CAD/CHF": -2.4,
+    "CAD/EUR": -3.67,
+    "CAD/GBP": -3.36,
+    "CAD/JPY": -5.18,
+    "CAD/NOK": -4.46,
+    "CAD/NZD": -5.39,
+    "CAD/SEK": -4.32,
+    "CHF/EUR": -0.09,
+    "CHF/GBP": -3.24,
+    "CHF/JPY": 4.24,
+    "CHF/NOK": -0.07,
+    "CHF/NZD": -2.2,
+    "CHF/SEK": -3.58,
+    "EUR/GBP": -1.44,
+    "EUR/JPY": -2.45,
+    "EUR/NOK": 0.54,
+    "EUR/NZD": -1.14,
+    "EUR/SEK": -0.29,
+    "GBP/JPY": 1.25,
+    "GBP/NOK": -0.78,
+    "GBP/NZD": -1.8,
+    "GBP/SEK": 0.91,
+    "JPY/NOK": 6.29,
+    "JPY/NZD": -0.2,
+    "JPY/SEK": 2.05,
+    "NOK/NZD": 0.17,
+    "NOK/SEK": 0.1,
+    "NZD/SEK": 1.77
+  },
+  "purge_days": 320,
+  "orthogonality": {
+    "corr_USD_factor_buyhold": 0.008906113242260393,
+    "corr_FX_carry_proxy": 0.018070806981751206,
+    "corr_FX_momentum_proxy": -0.06482234415058487
+  },
+  "orthogonality_note": "Benchmarks are FX-specific (USD factor, FX carry, FX momentum); crypto proxies (BTC, HL funding) were NOT used because the FX panel is separate and intersection is not guaranteed.",
+  "book_pnl_sum": 78.95620460286756,
+  "book_pnl_days": 5151,
+  "verdict": "NO-GO",
+  "gates": {
+    "dsr_pass": false,
+    "pbo_pass": true,
+    "orth_pass": true
+  },
+  "oos_summary": {
+    "sharpe_median": -0.625,
+    "calmar_median": -1.72,
+    "frac_sharpe_pos": 0.41,
+    "n_segments": 900
+  }
+}
