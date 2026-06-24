@@ -1,0 +1,87 @@
+{
+  "name": "Carry (FRAB-семейство) — КАЛИБРОВКА",
+  "selected_name": "carry_t0.10_w72",
+  "coins": [
+    "BTC",
+    "ETH",
+    "AVAX",
+    "HYPE",
+    "INJ",
+    "LINK",
+    "AAVE",
+    "ARB",
+    "DOGE"
+  ],
+  "n_portfolio_hours": 4493,
+  "menu_size": 12,
+  "pooled_oos": {
+    "n_segments": 225,
+    "dist": {
+      "annual_pct": {
+        "median": 8.61,
+        "iqr_lo": 1.21,
+        "iqr_hi": 16.99
+      },
+      "sharpe": {
+        "median": 8.37,
+        "iqr_lo": 1.58,
+        "iqr_hi": 22.38
+      },
+      "max_dd_pct": {
+        "median": 0.83,
+        "iqr_lo": 0.49,
+        "iqr_hi": 1.5
+      },
+      "calmar": {
+        "median": 7.74,
+        "iqr_lo": 1.48,
+        "iqr_hi": 33.0
+      }
+    },
+    "frac_calmar_pos": 0.8044444444444444,
+    "frac_sharpe_pos": 0.8044444444444444
+  },
+  "pbo": {
+    "pbo": 0.0,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.9230769230769231,
+    "is_best_counts": {
+      "carry_t0.20_w168": 11205,
+      "carry_t0.05_w168": 882,
+      "carry_t0.00_w168": 479,
+      "carry_t0.20_w72": 303,
+      "carry_t0.10_w168": 1,
+      "carry_t0.00_w24": 0,
+      "carry_t0.00_w72": 0,
+      "carry_t0.05_w24": 0,
+      "carry_t0.05_w72": 0,
+      "carry_t0.10_w24": 0,
+      "carry_t0.10_w72": 0,
+      "carry_t0.20_w24": 0
+    }
+  },
+  "dsr": {
+    "dsr": 1.0094814394864998e-234,
+    "sr_hat": -0.14527399656487683,
+    "sr_star_deflated": 0.22356783212604397,
+    "psr_vs_zero": 3.059796037293849e-38,
+    "n_trials": 12,
+    "var_sr_trials": 0.018033854246276827,
+    "T": 4493,
+    "skew": -3.5658961802625466,
+    "kurt": 18.023321646231224,
+    "selected": "carry_t0.10_w72"
+  },
+  "per_coin_calmar_median": {
+    "BTC": 7.1,
+    "ETH": 5.03,
+    "AVAX": 1.89,
+    "HYPE": -1.66,
+    "INJ": 9.41,
+    "LINK": 18.29,
+    "AAVE": 36.32,
+    "ARB": 3.6,
+    "DOGE": 12.4
+  }
+}
