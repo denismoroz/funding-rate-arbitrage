@@ -1,0 +1,257 @@
+{
+  "strategy": "xsmom_signal_improve",
+  "selected_config": "baseline",
+  "costs_bps_per_leg": 4.4,
+  "rebal_every_days": 7,
+  "universe_n_coins": 32,
+  "universe_coins": [
+    "AAVE",
+    "ADA",
+    "APT",
+    "ARB",
+    "ATOM",
+    "AVAX",
+    "BCH",
+    "BNB",
+    "BTC",
+    "CRV",
+    "DOGE",
+    "DOT",
+    "EIGEN",
+    "ENA",
+    "ETH",
+    "INJ",
+    "JTO",
+    "JUP",
+    "LINK",
+    "LTC",
+    "NEAR",
+    "PENDLE",
+    "PYTH",
+    "SOL",
+    "SUI",
+    "TAO",
+    "TRX",
+    "UNI",
+    "WLD",
+    "XLM",
+    "XRP",
+    "ZRO"
+  ],
+  "panel_days": 1101,
+  "panel_start": "2023-06-08",
+  "panel_end": "2026-06-12",
+  "harness_params": {
+    "n_groups": 6,
+    "k": 2,
+    "purge_days": 67,
+    "embargo_days": 7
+  },
+  "full_period_daily_metrics": {
+    "baseline": {
+      "ann_return": 0.3298,
+      "ann_vol": 0.3428,
+      "sharpe": 0.962,
+      "max_drawdown": -0.2513,
+      "calmar": 1.313,
+      "frac_pos": 0.4977,
+      "n_days": 1101
+    },
+    "R_sharpe": {
+      "ann_return": 0.3352,
+      "ann_vol": 0.3149,
+      "sharpe": 1.064,
+      "max_drawdown": -0.2777,
+      "calmar": 1.207,
+      "frac_pos": 0.5059,
+      "n_days": 1101
+    },
+    "R_tstat": {
+      "ann_return": 0.3352,
+      "ann_vol": 0.3149,
+      "sharpe": 1.064,
+      "max_drawdown": -0.2777,
+      "calmar": 1.207,
+      "frac_pos": 0.5059,
+      "n_days": 1101
+    },
+    "G_gap3": {
+      "ann_return": 0.2663,
+      "ann_vol": 0.3622,
+      "sharpe": 0.735,
+      "max_drawdown": -0.338,
+      "calmar": 0.788,
+      "frac_pos": 0.4832,
+      "n_days": 1101
+    },
+    "G_gap5": {
+      "ann_return": 0.2087,
+      "ann_vol": 0.3528,
+      "sharpe": 0.591,
+      "max_drawdown": -0.4183,
+      "calmar": 0.499,
+      "frac_pos": 0.4896,
+      "n_days": 1101
+    },
+    "G_gap7": {
+      "ann_return": 0.1563,
+      "ann_vol": 0.3359,
+      "sharpe": 0.465,
+      "max_drawdown": -0.453,
+      "calmar": 0.345,
+      "frac_pos": 0.4796,
+      "n_days": 1101
+    },
+    "K_rank": {
+      "ann_return": 0.3739,
+      "ann_vol": 0.3378,
+      "sharpe": 1.107,
+      "max_drawdown": -0.2323,
+      "calmar": 1.61,
+      "frac_pos": 0.4977,
+      "n_days": 1101
+    },
+    "T_trend30": {
+      "ann_return": 0.2999,
+      "ann_vol": 0.4118,
+      "sharpe": 0.728,
+      "max_drawdown": -0.4889,
+      "calmar": 0.613,
+      "frac_pos": 0.4332,
+      "n_days": 1101
+    },
+    "T_trend60": {
+      "ann_return": 0.2481,
+      "ann_vol": 0.4715,
+      "sharpe": 0.526,
+      "max_drawdown": -0.4857,
+      "calmar": 0.511,
+      "frac_pos": 0.445,
+      "n_days": 1101
+    },
+    "B_frac2in10": {
+      "ann_return": 0.4597,
+      "ann_vol": 0.4365,
+      "sharpe": 1.053,
+      "max_drawdown": -0.3715,
+      "calmar": 1.237,
+      "frac_pos": 0.4995,
+      "n_days": 1101
+    },
+    "B_frac3in10": {
+      "ann_return": 0.3298,
+      "ann_vol": 0.3428,
+      "sharpe": 0.962,
+      "max_drawdown": -0.2513,
+      "calmar": 1.313,
+      "frac_pos": 0.4977,
+      "n_days": 1101
+    },
+    "B_frac5in10": {
+      "ann_return": 0.2151,
+      "ann_vol": 0.2663,
+      "sharpe": 0.808,
+      "max_drawdown": -0.2525,
+      "calmar": 0.852,
+      "frac_pos": 0.4995,
+      "n_days": 1101
+    }
+  },
+  "baseline_daily": {
+    "ann_return": 0.3298,
+    "ann_vol": 0.3428,
+    "sharpe": 0.962,
+    "max_drawdown": -0.2513,
+    "calmar": 1.313,
+    "frac_pos": 0.4977,
+    "n_days": 1101
+  },
+  "harness": {
+    "name": "XSMOM signal-improvement (R/G/K/T/B arms)",
+    "selected_name": "baseline",
+    "coins": [
+      "XSMOM_SIG"
+    ],
+    "n_portfolio_hours": 1101,
+    "menu_size": 12,
+    "pooled_oos": {
+      "n_segments": 25,
+      "dist": {
+        "annual_pct": {
+          "median": 0.52,
+          "iqr_lo": 0.35,
+          "iqr_hi": 0.71
+        },
+        "sharpe": {
+          "median": 5.5,
+          "iqr_lo": 3.78,
+          "iqr_hi": 7.93
+        },
+        "max_dd_pct": {
+          "median": 0.01,
+          "iqr_lo": 0.01,
+          "iqr_hi": 0.01
+        },
+        "calmar": {
+          "median": 43.1,
+          "iqr_lo": 36.82,
+          "iqr_hi": 100.22
+        }
+      },
+      "frac_calmar_pos": 1.0,
+      "frac_sharpe_pos": 1.0
+    },
+    "pbo": {
+      "pbo": 0.5343434343434343,
+      "n_splits": 12870,
+      "S": 16,
+      "median_oos_rank": 0.46153846153846156,
+      "is_best_counts": {
+        "B_frac2in10": 4359,
+        "K_rank": 4337,
+        "R_sharpe": 1942,
+        "G_gap3": 886,
+        "T_trend60": 878,
+        "G_gap7": 290,
+        "T_trend30": 65,
+        "B_frac3in10": 62,
+        "G_gap5": 29,
+        "B_frac5in10": 22,
+        "R_tstat": 0,
+        "baseline": 0
+      }
+    },
+    "dsr": {
+      "dsr": 0.8862743841428335,
+      "sr_hat": 0.06059113561555505,
+      "sr_star_deflated": 0.023915928120274398,
+      "psr_vs_zero": 0.9769241722370205,
+      "n_trials": 12,
+      "var_sr_trials": 0.00020636897305719714,
+      "T": 1101,
+      "skew": -0.18777452110403703,
+      "kurt": 5.693038125819158,
+      "selected": "baseline"
+    },
+    "per_coin_calmar_median": {
+      "XSMOM_SIG": 43.1
+    }
+  },
+  "pbo": 0.5343434343434343,
+  "dsr": 0.8862743841428335,
+  "oos_summary": {
+    "median_sharpe_hourly_scale": 5.5,
+    "median_calmar_hourly_scale": 43.1,
+    "median_maxdd_hourly_scale": 0.01,
+    "frac_sharpe_pos": 1.0
+  },
+  "arm_verdicts": {
+    "Arm R": "NO-GO",
+    "Arm G": "NO-GO",
+    "Arm K": "NO-GO",
+    "Arm T": "NO-GO",
+    "Arm B": "NO-GO"
+  },
+  "go_configs": [],
+  "verdict_notes": "Pre-committed criteria (PLAN.md): GO requires vs baseline: (1) full-period Calmar improves OR maxDD reduces, (2) full-period Sharpe does NOT degrade (tolerance 0.05), (3) menu-wide PBO < 0.5. DSR informational only. OOS Sharpe/Calmar/maxDD are on harness hourly scale (~×5.9 Sharpe); full_period_daily_metrics are √252-annualized (daily-correct). PBO reflects the FULL menu (all 12 configs), correctly penalising multiple testing across arms R/G/K/T/B."
+}
