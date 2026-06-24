@@ -1,0 +1,149 @@
+{
+  "strategy": "token_unlock_cliff_short",
+  "selected_config": "W10_thr0.010_prop",
+  "data": {
+    "n_coins": 32,
+    "n_cliff_events_total": 5629,
+    "n_cliff_events_ge1pct": 267,
+    "date_range": "2023-06-08 → 2026-06-13"
+  },
+  "full_period_metrics_selected": {
+    "ann_return": 0.2702,
+    "ann_vol": 0.383,
+    "sharpe": 0.705,
+    "max_drawdown": -0.5626,
+    "calmar": 0.48,
+    "skew": -5.129,
+    "kurtosis": 79.861,
+    "n_days": 1102
+  },
+  "event_study_car": {
+    "thr_0.005": {
+      "n_events": 239,
+      "car_pre": -0.02237,
+      "car_pre_ci_lo_95": -0.03543,
+      "car_pre_ci_hi_95": -0.00988,
+      "car_day0": -0.02159,
+      "significant": true
+    },
+    "thr_0.010": {
+      "n_events": 127,
+      "car_pre": -0.03811,
+      "car_pre_ci_lo_95": -0.05795,
+      "car_pre_ci_hi_95": -0.01854,
+      "car_day0": -0.03448,
+      "significant": true
+    },
+    "thr_0.020": {
+      "n_events": 73,
+      "car_pre": -0.05791,
+      "car_pre_ci_lo_95": -0.08602,
+      "car_pre_ci_hi_95": -0.03244,
+      "car_day0": -0.04121,
+      "significant": true
+    }
+  },
+  "harness": {
+    "name": "Token-unlock cliff short book (market-hedged)",
+    "selected_name": "W10_thr0.010_prop",
+    "coins": [
+      "UNLOCK"
+    ],
+    "n_portfolio_hours": 1101,
+    "menu_size": 12,
+    "pooled_oos": {
+      "n_segments": 25,
+      "dist": {
+        "annual_pct": {
+          "median": 0.63,
+          "iqr_lo": -0.12,
+          "iqr_hi": 0.96
+        },
+        "sharpe": {
+          "median": 4.51,
+          "iqr_lo": -0.63,
+          "iqr_hi": 8.27
+        },
+        "max_dd_pct": {
+          "median": 0.01,
+          "iqr_lo": 0.01,
+          "iqr_hi": 0.02
+        },
+        "calmar": {
+          "median": 36.05,
+          "iqr_lo": -3.43,
+          "iqr_hi": 51.34
+        }
+      },
+      "frac_calmar_pos": 0.72,
+      "frac_sharpe_pos": 0.72
+    },
+    "pbo": {
+      "pbo": 0.5742812742812743,
+      "n_splits": 12870,
+      "S": 16,
+      "median_oos_rank": 0.46153846153846156,
+      "is_best_counts": {
+        "W10_thr0.020_prop": 5982,
+        "W7_thr0.010_prop": 2645,
+        "W14_thr0.020_prop": 1699,
+        "W10_thr0.005_prop": 895,
+        "W10_thr0.010_prop": 633,
+        "W7_thr0.005_prop": 540,
+        "W7_thr0.010_equal": 276,
+        "W14_thr0.005_prop": 165,
+        "W10_thr0.010_equal": 31,
+        "W7_thr0.020_prop": 4,
+        "W14_thr0.010_equal": 0,
+        "W14_thr0.010_prop": 0
+      }
+    },
+    "dsr": {
+      "dsr": 0.7380917484440105,
+      "sr_hat": 0.04486060030089092,
+      "sr_star_deflated": 0.023196632522708392,
+      "psr_vs_zero": 0.9065902262403895,
+      "n_trials": 12,
+      "var_sr_trials": 0.00019414213849942415,
+      "T": 1101,
+      "skew": -5.115830623889179,
+      "kurt": 82.31782896018055,
+      "selected": "W10_thr0.010_prop"
+    },
+    "per_coin_calmar_median": {
+      "UNLOCK": 36.05
+    }
+  },
+  "orthogonality": {
+    "corr_momentum_active": 0.011698322843562517,
+    "corr_carry_active": 0.04714571095857625,
+    "corr_momentum_full": 0.006060934674862862,
+    "corr_carry_full": 0.030369893367018622,
+    "n_active_days": 486,
+    "n_total_days": 1102
+  },
+  "sizing_comparison": {
+    "prop": {
+      "ann_return": 0.2702,
+      "ann_vol": 0.383,
+      "sharpe": 0.705,
+      "max_drawdown": -0.5626,
+      "calmar": 0.48,
+      "skew": -5.129,
+      "kurtosis": 79.861,
+      "n_days": 1102
+    },
+    "equal": {
+      "ann_return": 0.2289,
+      "ann_vol": 0.3818,
+      "sharpe": 0.6,
+      "max_drawdown": -0.5636,
+      "calmar": 0.406,
+      "skew": -5.201,
+      "kurtosis": 80.681,
+      "n_days": 1102
+    },
+    "sharpe_improvement_pct": 17.5
+  },
+  "verdict_notes": "Primary verdict: OOS frac>0 + PBO + orthogonality. DSR informational (negative skew penalizes DSR). Skew negative (short-squeeze tail risk). Harness Sharpe/Calmar on hourly scale (×5.9 vs daily); full_period_metrics are daily-correct."
+}
