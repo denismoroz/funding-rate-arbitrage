@@ -87,6 +87,8 @@ def build_book(
     sizing: str = DEFAULT_SIZING,
     top_n: int = 0,
     min_price_history_days: int = 30,
+    squeeze_lookback: int = 0,
+    squeeze_thr: float = 0.30,
 ) -> pd.Series:
     """Build daily PnL series for the token-unlock short book.
 
@@ -158,7 +160,24 @@ def build_book(
     prev_weight: dict[str, float] = {c: 0.0 for c in available_coins}
     cost_arr = pd.Series(0.0, index=idx)
 
+    # Squeeze filter precompute: trailing market-adjusted run-up known at entry.
+    # Mechanism (hypothesis): a coin pumping into its unlock has crowded shorts →
+    # squeeze risk (the source of the −68% DD events, e.g. JUP). Skip events whose
+    # coin outperformed the market by > squeeze_thr over squeeze_lookback days
+    # ending at entry. Uses ONLY past prices → no look-ahead.
+    #
+    # FINDING (2026-06-24, tested L∈{10,20}, thr∈{20,30,50}%): REJECTED — does NOT
+    # reduce maxDD. L=10 filters ~nothing; L=20 removes WINNERS (pnl 118%→89%), not
+    # the squeezes. Pre-entry momentum is not a squeeze predictor here: the blow-ups
+    # came from coins that did NOT run up beforehand. Left OFF by default (=0). Not
+    # tuned further on purpose — that would be overfitting. See README.
+    if squeeze_lookback > 0:
+        trail = price[list(available_coins)] / price[list(available_coins)].shift(squeeze_lookback) - 1.0
+        mkt_trail = trail.mean(axis=1)
+        abn_trail = trail.sub(mkt_trail, axis=0)   # market-adjusted run-up per coin/day
+
     # For each event, add weight on active days
+    n_skip_squeeze = 0
     for _, row in ev.iterrows():
         coin = row["coin"]
         unlock_date = row["date"]
@@ -167,6 +186,15 @@ def build_book(
         # Active window: [unlock_date - W days, unlock_date - 1 day]
         entry_date = unlock_date - pd.Timedelta(days=W)
         exit_date  = unlock_date - pd.Timedelta(days=1)
+
+        # Squeeze filter: skip if coin ran up into the window vs market
+        if squeeze_lookback > 0 and coin in abn_trail.columns:
+            e_pos = idx.searchsorted(entry_date)
+            if 0 <= e_pos < len(idx):
+                ru = abn_trail[coin].iloc[e_pos]
+                if np.isfinite(ru) and ru > squeeze_thr:
+                    n_skip_squeeze += 1
+                    continue
 
         # Find panel dates within [entry_date, exit_date]
         mask = (idx >= entry_date) & (idx <= exit_date)

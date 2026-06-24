@@ -106,5 +106,22 @@ window. W=14 consistently underperforms — the signal decays beyond 10 days.
 
 **Recommendation:** Use as a low-allocation orthogonal overlay (not standalone).
 Gate size-up on funding > cost (same discipline as FRAB shakedown). Do NOT go live
-until risk-managing the short-squeeze tail (e.g. stop-loss per event at -10% vs
-market, or explicit event-squeeze filter excluding large recent price run-ups).
+until risk-managing the short-squeeze tail.
+
+## Squeeze-filter attempt (2026-06-24) — REJECTED by data
+
+Tested the one mechanism-justified DD control: skip events whose coin
+outperformed the market by > thr over the L days before entry (crowded-short →
+squeeze hypothesis). `build_book(squeeze_lookback=L, squeeze_thr=thr)`.
+
+Result across L∈{10,20}, thr∈{20,30,50}%: **maxDD stays −68% in every variant.**
+- L=10: filters ~nothing (10d market-adj run-ups >20% are rare here).
+- L=20: removes WINNERS (cum pnl 118%→89%), not the squeezes.
+
+Mechanism rejected: the blow-ups came from coins that did NOT run up beforehand —
+pre-entry momentum does not predict the squeeze. Filter left OFF by default.
+**Deliberately not tuned further** — searching filter variants until DD drops would
+be overfitting (the discipline this whole research line enforces). The fat tail
+appears structural to shorting crypto into events; reducing it would need a
+different risk architecture (intraday stop-loss), which is itself tunable-prone and
+out of scope. Net: token-unlock stays a marginal, orthogonal, NOT-live-ready sleeve.
