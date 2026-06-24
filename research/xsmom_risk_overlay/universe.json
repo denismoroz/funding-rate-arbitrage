@@ -1,0 +1,11 @@
+{
+  "snapshot_date": "2026-06-24",
+  "source": "LIVE xsmom 32-coin universe (DEFAULT_XSMOM_UNIVERSE) intersected with research/cross_sectional/crypto/data/<COIN>_1h.csv history. All 32 had history -> intersection == full live list. FROZEN for reproducible backtest.",
+  "n_coins": 32,
+  "coins": [
+    "AAVE", "ADA", "APT", "ARB", "ATOM", "AVAX", "BCH", "BNB",
+    "BTC", "CRV", "DOGE", "DOT", "EIGEN", "ENA", "ETH", "INJ",
+    "JTO", "JUP", "LINK", "LTC", "NEAR", "PENDLE", "PYTH", "SOL",
+    "SUI", "TAO", "TRX", "UNI", "WLD", "XLM", "XRP", "ZRO"
+  ]
+}

@@ -1,0 +1,407 @@
+{
+  "strategy": "xsmom_risk_overlay",
+  "selected_config": "baseline",
+  "costs_bps_per_leg": 4.4,
+  "rebal_every_days": 7,
+  "universe_n_coins": 32,
+  "universe_coins": [
+    "AAVE",
+    "ADA",
+    "APT",
+    "ARB",
+    "ATOM",
+    "AVAX",
+    "BCH",
+    "BNB",
+    "BTC",
+    "CRV",
+    "DOGE",
+    "DOT",
+    "EIGEN",
+    "ENA",
+    "ETH",
+    "INJ",
+    "JTO",
+    "JUP",
+    "LINK",
+    "LTC",
+    "NEAR",
+    "PENDLE",
+    "PYTH",
+    "SOL",
+    "SUI",
+    "TAO",
+    "TRX",
+    "UNI",
+    "WLD",
+    "XLM",
+    "XRP",
+    "ZRO"
+  ],
+  "panel_days": 1101,
+  "panel_start": "2023-06-08",
+  "panel_end": "2026-06-12",
+  "harness_params": {
+    "n_groups": 6,
+    "k": 2,
+    "purge_days": 60,
+    "embargo_days": 7
+  },
+  "full_period_daily_metrics": {
+    "baseline": {
+      "ann_return": 0.3298,
+      "ann_vol": 0.3428,
+      "sharpe": 0.962,
+      "max_drawdown": -0.2513,
+      "calmar": 1.313,
+      "n_days": 1101
+    },
+    "A_vt0.10_w20": {
+      "ann_return": 0.0968,
+      "ann_vol": 0.1113,
+      "sharpe": 0.869,
+      "max_drawdown": -0.1125,
+      "calmar": 0.86,
+      "n_days": 1101
+    },
+    "A_vt0.10_w40": {
+      "ann_return": 0.0868,
+      "ann_vol": 0.11,
+      "sharpe": 0.789,
+      "max_drawdown": -0.1315,
+      "calmar": 0.66,
+      "n_days": 1101
+    },
+    "A_vt0.15_w20": {
+      "ann_return": 0.1472,
+      "ann_vol": 0.1659,
+      "sharpe": 0.887,
+      "max_drawdown": -0.151,
+      "calmar": 0.974,
+      "n_days": 1101
+    },
+    "A_vt0.15_w40": {
+      "ann_return": 0.1306,
+      "ann_vol": 0.1635,
+      "sharpe": 0.799,
+      "max_drawdown": -0.1883,
+      "calmar": 0.694,
+      "n_days": 1101
+    },
+    "A_vt0.20_w20": {
+      "ann_return": 0.1962,
+      "ann_vol": 0.2204,
+      "sharpe": 0.89,
+      "max_drawdown": -0.1971,
+      "calmar": 0.995,
+      "n_days": 1101
+    },
+    "A_vt0.20_w40": {
+      "ann_return": 0.1742,
+      "ann_vol": 0.2163,
+      "sharpe": 0.805,
+      "max_drawdown": -0.2385,
+      "calmar": 0.73,
+      "n_days": 1101
+    },
+    "B_stop-8_wo_reb": {
+      "ann_return": 0.2329,
+      "ann_vol": 0.2717,
+      "sharpe": 0.857,
+      "max_drawdown": -0.3609,
+      "calmar": 0.645,
+      "n_days": 1101
+    },
+    "B_stop-8_wo_non": {
+      "ann_return": 0.1316,
+      "ann_vol": 0.3181,
+      "sharpe": 0.414,
+      "max_drawdown": -0.3976,
+      "calmar": 0.331,
+      "n_days": 1101
+    },
+    "B_stop-8_sr_reb": {
+      "ann_return": 0.2353,
+      "ann_vol": 0.2627,
+      "sharpe": 0.896,
+      "max_drawdown": -0.2645,
+      "calmar": 0.89,
+      "n_days": 1101
+    },
+    "B_stop-8_sr_non": {
+      "ann_return": 0.0133,
+      "ann_vol": 0.3157,
+      "sharpe": 0.042,
+      "max_drawdown": -0.5091,
+      "calmar": 0.026,
+      "n_days": 1101
+    },
+    "B_stop-12_wo_reb": {
+      "ann_return": 0.2644,
+      "ann_vol": 0.3058,
+      "sharpe": 0.864,
+      "max_drawdown": -0.2804,
+      "calmar": 0.943,
+      "n_days": 1101
+    },
+    "B_stop-12_wo_non": {
+      "ann_return": 0.1411,
+      "ann_vol": 0.3528,
+      "sharpe": 0.4,
+      "max_drawdown": -0.3697,
+      "calmar": 0.382,
+      "n_days": 1101
+    },
+    "B_stop-12_sr_reb": {
+      "ann_return": 0.2507,
+      "ann_vol": 0.3046,
+      "sharpe": 0.823,
+      "max_drawdown": -0.3011,
+      "calmar": 0.833,
+      "n_days": 1101
+    },
+    "B_stop-12_sr_non": {
+      "ann_return": 0.1368,
+      "ann_vol": 0.3326,
+      "sharpe": 0.411,
+      "max_drawdown": -0.4258,
+      "calmar": 0.321,
+      "n_days": 1101
+    },
+    "B_stop-20_wo_reb": {
+      "ann_return": 0.2718,
+      "ann_vol": 0.3304,
+      "sharpe": 0.823,
+      "max_drawdown": -0.2656,
+      "calmar": 1.024,
+      "n_days": 1101
+    },
+    "B_stop-20_wo_non": {
+      "ann_return": 0.1519,
+      "ann_vol": 0.3537,
+      "sharpe": 0.43,
+      "max_drawdown": -0.3756,
+      "calmar": 0.405,
+      "n_days": 1101
+    },
+    "B_stop-20_sr_reb": {
+      "ann_return": 0.243,
+      "ann_vol": 0.3295,
+      "sharpe": 0.737,
+      "max_drawdown": -0.2601,
+      "calmar": 0.934,
+      "n_days": 1101
+    },
+    "B_stop-20_sr_non": {
+      "ann_return": 0.1092,
+      "ann_vol": 0.3395,
+      "sharpe": 0.322,
+      "max_drawdown": -0.4214,
+      "calmar": 0.259,
+      "n_days": 1101
+    },
+    "C_tp8_wo_reb": {
+      "ann_return": 0.2345,
+      "ann_vol": 0.2488,
+      "sharpe": 0.943,
+      "max_drawdown": -0.268,
+      "calmar": 0.875,
+      "n_days": 1101
+    },
+    "C_tp8_wo_non": {
+      "ann_return": 0.1972,
+      "ann_vol": 0.2916,
+      "sharpe": 0.676,
+      "max_drawdown": -0.3237,
+      "calmar": 0.609,
+      "n_days": 1101
+    },
+    "C_tp8_sr_reb": {
+      "ann_return": 0.2031,
+      "ann_vol": 0.2575,
+      "sharpe": 0.789,
+      "max_drawdown": -0.2545,
+      "calmar": 0.798,
+      "n_days": 1101
+    },
+    "C_tp8_sr_non": {
+      "ann_return": 0.1759,
+      "ann_vol": 0.281,
+      "sharpe": 0.626,
+      "max_drawdown": -0.2184,
+      "calmar": 0.805,
+      "n_days": 1101
+    },
+    "C_tp12_wo_reb": {
+      "ann_return": 0.2511,
+      "ann_vol": 0.283,
+      "sharpe": 0.887,
+      "max_drawdown": -0.2575,
+      "calmar": 0.975,
+      "n_days": 1101
+    },
+    "C_tp12_wo_non": {
+      "ann_return": 0.1669,
+      "ann_vol": 0.3109,
+      "sharpe": 0.537,
+      "max_drawdown": -0.3882,
+      "calmar": 0.43,
+      "n_days": 1101
+    },
+    "C_tp12_sr_reb": {
+      "ann_return": 0.2359,
+      "ann_vol": 0.2912,
+      "sharpe": 0.81,
+      "max_drawdown": -0.2692,
+      "calmar": 0.876,
+      "n_days": 1101
+    },
+    "C_tp12_sr_non": {
+      "ann_return": 0.1469,
+      "ann_vol": 0.3109,
+      "sharpe": 0.473,
+      "max_drawdown": -0.2951,
+      "calmar": 0.498,
+      "n_days": 1101
+    },
+    "C_tp20_wo_reb": {
+      "ann_return": 0.2906,
+      "ann_vol": 0.317,
+      "sharpe": 0.917,
+      "max_drawdown": -0.2372,
+      "calmar": 1.225,
+      "n_days": 1101
+    },
+    "C_tp20_wo_non": {
+      "ann_return": 0.1183,
+      "ann_vol": 0.3339,
+      "sharpe": 0.354,
+      "max_drawdown": -0.3637,
+      "calmar": 0.325,
+      "n_days": 1101
+    },
+    "C_tp20_sr_reb": {
+      "ann_return": 0.3007,
+      "ann_vol": 0.3193,
+      "sharpe": 0.942,
+      "max_drawdown": -0.2338,
+      "calmar": 1.286,
+      "n_days": 1101
+    },
+    "C_tp20_sr_non": {
+      "ann_return": 0.1838,
+      "ann_vol": 0.3332,
+      "sharpe": 0.552,
+      "max_drawdown": -0.2457,
+      "calmar": 0.748,
+      "n_days": 1101
+    }
+  },
+  "baseline_daily": {
+    "ann_return": 0.3298,
+    "ann_vol": 0.3428,
+    "sharpe": 0.962,
+    "max_drawdown": -0.2513,
+    "calmar": 1.313,
+    "n_days": 1101
+  },
+  "harness": {
+    "name": "XSMOM intra-week risk overlay (vol-target / paired stop / take-profit)",
+    "selected_name": "baseline",
+    "coins": [
+      "XSMOM_OVL"
+    ],
+    "n_portfolio_hours": 1101,
+    "menu_size": 31,
+    "pooled_oos": {
+      "n_segments": 25,
+      "dist": {
+        "annual_pct": {
+          "median": 0.52,
+          "iqr_lo": 0.35,
+          "iqr_hi": 0.71
+        },
+        "sharpe": {
+          "median": 5.5,
+          "iqr_lo": 3.78,
+          "iqr_hi": 7.93
+        },
+        "max_dd_pct": {
+          "median": 0.01,
+          "iqr_lo": 0.01,
+          "iqr_hi": 0.01
+        },
+        "calmar": {
+          "median": 43.1,
+          "iqr_lo": 36.82,
+          "iqr_hi": 100.22
+        }
+      },
+      "frac_calmar_pos": 1.0,
+      "frac_sharpe_pos": 1.0
+    },
+    "pbo": {
+      "pbo": 0.8055944055944056,
+      "n_splits": 12870,
+      "S": 16,
+      "median_oos_rank": 0.34375,
+      "is_best_counts": {
+        "C_tp8_wo_reb": 3340,
+        "B_stop-8_wo_reb": 1465,
+        "C_tp8_wo_non": 1322,
+        "C_tp20_sr_reb": 886,
+        "baseline": 820,
+        "C_tp20_wo_reb": 745,
+        "B_stop-8_sr_reb": 722,
+        "A_vt0.15_w20": 703,
+        "C_tp12_wo_non": 537,
+        "B_stop-12_wo_reb": 438,
+        "A_vt0.20_w20": 374,
+        "A_vt0.10_w20": 348,
+        "C_tp12_wo_reb": 228,
+        "C_tp8_sr_non": 222,
+        "B_stop-8_wo_non": 213,
+        "C_tp8_sr_reb": 180,
+        "B_stop-12_wo_non": 84,
+        "B_stop-12_sr_reb": 81,
+        "B_stop-20_wo_reb": 75,
+        "B_stop-12_sr_non": 38,
+        "C_tp12_sr_non": 22,
+        "C_tp20_sr_non": 9,
+        "A_vt0.10_w40": 9,
+        "C_tp12_sr_reb": 4,
+        "C_tp20_wo_non": 4,
+        "A_vt0.15_w40": 1,
+        "B_stop-8_sr_non": 0,
+        "B_stop-20_wo_non": 0,
+        "B_stop-20_sr_reb": 0,
+        "B_stop-20_sr_non": 0,
+        "A_vt0.20_w40": 0
+      }
+    },
+    "dsr": {
+      "dsr": 0.8350528503902498,
+      "sr_hat": 0.06059113561555505,
+      "sr_star_deflated": 0.03098458621025083,
+      "psr_vs_zero": 0.9769241722370205,
+      "n_trials": 31,
+      "var_sr_trials": 0.00022044386246947937,
+      "T": 1101,
+      "skew": -0.18777452110403703,
+      "kurt": 5.693038125819158,
+      "selected": "baseline"
+    },
+    "per_coin_calmar_median": {
+      "XSMOM_OVL": 43.1
+    }
+  },
+  "pbo": 0.8055944055944056,
+  "dsr": 0.8350528503902498,
+  "oos_summary": {
+    "median_sharpe_hourly_scale": 5.5,
+    "median_calmar_hourly_scale": 43.1,
+    "median_maxdd_hourly_scale": 0.01,
+    "frac_sharpe_pos": 1.0
+  },
+  "verdict_notes": "Pre-committed criteria (PLAN.md): GO requires vs baseline: (1) Calmar improves OR maxDD reduces, (2) Sharpe does NOT degrade (tolerance 0.05), (3) PBO < 0.5. DSR informational only. OOS Sharpe/Calmar/maxDD are on harness hourly scale (~×5.9 Sharpe); full_period_daily_metrics are √252-annualized (daily-correct). PBO reflects the full menu (baseline + all Arm A/B/C cells), correctly penalising multiple testing across arms."
+}
