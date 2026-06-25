@@ -80,11 +80,17 @@ class EngineLoop:
         wallet_coins: list[tuple[str, WalletKind]] | None = None,
         params_loader: Callable[[dict], object] = TwoPhaseParams.from_dict,
         registry: CoinRegistry | None = None,
+        owns_maintenance: bool = True,
     ) -> None:
         self._strategy = strategy
         self._exchange = exchange
         self._ledger = ledger
         self._sf = session_factory
+        # When multiple EngineLoops share one SQLite file, table-wide maintenance
+        # (wallet_snapshots prune) is global and idempotent — running it on every
+        # loop only multiplies the slow DELETE and the write-lock contention it
+        # creates at the top of the hour. Exactly one loop should own it.
+        self._owns_maintenance = owns_maintenance
         # _coins is the static fallback used when no registry is supplied (and as
         # the initial working set before the first tick resolves open coins).
         self._coins = list(coins)
@@ -357,14 +363,21 @@ class EngineLoop:
         working_coins = await self._resolve_working_coins()
         funding_ticks = await self._fetch_funding(now_ms, working_coins)
         if funding_ticks:
-            await self._save_funding(funding_ticks, now_ms)
+            # funding_rates is a display/signal-history write. A transient SQLite
+            # "database is locked" here must NOT skip strategy.on_hour_tick
+            # (funding accrual / margin watchdog / rebalance). Isolate it.
+            try:
+                await self._save_funding(funding_ticks, now_ms)
+            except Exception as exc:  # noqa: BLE001
+                await self._log_error("save_funding_failed", exc)
 
         await self._strategy.on_hour_tick(now_ms=now_ms)
 
-        try:
-            await self._prune_wallet_snapshots(now_ms)
-        except Exception:
-            logger.exception("prune_wallet_snapshots_failed")
+        if self._owns_maintenance:
+            try:
+                await self._prune_wallet_snapshots(now_ms)
+            except Exception:
+                logger.exception("prune_wallet_snapshots_failed")
 
     async def _prune_wallet_snapshots(self, now_ms: int) -> None:
         """Downsample old wallet_snapshot rows from per-minute to per-hour.

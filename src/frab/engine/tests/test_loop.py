@@ -90,7 +90,7 @@ def event_bus():
 def make_loop(
     mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
     event_bus=None, coins=None, minute_interval_s=0.05,
-    wallet_coins=None,
+    wallet_coins=None, owns_maintenance=True,
 ):
     coins = coins or ["BTC", "ETH"]
     return EngineLoop(
@@ -102,6 +102,7 @@ def make_loop(
         event_bus=event_bus,
         minute_interval_s=minute_interval_s,
         wallet_coins=wallet_coins,
+        owns_maintenance=owns_maintenance,
     )
 
 
@@ -202,6 +203,66 @@ async def test_hour_tick_fetches_funding_and_calls_strategy(
 
     # strategy.on_hour_tick called
     mock_strategy.on_hour_tick.assert_awaited_once_with(now_ms=now_ms)
+
+
+# ─── 2b. _save_funding failure must NOT skip strategy.on_hour_tick ───────────
+
+@pytest.mark.asyncio
+async def test_hour_tick_isolates_save_funding_lock_error(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    """A transient "database is locked" on the display-only funding_rates write
+    must be swallowed (logged) so funding accrual / watchdog / rebalance in
+    strategy.on_hour_tick still run that hour."""
+    from sqlalchemy.exc import OperationalError
+
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, mock_session_factory)
+    loop._exchange_id_cache = 1
+    loop._save_funding = AsyncMock(
+        side_effect=OperationalError("INSERT", {}, Exception("database is locked"))
+    )
+    loop._log_error = AsyncMock()
+    loop._prune_wallet_snapshots = AsyncMock()
+
+    now_ms = 1_700_003_600_000
+    await loop._hour_tick(now_ms)
+
+    # The lock error was isolated and logged, not propagated.
+    loop._log_error.assert_awaited_once()
+    assert loop._log_error.call_args.args[0] == "save_funding_failed"
+    # Strategy hour-tick still ran despite the funding write failing.
+    mock_strategy.on_hour_tick.assert_awaited_once_with(now_ms=now_ms)
+
+
+# ─── 2c. Only the maintenance owner prunes wallet_snapshots ──────────────────
+
+@pytest.mark.asyncio
+async def test_hour_tick_prunes_only_when_maintenance_owner(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    """The shared wallet_snapshots prune runs on the owner loop and is skipped on
+    the non-owner loop (avoids doubled top-of-hour write-lock contention)."""
+    now_ms = 1_700_003_600_000
+
+    owner = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        owns_maintenance=True,
+    )
+    owner._exchange_id_cache = 1
+    owner._save_funding = AsyncMock()
+    owner._prune_wallet_snapshots = AsyncMock()
+    await owner._hour_tick(now_ms)
+    owner._prune_wallet_snapshots.assert_awaited_once_with(now_ms)
+
+    non_owner = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        owns_maintenance=False,
+    )
+    non_owner._exchange_id_cache = 1
+    non_owner._save_funding = AsyncMock()
+    non_owner._prune_wallet_snapshots = AsyncMock()
+    await non_owner._hour_tick(now_ms)
+    non_owner._prune_wallet_snapshots.assert_not_awaited()
 
 
 # ─── 3. Hour boundary detection ──────────────────────────────────────────────

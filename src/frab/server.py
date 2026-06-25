@@ -366,6 +366,9 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
                 coins=list(xsmom_params.universe),
                 event_bus=bus,
                 params_loader=XsmomParams.from_dict,
+                # The FRAB loop owns the shared wallet_snapshots prune; running it
+                # on both loops only doubles the top-of-hour write-lock contention.
+                owns_maintenance=False,
             )
             await xsmom_loop.start()
 
