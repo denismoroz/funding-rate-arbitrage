@@ -288,3 +288,73 @@ class TestEngineAdapterSynthetic:
             assert set(df.columns) == original_cols[c], (
                 f"Coin {c}: caller df was mutated, columns changed to {set(df.columns)}"
             )
+
+    def _make_cycling_dfs(self, n_cycles: int = 25, half: int = 120) -> tuple[dict, object]:
+        """One coin whose funding oscillates +/- to force n_cycles open/close cycles.
+
+        Constant price + alternating high-positive / negative funding: each
+        positive half-period triggers an open (and holds past min_hold), each
+        negative half triggers a phase-2 exit.  This exercises capital recycling
+        across many cycles — the scenario that exposed the margin-drain bug.
+        """
+        import numpy as np
+
+        period = 2 * half
+        n = n_cycles * period
+        idx = pd.date_range("2025-01-01", periods=n, freq="h", tz="UTC")
+        rate = 8e-5  # 8e-5/h * 8760 = 0.70 APR — well above the 0.10 entry gate
+        fr = np.array([rate if (i % period) < half else -rate for i in range(n)])
+        dfs = {"BTC": pd.DataFrame({"close": np.full(n, 100.0), "fundingRate": fr}, index=idx)}
+        params = _engine.TwoPhaseParams(
+            coins=["BTC"], entry_threshold_apr=0.10, phase2_exit_threshold=-0.10,
+            base_min_hold_hours=24, cap_min_hold_hours=720, safety_mult=5.0,
+            signal_window_hours=1, concurrency_cap=1,
+            position_size_usdc=12.0, budget_cap_usdc=90.0, margin_buffer_factor=3.0,
+            phase1_negative_patience=72, phase1_breakeven_cap_hours=720,
+        )
+        return dfs, params
+
+    def test_margin_released_on_close_no_dormancy(self):
+        """Regression: req_margin must be returned to spendable capital on close.
+
+        The buggy version moved req_margin spot->perp at open and never swept it
+        back, so spot_cash drained and the budget guard throttled opens after a
+        handful of cycles (observed: 6 opens / 2280 skipped on a 25-cycle path,
+        book dormant after 22% of the horizon).  With the per-tick free-perp
+        sweep the book recycles capital and trades every cycle.
+        """
+        n_cycles = 25
+        dfs, params = self._make_cycling_dfs(n_cycles=n_cycles)
+        result = run_on_dfs(dfs, params, mbuf=3.0, coins=["BTC"],
+                            position_size=12.0, sizing="flat")
+        raw = result.raw
+        n_opens = raw["per_coin"]["BTC"]["n_opens"]
+        # Every cycle should open (allow off-by-one for edge alignment).
+        assert n_opens >= n_cycles - 1, (
+            f"capital not recycled: only {n_opens} opens for {n_cycles} cycles "
+            f"(n_skipped_opens={raw['n_skipped_opens']}) — margin-drain regression"
+        )
+        # The book must stay active into the final cycle, not go dormant early.
+        eq = result.equity
+        deq = eq.diff().abs()
+        active = deq[deq > 1e-9]
+        last_active_frac = eq.index.get_loc(active.index[-1]) / len(eq)
+        assert last_active_frac > 0.8, (
+            f"book went dormant at {last_active_frac:.0%} of horizon — capital not recycled"
+        )
+
+    def test_equity_conserved_through_cycles(self):
+        """Sweeping free perp->spot must not create or destroy equity.
+
+        final_equity must equal budget + net funding - total fees (flat price,
+        delta-neutral legs net to zero PnL), within floating tolerance.
+        """
+        dfs, params = self._make_cycling_dfs(n_cycles=25)
+        result = run_on_dfs(dfs, params, mbuf=3.0, coins=["BTC"],
+                            position_size=12.0, sizing="flat")
+        raw = result.raw
+        expected = 90.0 + raw["total_funding"] - raw["total_fees"]
+        assert raw["final_equity"] == pytest.approx(expected, abs=1e-6), (
+            f"equity not conserved: final={raw['final_equity']} != "
+            f"budget+funding-fees={expected}"
+        )

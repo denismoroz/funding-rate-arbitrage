@@ -46,42 +46,42 @@
 
 **U-prod, buf=3** — period 2025-11-06 → 2026-05-12 (4493 hours)
 
-- Annual return: **+2.50%**
-- Sharpe: 20.739  |  Sortino: 6.159  |  MaxDD: 0.078%
-- Final equity: $1012.52 (started $1000.00)
-- Total funding: $16.01  |  Total fees: $3.49
+- Annual return: **+2.39%**
+- Sharpe: 17.950  |  Sortino: 5.363  |  MaxDD: 0.078%
+- Final equity: $1011.96 (started $1000.00)
+- Total funding: $16.50  |  Total fees: $4.54
 - Liquidations: 0  |  Top-ups: 0  |  Forced-closes: 0
 
 **Per-coin attribution:**
 
 | Coin | n_opens | funding_gross | fees_paid | realized_pnl | hours_in | n_ph1 | n_ph2 |
 |------|---------|--------------|-----------|-------------|----------|-------|-------|
-| HYPE | 3 | $3.59 | $0.60 | $25.17 | 3990 | 0 | 2 |
-| PURR | 5 | $9.34 | $1.03 | $16.57 | 3106 | 3 | 2 |
-| BTC | 4 | $1.56 | $0.81 | $24.07 | 2151 | 3 | 1 |
+| BTC | 4 | $1.66 | $0.80 | $37.33 | 2754 | 3 | 1 |
+| PURR | 7 | $9.67 | $1.45 | $19.67 | 3419 | 4 | 2 |
 | ETH | 4 | $0.76 | $0.83 | $14.24 | 1345 | 2 | 1 |
-| SOL | 1 | $0.76 | $0.21 | $-2.24 | 841 | 0 | 1 |
+| HYPE | 5 | $3.69 | $1.05 | $3.78 | 4243 | 2 | 2 |
+| SOL | 2 | $0.73 | $0.42 | $-2.86 | 877 | 1 | 1 |
 
 
 ### U-prod Results (margin_buffer=5×)
 
 **U-prod, buf=5** — period 2025-11-06 → 2026-05-12 (4493 hours)
 
-- Annual return: **+1.27%**
-- Sharpe: 14.850  |  Sortino: 5.600  |  MaxDD: 0.081%
-- Final equity: $1006.18 (started $1000.00)
-- Total funding: $9.03  |  Total fees: $2.84
+- Annual return: **+2.39%**
+- Sharpe: 17.950  |  Sortino: 5.363  |  MaxDD: 0.078%
+- Final equity: $1011.96 (started $1000.00)
+- Total funding: $16.50  |  Total fees: $4.54
 - Liquidations: 0  |  Top-ups: 0  |  Forced-closes: 0
 
 **Per-coin attribution:**
 
 | Coin | n_opens | funding_gross | fees_paid | realized_pnl | hours_in | n_ph1 | n_ph2 |
 |------|---------|--------------|-----------|-------------|----------|-------|-------|
-| PURR | 3 | $2.65 | $0.60 | $29.49 | 1137 | 2 | 1 |
-| HYPE | 3 | $3.59 | $0.60 | $25.17 | 3990 | 0 | 2 |
-| BTC | 4 | $1.56 | $0.81 | $24.07 | 2151 | 3 | 1 |
-| ETH | 3 | $0.47 | $0.61 | $15.17 | 1030 | 2 | 1 |
-| SOL | 1 | $0.76 | $0.21 | $-2.24 | 841 | 0 | 1 |
+| BTC | 4 | $1.66 | $0.80 | $37.33 | 2754 | 3 | 1 |
+| PURR | 7 | $9.67 | $1.45 | $19.67 | 3419 | 4 | 2 |
+| ETH | 4 | $0.76 | $0.83 | $14.24 | 1345 | 2 | 1 |
+| HYPE | 5 | $3.69 | $1.05 | $3.78 | 4243 | 2 | 2 |
+| SOL | 2 | $0.73 | $0.42 | $-2.86 | 877 | 1 | 1 |
 
 
 ---
@@ -90,19 +90,19 @@
 
 **U3, buf=3** — period 2025-11-06 → 2026-05-12 (4493 hours)
 
-- Annual return: **+0.35%**
-- Sharpe: 3.501  |  Sortino: 1.642  |  MaxDD: 0.181%
-- Final equity: $1001.60 (started $1000.00)
-- Total funding: $5.71  |  Total fees: $4.11
-- Liquidations: 0  |  Top-ups: 0  |  Forced-closes: 0
+- Annual return: **+0.31%**
+- Sharpe: 2.958  |  Sortino: 1.360  |  MaxDD: 0.202%
+- Final equity: $1001.39 (started $1000.00)
+- Total funding: $5.72  |  Total fees: $4.33
+- Liquidations: 1  |  Top-ups: 2  |  Forced-closes: 0
 
 **Per-coin attribution:**
 
 | Coin | n_opens | funding_gross | fees_paid | realized_pnl | hours_in | n_ph1 | n_ph2 |
 |------|---------|--------------|-----------|-------------|----------|-------|-------|
 | SOL | 6 | $1.04 | $1.23 | $29.80 | 2102 | 4 | 1 |
-| ETH | 6 | $2.66 | $1.23 | $26.50 | 3784 | 3 | 2 |
-| BTC | 8 | $2.00 | $1.65 | $26.67 | 3829 | 6 | 1 |
+| ETH | 6 | $2.69 | $1.23 | $24.10 | 3777 | 2 | 2 |
+| BTC | 9 | $1.99 | $1.87 | $21.39 | 3748 | 6 | 1 |
 
 
 **U3, buf=5** — period 2025-11-06 → 2026-05-12 (4493 hours)
@@ -126,7 +126,7 @@
 
 ## 4. Apples-to-Apples Verdict
 
-Over the same restricted window (2025-11-06 → 2026-05-12), U-prod (['BTC', 'ETH', 'SOL', 'HYPE', 'PURR']) produced +2.50% annual vs U3 +0.35% — **adding coins beyond BTC/ETH/SOL helped** on this window, but the window is short (~0.5 yr) and dominated by single high-funding episodes; not sufficient for causal attribution.
+Over the same restricted window (2025-11-06 → 2026-05-12), U-prod (['BTC', 'ETH', 'SOL', 'HYPE', 'PURR']) produced +2.39% annual vs U3 +0.31% — **adding coins beyond BTC/ETH/SOL helped** on this window, but the window is short (~0.5 yr) and dominated by single high-funding episodes; not sufficient for causal attribution.
 
 ---
 
@@ -137,10 +137,10 @@ Over the same restricted window (2025-11-06 → 2026-05-12), U-prod (['BTC', 'ET
 |-----------|-------|
 | phase1_consec_neg (≥72h neg) | 0 |
 | phase1_cap_exceeded (breakeven > 720h) | 0 |
-| phase1_negstop (signal < −0.15, ≥6h neg, bypass min_hold) | 8 |
+| phase1_negstop (signal < −0.15, ≥6h neg, bypass min_hold) | 12 |
 | phase2_signal_degraded (signal < −0.10) | 7 |
-| end-of-backtest force-close | 2 |
-| **Total exits** | **17** |
+| end-of-backtest force-close | 3 |
+| **Total exits** | **22** |
 
 
 ---

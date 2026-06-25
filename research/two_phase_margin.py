@@ -49,6 +49,25 @@ sys.path.insert(0, str(RESEARCH_DIR))
 #         needed so we don't touch src/ at runtime)
 # ---------------------------------------------------------------------------
 
+# Frozen research snapshot of the per-coin leverage / maintenance specs.
+# These used to live in src/frab/constants.py but were migrated into the DB
+# coin_registry (coin_registry rollout, 2026-06-17). The research backtest must
+# stay reproducible without a live DB, so we keep a static snapshot here and only
+# fall back to it when constants.py no longer carries the keys. Values are the
+# exact ones removed from constants.py at commit 8256b9c.
+_RESEARCH_SNAPSHOT: dict[str, Any] = {
+    "RESEARCH_LEVERAGE": {
+        "BTC": 40, "ETH": 25, "SOL": 20, "HYPE": 10, "ZEC": 10, "PURR": 3, "XPL": 10,
+    },
+    "RESEARCH_MAINT_RATIO": {
+        "BTC": 0.01, "ETH": 0.01, "SOL": 0.025, "HYPE": 0.025,
+        "ZEC": 0.025, "PURR": 0.025, "XPL": 0.025,
+    },
+    "FALLBACK_LEVERAGE": 3,
+    "FALLBACK_MAINT_RATIO": 0.05,
+}
+
+
 def _load_constants() -> dict[str, Any]:
     src = (REPO_ROOT / "src" / "frab" / "constants.py").read_text()
     tree = ast.parse(src)
@@ -71,6 +90,10 @@ def _load_constants() -> dict[str, Any]:
                     result[target.id] = ast.literal_eval(node.value)
                 except (ValueError, TypeError):
                     pass
+
+    # Backfill specs migrated out of constants.py into the DB coin_registry.
+    for key, default in _RESEARCH_SNAPSHOT.items():
+        result.setdefault(key, default)
     return result
 
 
@@ -558,6 +581,22 @@ def simulate(
             pos.consec_negative = 0
 
         # --- 3. Entries ---
+        # Sweep free perp cash back to spot before sizing new opens.
+        # req_margin is moved spot→perp at open and the perp sub-account also
+        # collects realized PnL + funding; on close the position's reservation is
+        # released (required_margin→0) but the cash stays commingled in perp_cash.
+        # Without this sweep, spot_cash drains monotonically across open/close
+        # cycles and the budget guard below (spot_cash < total_needed) eventually
+        # throttles ALL further opens — the book goes dormant and the backtest
+        # silently understates activity. free_perp = perp_cash minus the margin
+        # still reserved by currently-open positions; it is genuine spendable
+        # capital, so return it to spot. Conserves total equity exactly.
+        reserved_margin = sum(p.required_margin for p in positions.values() if p.open)
+        free_perp = perp_cash - reserved_margin
+        if free_perp > 0:
+            perp_cash -= free_perp
+            spot_cash += free_perp
+
         opens = _open_coins()
         n_open = len(opens)
         if n_open < params.concurrency_cap:

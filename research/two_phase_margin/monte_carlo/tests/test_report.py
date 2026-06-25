@@ -485,9 +485,11 @@ class TestWriteReport:
             write_report(results, out_path, anchor_csv=_ANCHOR_CSV)
             content = out_path.read_text(encoding="utf-8")
 
-        # The anchor row has annual_pct=2.5026 — should appear somewhere
-        assert "2.5026" in content, (
-            f"Expected anchor annual_pct 2.5026 in report; "
+        # The anchor row has annual_pct=2.3935 — should appear somewhere.
+        # (Was 2.5026 before the 2026-06-25 margin-release fix; CSV regenerated
+        #  with the corrected engine.)
+        assert "2.3935" in content, (
+            f"Expected anchor annual_pct 2.3935 in report; "
             f"snippet: {content[:1000]}"
         )
 
