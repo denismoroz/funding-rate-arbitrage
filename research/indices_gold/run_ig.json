@@ -1,0 +1,146 @@
+{
+  "name": "TSMOM indices + gold (spot trend, vol-scaled, 2bps/leg)",
+  "selected_name": "tsmom_ens",
+  "coins": [
+    "IGTREND"
+  ],
+  "n_portfolio_hours": 7828,
+  "menu_size": 5,
+  "pooled_oos": {
+    "n_segments": 6,
+    "dist": {
+      "annual_pct": {
+        "median": 0.07,
+        "iqr_lo": 0.02,
+        "iqr_hi": 0.1575
+      },
+      "sharpe": {
+        "median": 2.215,
+        "iqr_lo": 0.695,
+        "iqr_hi": 3.7275
+      },
+      "max_dd_pct": {
+        "median": 0.01,
+        "iqr_lo": 0.01,
+        "iqr_hi": 0.01
+      },
+      "calmar": {
+        "median": 5.62,
+        "iqr_lo": 1.47,
+        "iqr_hi": 12.5825
+      }
+    },
+    "frac_calmar_pos": 0.8333333333333334,
+    "frac_sharpe_pos": 0.8333333333333334
+  },
+  "pbo": {
+    "pbo": 0.7996114996114996,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.3333333333333333,
+    "is_best_counts": {
+      "tsmom_ens": 4885,
+      "tsmom12": 3218,
+      "xs_mom": 3064,
+      "tsmom6": 1425,
+      "tsmom3": 278
+    }
+  },
+  "dsr": {
+    "dsr": 0.965094460687687,
+    "sr_hat": 0.025880777058690074,
+    "sr_star_deflated": 0.0052479269563417644,
+    "psr_vs_zero": 0.9885260790254958,
+    "n_trials": 5,
+    "var_sr_trials": 1.936378814372977e-05,
+    "T": 7828,
+    "skew": -0.43900338545134615,
+    "kurt": 14.187058907095643,
+    "selected": "tsmom_ens"
+  },
+  "per_coin_calmar_median": {
+    "IGTREND": 5.62
+  },
+  "max_lookback_days": 252,
+  "panel_days": 7828,
+  "panel_start": "1996-06-25",
+  "panel_end": "2026-06-25",
+  "orthogonality": {
+    "corr_BTC_buyhold": 0.062221035132202514,
+    "corr_FRAB_carry": 0.0046454433676527485,
+    "corr_XSMOM_momentum": -0.04138193985481629
+  },
+  "orthogonality_gates": {
+    "corr_BTC_buyhold": "PASS",
+    "corr_FRAB_carry": "PASS",
+    "corr_XSMOM_momentum": "PASS"
+  },
+  "book_pnl_sum": 1.5208837534730213,
+  "book_pnl_days": 7828,
+  "book_pnl_ann": 0.04896048874236093,
+  "oos_sharpe_median": 2.215,
+  "oos_calmar_median": 5.62,
+  "daily_metrics_per_config": {
+    "tsmom3": {
+      "n": 7828.0,
+      "ann": 0.03511971259094619,
+      "vol_ann": 0.1283850209737653,
+      "sharpe": 0.27354992291602837,
+      "maxdd": 0.346898316340865,
+      "calmar": 0.10123921315443137,
+      "hit": 0.5228666326009198,
+      "mean": 9.621839066012655e-05,
+      "std": 0.00671997912799151
+    },
+    "tsmom6": {
+      "n": 7828.0,
+      "ann": 0.05391835543630843,
+      "vol_ann": 0.13622196415897703,
+      "sharpe": 0.3958124944769063,
+      "maxdd": 0.4352012806983575,
+      "calmar": 0.12389291536501658,
+      "hit": 0.5268267756770567,
+      "mean": 0.00014772152174331076,
+      "std": 0.007130183482303526
+    },
+    "tsmom12": {
+      "n": 7828.0,
+      "ann": 0.06147072418092283,
+      "vol_ann": 0.1361762444175377,
+      "sharpe": 0.4514056357175187,
+      "maxdd": 0.45972158336898294,
+      "calmar": 0.13371293931959038,
+      "hit": 0.5196729688298416,
+      "mean": 0.0001684129429614324,
+      "std": 0.007127790401663128
+    },
+    "tsmom_ens": {
+      "n": 7828.0,
+      "ann": 0.07091499361492754,
+      "vol_ann": 0.1434123599985764,
+      "sharpe": 0.4944831367089383,
+      "maxdd": 0.39216421240418,
+      "calmar": 0.18082984467190427,
+      "hit": 0.5334695963208993,
+      "mean": 0.0001942876537395275,
+      "std": 0.007506546001837472
+    },
+    "xs_mom": {
+      "n": 7828.0,
+      "ann": 0.07304473011945219,
+      "vol_ann": 0.19579402640873894,
+      "sharpe": 0.373069247613123,
+      "maxdd": 0.3756905080929839,
+      "calmar": 0.19442793614943693,
+      "hit": 0.5074092999489014,
+      "mean": 0.00020012254827247173,
+      "std": 0.010248327732259404
+    }
+  },
+  "verdict": "NO-GO",
+  "gates": {
+    "dsr_pass": true,
+    "pbo_pass": false,
+    "orth_pass": true
+  }
+}
