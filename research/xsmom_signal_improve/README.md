@@ -42,7 +42,7 @@ Full-period daily √252 metrics. OOS from harness (CPCV 6 groups, k=2, purge=67
 full-period (full:) metrics are daily √252-correct. SELECTED = baseline; OOS distribution
 reports baseline's 15-split CPCV distribution.
 
-**Menu-wide PBO = 0.534** (> 0.5 threshold; selection does NOT transfer).
+**Menu-wide PBO = 0.534** (panel end 2026-06-12; straddling the 0.5 threshold — see REPRODUCIBILITY note below).
 **DSR = 0.886** (informational).
 OOS baseline: median Sharpe 5.50 (hourly scale), 100% segments positive.
 
@@ -61,10 +61,15 @@ Pre-committed criteria (PLAN.md): GO only if vs baseline:
 | Arm T | T_trend30   | NO (0.61 vs 1.31) | NO (0.73 vs 0.96)  | NO (0.534) | **NO-GO** |
 | Arm B | B_frac3in10 | NO (1.31 = 1.31)  | YES (0.96 = 0.96)  | NO (0.534) | **NO-GO** |
 
-**All 5 arms: NO-GO.**
+**Test INCONCLUSIVE at the data-power floor.** PBO = 0.534 (panel end 2026-06-12) straddles the
+0.5 threshold. Re-running with ~13 more days of data (panel end 2026-06-25) gives PBO = 0.484,
+which would flip K_rank to GO. A binary PBO = 0.5 cutoff is not a stable final word when the
+menu consists of near-identical twin configs whose PBO structurally sits at ~0.5 (see
+GRAVEYARD_LESSONS режим 1). No arm demonstrated a ROBUST improvement; but "no robust
+improvement shown" is NOT equivalent to "definitively dead."
 
-The PBO = 0.534 alone is a hard stop on every arm — menu-wide selection does not transfer.
-K_rank is the only arm that passed criteria (1) and (2) but failed (3).
+K_rank is the only arm that passed criteria (1) and (2); its GO/NO-GO verdict flips with the
+data window, making it a data-dependent near-miss rather than a clear decision.
 
 ---
 
@@ -84,11 +89,16 @@ removes signal with no compensation). **NO-GO** — worse in-sample, no case to 
 
 **Arm K (rank-based / percentile):** Looks best — Sharpe 1.11, Calmar 1.61, maxDD −23.2%
 vs baseline −25.1%. The improvement is economically plausible (rank is robust to the
-single-coin outlier distorting z-score). However PBO = 0.534 fails: in CSCV splits
+single-coin outlier distorting z-score). PBO = 0.534 (panel end 2026-06-12): in CSCV splits
 K_rank and B_frac2in10 alternate as IS-best, and neither dominates OOS. This is the
-hallmark of high PBO — the "best" config is not stable across folds. **NO-GO** by criterion
-(3), even though (1) and (2) pass. Bear in mind this is the most interesting finding:
-K_rank is worth watching if a longer data window becomes available.
+hallmark of high PBO — the "best" config is not stable across folds.
+
+**INCONCLUSIVE — data-dependent near-miss.** The GO/NO-GO verdict for K_rank flips
+with the data window (PBO 0.534 → 0.484 with +13 days). The correct next step is a
+PRE-REGISTERED single-config OOS test of K_rank alone (not a menu-wide PBO comparison
+against twin configs), or simply more live data — NOT declaring it definitively dead.
+Criteria (1) and (2) pass; the PBO signal is that the data-power floor has been reached,
+not that the idea is bad.
 
 **Arm T (TS×XS gate):** Significant drawdown expansion to −49% (trend gates wipe out
 the book on bearish days — goes flat, which is fine individually, but this disrupts
@@ -110,12 +120,53 @@ on the Calmar metric. **NO-GO** — baseline tercile is the best breadth point.
   marginal improvement insufficient to overcome PBO > 0.5. Verdict confirmed: weak.
 - **G (skip-gap):** Medium prior (reversal correction). Here: _worse_ at all gaps in a
   weekly book. The weekly cadence already sidesteps the daily reversal. Verdict: NO.
-- **K, T, B:** Weak priors. K is the most interesting negative (close call on criteria
-  1+2 but PBO fails). T and B are clear underperformers.
+- **K, T, B:** Weak priors. K is the most interesting near-miss (criteria 1+2 pass, PBO
+  knife-edge — see INCONCLUSIVE note above). T and B are clear underperformers.
 
-Overall conclusion: XSMOM signal tuning is exhausted. The bulk of recoverable alpha
-appears to be in the base momentum ensemble as-is. Next axis: risk-parity blend of
-FRAB (carry) + XSMOM (momentum) on live data at ~2026-07-16 checkpoint.
+Overall conclusion: internal XSMOM signal tuning has not produced a ROBUST, transferable
+improvement on the current data window. No arm clears all three pre-committed gates
+simultaneously and reproducibly. This is not the same as "axis exhausted / all ideas dead":
+it means the data-power floor has been reached and a binary PBO gate on a menu of
+near-identical configs cannot distinguish marginal improvements from noise at this sample
+size. Meaningful next steps: (a) pre-registered single-config OOS test of K_rank alone,
+(b) risk-parity blend of FRAB (carry) + XSMOM (momentum) on live data at ~2026-07-16
+checkpoint.
+
+---
+
+## REPRODUCIBILITY — panel end date is not pinned
+
+The panel in `run_improve.json` ends 2026-06-12 (1101 days). Re-running `run_improve.py`
+today fetches live price data and extends the panel; the PBO is deterministic given the
+data but WILL change as more days are added. With ~13 additional days (panel end 2026-06-25,
+1114 days) the PBO falls from 0.534 to 0.484, flipping the K_rank verdict from NO-GO to GO.
+
+Consequence: `run_improve.json` is NOT a stable record — it regenerates with live data.
+Anyone citing the verdict should report PBO together with its panel end date. To produce
+a stable, citable record, pin the panel window (e.g. `panel_end="2026-06-12"`) before
+re-running, or treat the committed `run_improve.json` as the canonical snapshot for the
+stated panel (2026-06-12).
+
+---
+
+## Survivorship bias caveat
+
+All ABSOLUTE headline numbers in this study (e.g. baseline +33%/yr, Calmar 1.31) are
+computed on the frozen survivor universe (32 coins that survived to mid-2026). According
+to `research/cross_sectional/crypto/survivorship.json`, the survivorship premium on this
+same universe is approximately **+0.46 Sharpe / +20.6%/yr** vs a point-in-time universe
+that includes dead/delisted HL coins (survivor book: Sharpe 1.22 / +50%/yr; point-in-time:
+Sharpe 0.76 / +29.5%/yr). The bias is concentrated in 2023–H1 2024 (h1 Sharpe premium
++0.94) and is near-zero in H2 (≈ −0.05).
+
+For **forward planning**, use the point-in-time figures (Sharpe ~0.76, ann ~+29.5%) as
+the realistic baseline, not the survivor figures (~1.2 Sharpe, ~+50%/yr).
+
+Importantly, the RELATIVE arm-vs-baseline comparisons that drive the NO-GO/inconclusive
+verdicts are largely robust to this bias: survivorship is common-mode (the same frozen
+universe is used for baseline and every arm), so the bias cancels in arm-vs-baseline
+deltas. The PBO calculation is similarly unaffected. Only absolute forward-return
+projections need adjustment.
 
 ---
 

@@ -322,6 +322,33 @@ re-normalisation is needed.
 
 ---
 
+## Survivorship bias caveat
+
+All ABSOLUTE headline numbers in this study (e.g. baseline +32.98%/yr, Sharpe 0.96,
+Calmar 1.31) are computed on the frozen survivor universe (32 coins that survived to
+mid-2026). According to `research/cross_sectional/crypto/survivorship.json`, the
+survivorship premium on the same universe is approximately **+0.46 Sharpe / +20.6%/yr**
+vs a point-in-time universe that includes dead/delisted HL coins:
+
+| | Sharpe | Ann return | Calmar |
+|---|---|---|---|
+| Frozen survivor book | 1.22 | +50.0% | 1.88 |
+| Point-in-time book | 0.76 | +29.5% | 1.06 |
+| Survivorship premium | +0.46 | +20.6%/yr | — |
+
+The bias is concentrated in 2023–H1 2024 (Sharpe premium +0.94) and is near-zero in H2
+(≈ −0.05). Verdict from that file: "LARGE SURVIVORSHIP BIAS — FORWARD NUMBERS UNRELIABLE."
+
+For **forward planning**, the realistic baseline is Sharpe ~0.76 / ann ~+29.5% (point-in-
+time), not the survivor figures (~1.2 Sharpe, ~+50%/yr).
+
+Importantly, the RELATIVE arm-vs-baseline comparisons that drive the NO-GO verdicts here
+are largely robust to this bias: survivorship is common-mode (the same frozen universe for
+baseline and every arm), so it cancels in arm-vs-baseline deltas. The PBO = 0.730 result
+is unaffected. Only absolute forward-return projections need adjustment.
+
+---
+
 ## Reproduce Commands
 
 ```bash
