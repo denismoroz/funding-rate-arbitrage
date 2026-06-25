@@ -1,0 +1,112 @@
+{
+  "name": "Onchain Fundamental Momentum (fee-growth cross-sectional)",
+  "selected_name": "ens_30_60_90",
+  "coins": [
+    "ONCHAIN"
+  ],
+  "n_portfolio_hours": 1114,
+  "menu_size": 4,
+  "pooled_oos": {
+    "n_segments": 25,
+    "dist": {
+      "annual_pct": {
+        "median": 0.33,
+        "iqr_lo": 0.02,
+        "iqr_hi": 0.64
+      },
+      "sharpe": {
+        "median": 2.82,
+        "iqr_lo": 0.19,
+        "iqr_hi": 5.18
+      },
+      "max_dd_pct": {
+        "median": 0.02,
+        "iqr_lo": 0.01,
+        "iqr_hi": 0.02
+      },
+      "calmar": {
+        "median": 15.04,
+        "iqr_lo": 1.17,
+        "iqr_hi": 42.16
+      }
+    },
+    "frac_calmar_pos": 0.8,
+    "frac_sharpe_pos": 0.8
+  },
+  "pbo": {
+    "pbo": 0.6951048951048951,
+    "n_splits": 12870,
+    "S": 16,
+    "median_oos_rank": 0.4,
+    "is_best_counts": {
+      "growth90": 6350,
+      "ens_30_60_90": 2332,
+      "growth30": 2193,
+      "growth60": 1995
+    }
+  },
+  "dsr": {
+    "dsr": 0.690445321152062,
+    "sr_hat": 0.02946399842357436,
+    "sr_star_deflated": 0.014501896170222801,
+    "psr_vs_zero": 0.8361941412587577,
+    "n_trials": 4,
+    "var_sr_trials": 0.0001899838562432742,
+    "T": 1114,
+    "skew": -0.2046620779593283,
+    "kurt": 11.24853841027328,
+    "selected": "ens_30_60_90"
+  },
+  "per_coin_calmar_median": {
+    "ONCHAIN": 15.04
+  },
+  "max_lookback_days": 180,
+  "common_coins": [
+    "AAVE",
+    "UNI",
+    "JUP",
+    "ENA",
+    "JTO",
+    "CRV",
+    "LINK",
+    "EIGEN",
+    "PENDLE",
+    "ZRO",
+    "ETH",
+    "SOL",
+    "TRX",
+    "BNB",
+    "ARB",
+    "AVAX",
+    "SUI",
+    "INJ"
+  ],
+  "coverage": {
+    "n_coins": 18,
+    "n_days": 1114,
+    "date_start": "2023-06-08",
+    "date_end": "2026-06-25",
+    "per_year_median_valid_coins": {
+      "2023": 15.0,
+      "2024": 16.0,
+      "2025": 18.0,
+      "2026": 18.0
+    }
+  },
+  "orthogonality": {
+    "corr_BTC_buyhold": -0.003269947415981122,
+    "corr_FRAB_carry": 0.007552803154263306,
+    "corr_XSMOM_momentum": 0.14132684033844156
+  },
+  "book_pnl_sum": 0.7202655003957142,
+  "book_pnl_days": 1114,
+  "book_pnl_ann": 0.16293259075378813,
+  "oos_sharpe_median": 2.82,
+  "oos_calmar_median": 15.04,
+  "verdict": "NO-GO",
+  "gates": {
+    "dsr_pass": false,
+    "pbo_pass": false,
+    "orth_pass": true
+  }
+}

@@ -1,0 +1,5 @@
+# Raw DefiLlama response cache (large JSON files)
+data/raw_*.json
+data/*.json
+__pycache__/
+*.pyc
