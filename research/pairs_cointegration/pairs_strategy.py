@@ -125,8 +125,10 @@ def simulate_pair(
     PnL на каждом баре (дневной):
       position: +1 = long_a/short_b, -1 = short_a/long_b, 0 = flat
       gross_pnl = pos * (ret_a - β * ret_b) * notional   (price-return нейтральный к BTC)
-      funding_accrual = pos * (funding_a - funding_b) * notional
-        (long_a получает funding_a; short_b платит funding_b, т.е. нога b: -pos*funding_b)
+      funding_accrual = -pos * (funding_a - funding_b) * notional
+        (long pays positive funding: long_a ПЛАТИТ fund_a, short_b ПОЛУЧАЕТ fund_b →
+         net = -(fund_a - fund_b) for pos=+1; знак -pos*(...) — канонично, как
+         accrual = -funding в survivorship.py / cross_sectional)
       cost_pnl = -|Δpos| * notional * 2 * PERP_COST_PER_LEG   (2 ноги при входе/выходе)
     """
     # Препроцессинг на полном df (seam-safe)
@@ -186,10 +188,10 @@ def simulate_pair(
             # pos=+1: long_a, short_b → notional*(ret_a - bi*ret_b)
             # pos=-1: short_a, long_b → notional*(-ret_a + bi*ret_b)
             gross = float(pos) * (ret_a_seg[i] - bi * ret_b_seg[i]) * notional
-            # Funding accrual за удержание через бар:
-            # pos=+1: long_a получает fund_a, short_b платит fund_b → fund_a - fund_b
-            # pos=-1: знак инвертируется
-            net_fund = float(pos) * (fund_a_seg[i] - fund_b_seg[i]) * notional
+            # Funding accrual за удержание через бар (long PAYS positive funding):
+            # pos=+1: long_a ПЛАТИТ fund_a, short_b ПОЛУЧАЕТ fund_b → net = -(fund_a - fund_b)
+            # pos=-1: знак инвертируется → +pos*(fund_a - fund_b), т.е. всегда -pos*(...)
+            net_fund = -float(pos) * (fund_a_seg[i] - fund_b_seg[i]) * notional
         else:
             gross = 0.0
             net_fund = 0.0

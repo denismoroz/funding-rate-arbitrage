@@ -58,7 +58,8 @@ def check_buyhold_spread_matches_direct() -> None:
 
     # Прямой расчёт:
     # Открыть позицию +1 в t=0 (платим 2 ноги кост)
-    # PnL_i = (ret_a[i] - β[i]*ret_b[i]) * notional + (fund_a[i] - fund_b[i]) * notional
+    # PnL_i = (ret_a[i] - β[i]*ret_b[i]) * notional - (fund_a[i] - fund_b[i]) * notional
+    #   (long PAYS positive funding: net_fund = -pos*(fund_a - fund_b)*notional)
     # Закрыть в последний бар (платим 2 ноги кост)
     precompute_signals(df, cfg)
 
@@ -73,7 +74,7 @@ def check_buyhold_spread_matches_direct() -> None:
     n = len(df)
     # Прямой расчёт: всегда pos=+1, открытие t=0, закрытие t=n-1
     gross_direct = np.sum((ret_a[1:] - beta[1:] * ret_b[1:]) * PAIR_NOTIONAL)
-    fund_direct  = np.sum((fa[1:] - fb[1:]) * PAIR_NOTIONAL)
+    fund_direct  = np.sum(-(fa[1:] - fb[1:]) * PAIR_NOTIONAL)  # long pays positive funding
     open_cost    = PAIR_NOTIONAL * PERP_COST_PER_LEG * 2   # open: 2 legs
     close_cost   = PAIR_NOTIONAL * PERP_COST_PER_LEG * 2   # close: 2 legs
     direct_total = gross_direct + fund_direct - open_cost - close_cost
@@ -101,10 +102,10 @@ def _buyhold_simulate(df: pd.DataFrame, cfg: PairConfig) -> float:
     total = 0.0
     # t=0: вход (открытие)
     total -= PAIR_NOTIONAL * PERP_COST_PER_LEG * 2
-    # t=1..n-1: удерживаем
+    # t=1..n-1: удерживаем; long PAYS positive funding → net_fund = -(fa - fb)*notional
     for i in range(1, n):
         total += (ret_a[i] - beta[i] * ret_b[i]) * PAIR_NOTIONAL
-        total += (fa[i] - fb[i]) * PAIR_NOTIONAL
+        total -= (fa[i] - fb[i]) * PAIR_NOTIONAL  # long pays positive funding
     # Закрытие
     total -= PAIR_NOTIONAL * PERP_COST_PER_LEG * 2
     return total
@@ -157,8 +158,9 @@ def _cheat_simulate_pair(
         pos = 1 if ds > 0 else -1
 
         # PnL at bar i+1 (we hold position decided at i, realised at i+1)
+        # long pays positive funding: net_fund = -pos*(fund_a - fund_b)*notional
         gross = float(pos) * (ret_a_seg[i + 1] - beta_seg[i + 1] * ret_b_seg[i + 1]) * notional
-        net_fund = float(pos) * (fund_a_seg[i + 1] - fund_b_seg[i + 1]) * notional
+        net_fund = -float(pos) * (fund_a_seg[i + 1] - fund_b_seg[i + 1]) * notional
         turnover = abs(pos - prev_pos)
         cost = turnover * notional * PERP_COST_PER_LEG * 2
 
@@ -232,6 +234,230 @@ class _RandomPairStrategy:
         self._precompute_random(df)
         cfg = self._menu[self._cfg_name]
         return simulate_pair(df, seg, cfg)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ЭТАЛОН 4: детерминированный синтетический тест simulate_pair
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_synthetic_df(n: int = 100, entry_z: float = 2.0, z_window: int = 30) -> pd.DataFrame:
+    """Построить синтетический df с колонками, которые читает simulate_pair.
+
+    Конструкция:
+      - log_price_a / log_price_b: постоянные, кроме двух баров удержания, где
+        ret_a - beta*ret_b = KNOWN_GROSS_PER_BAR (определяемое константой ниже).
+      - _z: принудительно ниже -entry_z на баре ENTRY_BAR, затем >=0 на EXIT_BAR
+        (чтобы simulate_pair вошёл и вышел в известный момент).
+      - _beta = 1.0, _alpha = 0.0 всюду.
+      - funding_a = funding_b = 0.0 (чтобы убрать влияние funding из ручного расчёта).
+      - _spread = 0.0 (не используется simulate_pair напрямую, только через _z).
+    """
+    ENTRY_BAR  = z_window      # первый бар, где z не NaN и мы входим
+    EXIT_BAR   = ENTRY_BAR + 3  # z пересечёт 0 здесь → выход
+
+    # Константа gross за каждый бар удержания (в долях от notional):
+    # удерживаем с бара ENTRY_BAR+1 по EXIT_BAR включительно
+    KNOWN_RET = 0.005   # 0.5% в каждую ногу
+
+    idx = pd.RangeIndex(n)
+    df = pd.DataFrame(index=idx)
+
+    # log_price: нулевые дрейфы всюду, кроме баров удержания
+    lpa = np.zeros(n, dtype=float)
+    lpb = np.zeros(n, dtype=float)
+    # Позиция +1 (long_a/short_b) открывается на ENTRY_BAR,
+    # зарабатывает за бары ENTRY_BAR+1 .. EXIT_BAR:
+    for i in range(ENTRY_BAR + 1, EXIT_BAR + 1):
+        # ret_a[i] = KNOWN_RET, ret_b[i] = 0 → gross = pos*(ret_a - beta*ret_b) = +KNOWN_RET
+        lpa[i] = lpa[i - 1] + KNOWN_RET
+        lpb[i] = lpb[i - 1]   # flat → ret_b = 0
+    # После EXIT_BAR — продолжаем с тем же значением lpa
+    for i in range(EXIT_BAR + 1, n):
+        lpa[i] = lpa[EXIT_BAR]
+        lpb[i] = lpb[EXIT_BAR]
+
+    df["log_price_a"] = lpa
+    df["log_price_b"] = lpb
+    df["funding_a"]   = 0.0
+    df["funding_b"]   = 0.0
+    df["resid_a"]     = 0.0   # не используется simulate_pair (только precompute_signals)
+    df["resid_b"]     = 0.0
+
+    # Сигналы: _z, _beta, _alpha, _spread уже заданы вручную
+    z = np.full(n, float("nan"))
+    # warm-up: NaN до ENTRY_BAR-1
+    # вход: z[ENTRY_BAR] < -entry_z
+    z[ENTRY_BAR] = -entry_z - 0.5          # триггер входа long_a/short_b
+    # бары между входом и выходом: держим (z не нулевой)
+    for i in range(ENTRY_BAR + 1, EXIT_BAR):
+        z[i] = -entry_z + 0.1              # ещё в зоне удержания (не пересекло 0)
+    # выход: z[EXIT_BAR] >= 0
+    z[EXIT_BAR] = 0.1                      # z пересёк 0 → выход
+    for i in range(EXIT_BAR + 1, n):
+        z[i] = 0.0                         # после выхода — flat
+
+    df["_z"]      = z
+    df["_beta"]   = 1.0
+    df["_alpha"]  = 0.0
+    df["_spread"] = 0.0
+
+    return df, ENTRY_BAR, EXIT_BAR, KNOWN_RET
+
+
+def check_simulate_pair_deterministic() -> None:
+    """Детерминированный тест: simulate_pair даёт ТОЧНЫЙ ожидаемый PnL (rel.err < 1e-9)
+    и ОТЛИЧАЕТСЯ от off-by-one (buggy) варианта.
+
+    Конструкция:
+      - Синтетический df: z ниже -entry_z на баре ENTRY_BAR → вход pos=+1.
+        z пересекает 0 на EXIT_BAR → выход. funding=0, beta=1.
+      - Correct alignment: pos decided at bar i-1, earns ret[i].
+        Bars held = ENTRY_BAR+1 .. EXIT_BAR (EXIT_BAR - ENTRY_BAR баров).
+        На каждом баре: gross = 1 * KNOWN_RET * PAIR_NOTIONAL, fund = 0.
+        Costs: вход на ENTRY_BAR (turnover=1), выход на EXIT_BAR (turnover=1).
+      - Buggy alignment (off-by-one): pos decided at bar i, earns ret[i] SAME bar.
+        Bar ENTRY_BAR itself earns ret[ENTRY_BAR] (не KNOWN_RET, т.к. sret изменяется
+        только начиная с ENTRY_BAR+1).
+        Bar EXIT_BAR тоже считается, но разница в том, что вход-бар приносит другой ret.
+    """
+    n = 120
+    entry_z_val = 2.0
+    z_window = 30
+
+    df, ENTRY_BAR, EXIT_BAR, KNOWN_RET = _make_synthetic_df(
+        n=n, entry_z=entry_z_val, z_window=z_window
+    )
+
+    cfg = PairConfig(
+        z_window=z_window,
+        entry_z=entry_z_val,
+        time_stop_bars=200,      # не триггерим time-stop
+        kalman=KalmanConfig(q=DEFAULT_Q, R=DEFAULT_R),
+    )
+
+    seg = slice(0, n)
+    pnl = simulate_pair(df, seg, cfg, notional=PAIR_NOTIONAL)
+
+    # ── Ручной расчёт ожидаемого PnL ─────────────────────────────────────────
+    # Позиция pos=+1 держится с ENTRY_BAR до EXIT_BAR (открыта в конце ENTRY_BAR,
+    # закрыта в конце EXIT_BAR). PnL зарабатывается на барах ENTRY_BAR+1..EXIT_BAR.
+    n_held_bars = EXIT_BAR - ENTRY_BAR  # = 3
+
+    gross_per_bar = KNOWN_RET * PAIR_NOTIONAL  # pos=+1, ret_a-beta*ret_b=KNOWN_RET
+    total_gross   = n_held_bars * gross_per_bar
+
+    # Costs: вход на ENTRY_BAR (turnover |1-0|=1), выход на EXIT_BAR (turnover |0-1|=1)
+    open_cost  = 1 * PAIR_NOTIONAL * PERP_COST_PER_LEG * 2
+    close_cost = 1 * PAIR_NOTIONAL * PERP_COST_PER_LEG * 2
+
+    expected_total = total_gross - open_cost - close_cost
+
+    actual_total = float(pnl.sum())
+    rel_err = abs(actual_total - expected_total) / (abs(expected_total) + 1e-12)
+    print(
+        f"[deterministic] expected={expected_total:.6f}  actual={actual_total:.6f}"
+        f"  rel.err={rel_err:.2e}"
+    )
+    assert rel_err < 1e-9, (
+        f"simulate_pair deterministic mismatch: expected={expected_total:.8f}"
+        f" got={actual_total:.8f} rel.err={rel_err:.2e}"
+    )
+
+    # ── Timing-sensitivity: off-by-one buggy variant должен давать другой результат ──
+    # Buggy: position decided at bar i earns ret[i] (NOT ret[i+1]).
+    # We implement the buggy variant locally and verify it differs.
+    def _buggy_simulate(df_: pd.DataFrame, seg_: slice, cfg_: PairConfig,
+                        notional: float = PAIR_NOTIONAL) -> np.ndarray:
+        """Off-by-one variant: pos updated BEFORE computing PnL for bar i.
+
+        This mimics the bug where z[i] decides pos which then earns ret[i] same bar
+        (look-ahead contamination).
+        """
+        sub = df_.iloc[seg_]
+        n_sub = len(sub)
+        z     = sub["_z"].values
+        beta  = sub["_beta"].values
+
+        lpa_ = df_["log_price_a"].values
+        lpb_ = df_["log_price_b"].values
+        ret_a_ = np.diff(lpa_, prepend=lpa_[0])
+        ret_b_ = np.diff(lpb_, prepend=lpb_[0])
+        fa_ = df_["funding_a"].values
+        fb_ = df_["funding_b"].values
+
+        sl = slice(seg_.start, seg_.stop)
+        ret_a_seg  = ret_a_[sl]
+        ret_b_seg  = ret_b_[sl]
+        fund_a_seg = fa_[sl]
+        fund_b_seg = fb_[sl]
+
+        pnl_ = np.zeros(n_sub)
+        pos  = 0
+        bars_held = 0
+        entry_z_ = cfg_.entry_z
+        time_stop_ = cfg_.time_stop_bars
+
+        for i in range(n_sub):
+            zi = z[i]
+            bi = beta[i]
+            if np.isnan(zi):
+                continue
+
+            prev_pos = pos
+
+            # BUG: update position FIRST, then earn ret[i] with the NEW position
+            if pos != 0:
+                bars_held += 1
+                exit_cond = (
+                    (pos == 1 and zi >= 0.0) or
+                    (pos == -1 and zi <= 0.0) or
+                    (bars_held >= time_stop_)
+                )
+                if exit_cond:
+                    pos = 0
+                    bars_held = 0
+            if pos == 0:
+                if zi < -entry_z_:
+                    pos = 1
+                    bars_held = 0
+                elif zi > entry_z_:
+                    pos = -1
+                    bars_held = 0
+
+            # PnL earned by the NEW pos (off-by-one)
+            if pos != 0:
+                gross_ = float(pos) * (ret_a_seg[i] - bi * ret_b_seg[i]) * notional
+                net_fund_ = -float(pos) * (fund_a_seg[i] - fund_b_seg[i]) * notional
+            else:
+                gross_ = 0.0
+                net_fund_ = 0.0
+
+            turnover_ = abs(pos - prev_pos)
+            cost_ = turnover_ * notional * PERP_COST_PER_LEG * 2
+            pnl_[i] = gross_ + net_fund_ - cost_
+
+        return pnl_
+
+    buggy_pnl   = _buggy_simulate(df, seg, cfg)
+    buggy_total = float(buggy_pnl.sum())
+
+    # The buggy total must differ from the correct total (timing matters here
+    # because ENTRY_BAR itself has ret_a=0 under our construction while
+    # ENTRY_BAR+1..EXIT_BAR have ret_a=KNOWN_RET).
+    print(
+        f"[timing-sensitivity] correct={actual_total:.6f}  buggy={buggy_total:.6f}"
+        f"  differ={abs(actual_total - buggy_total):.6f}"
+    )
+    assert abs(actual_total - buggy_total) > 1e-9, (
+        "TIMING TEST FAILED: buggy off-by-one gives same result as correct — "
+        "the synthetic df does not discriminate timing!"
+    )
+    assert abs(actual_total - expected_total) < abs(buggy_total - expected_total), (
+        "ALIGNMENT TEST FAILED: correct simulate_pair is FURTHER from expected than "
+        f"buggy variant. correct={actual_total:.8f} buggy={buggy_total:.8f} "
+        f"expected={expected_total:.8f}"
+    )
+    print("[timing-sensitivity] OK: correct и buggy отличаются; correct ближе к expected.")
 
 
 # ── Package-обёртки ───────────────────────────────────────────────────────────
@@ -329,6 +555,11 @@ def main() -> None:
     print("PAIRS SELF-TEST — Ф6")
     print("=" * 72)
 
+    # Эталон 4 (новый): детерминированный тест simulate_pair + timing-sensitivity
+    print("\n[ЭТАЛОН 4] детерминированный синтетический тест simulate_pair (timing/sign)")
+    check_simulate_pair_deterministic()
+    print("  OK: rel.err < 1e-9 и timing-sensitivity подтверждена")
+
     # Эталон 3: buy&hold spread matches direct
     print("\n[ЭТАЛОН 3] buy&hold spread = прямой расчёт")
     check_buyhold_spread_matches_direct()
@@ -371,7 +602,7 @@ def main() -> None:
     assert dC > 0.50, f"cheat DSR слишком низкий: {dC:.3f}"
 
     print("\n[OK] Направления верны: cheat DSR >> random DSR, random PBO >> cheat PBO")
-    print("[OK] Все 3 эталона пройдены.")
+    print("[OK] Все 4 эталона пройдены.")
 
 
 if __name__ == "__main__":
