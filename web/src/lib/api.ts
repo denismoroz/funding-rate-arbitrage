@@ -246,10 +246,12 @@ export function fetchStrategy(id: number): Promise<Strategy> {
 
 export function fetchEquity(
   strategyId: number,
-  opts?: { limit?: number },
+  opts?: { limit?: number; sinceMs?: number; bucketMs?: number },
 ): Promise<EquitySnapshot[]> {
   const params = new URLSearchParams({ strategy_id: String(strategyId) });
   if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.sinceMs != null) params.set("since_ms", String(opts.sinceMs));
+  if (opts?.bucketMs != null) params.set("bucket_ms", String(opts.bucketMs));
   return apiFetch<EquitySnapshot[]>(`/equity?${params}`);
 }
 

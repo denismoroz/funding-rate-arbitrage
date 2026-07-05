@@ -4,7 +4,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
@@ -20,14 +20,38 @@ logger = logging.getLogger(__name__)
 async def list_equity(
     strategy_id: int,
     limit: int = 1000,
+    since_ms: int | None = None,
+    bucket_ms: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
-    stmt = (
-        select(EquitySnapshot)
-        .where(EquitySnapshot.strategy_id == strategy_id)
-        .order_by(EquitySnapshot.ts_ms.desc())
-        .limit(limit)
-    )
+    """Return equity snapshots for a strategy, newest ``limit`` rows.
+
+    Snapshots are written every minute-tick, so a raw ``limit`` clips the chart
+    to ``limit`` minutes of history (e.g. 2000 rows ≈ 33h). To draw a long
+    window without a huge payload, pass ``bucket_ms`` (e.g. 3_600_000 for
+    hourly) and the query is downsampled to the last snapshot in each bucket.
+    ``since_ms`` bounds the range from below (e.g. an equity-chart baseline).
+    """
+    stmt = select(EquitySnapshot).where(EquitySnapshot.strategy_id == strategy_id)
+    if since_ms is not None:
+        stmt = stmt.where(EquitySnapshot.ts_ms >= since_ms)
+
+    if bucket_ms and bucket_ms > 0:
+        # One row per time bucket: the latest ts_ms in each bucket. ts_ms is
+        # unique per strategy (one write per minute), so max() picks exactly one
+        # snapshot per bucket and the .in_() matches it 1:1.
+        bucket = cast(EquitySnapshot.ts_ms / bucket_ms, Integer)
+        latest_per_bucket = select(func.max(EquitySnapshot.ts_ms)).where(
+            EquitySnapshot.strategy_id == strategy_id
+        )
+        if since_ms is not None:
+            latest_per_bucket = latest_per_bucket.where(
+                EquitySnapshot.ts_ms >= since_ms
+            )
+        latest_per_bucket = latest_per_bucket.group_by(bucket)
+        stmt = stmt.where(EquitySnapshot.ts_ms.in_(latest_per_bucket))
+
+    stmt = stmt.order_by(EquitySnapshot.ts_ms.desc()).limit(limit)
     result = await session.execute(stmt)
     snapshots = result.scalars().all()
     snapshots.reverse()  # ascending order for chart

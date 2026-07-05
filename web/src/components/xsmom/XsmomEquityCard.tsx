@@ -158,9 +158,9 @@ export function XsmomEquityCard() {
             <XAxis
               dataKey="ts_ms"
               tickFormatter={(v: number) =>
-                tsMsToDate(v).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
+                tsMsToDate(v).toLocaleDateString([], {
+                  month: "short",
+                  day: "numeric",
                 })
               }
               tick={{ fontSize: 11 }}

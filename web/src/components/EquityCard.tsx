@@ -54,7 +54,9 @@ export function EquityCard() {
 
   const { data: stratData, isLoading, error } = useQuery({
     queryKey: ["equity", strategyId],
-    queryFn: () => fetchEquity(strategyId!, { limit: 2000 }),
+    // Hourly downsample so the chart spans the full history instead of the
+    // last ~33h a raw per-minute limit=2000 would clip to.
+    queryFn: () => fetchEquity(strategyId!, { limit: 2000, bucketMs: 3_600_000 }),
     enabled: !!strategyId,
   });
 
@@ -65,26 +67,24 @@ export function EquityCard() {
   });
 
   const slice: ChartPoint[] = useMemo(() => {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    const all = (stratData ?? []).map<ChartPoint>((s) => ({
+    return (stratData ?? []).map<ChartPoint>((s) => ({
       ts_ms: s.ts_ms,
       value: s.total_equity,
       funding_cum: s.funding_cum,
       fees_cum: s.fees_cum,
     }));
-    const recent = all.filter((d) => d.ts_ms >= cutoff);
-    return recent.length > 0 ? recent : all;
   }, [stratData]);
 
   const latestStrat = stratData && stratData.length > 0 ? stratData[stratData.length - 1] : undefined;
   const totalDisplay = latestStrat?.total_equity;
 
-  const { yDecimals, yDomain, chartTitle } = useMemo(() => {
+  const { yDecimals, yDomain, chartTitle, multiDay } = useMemo(() => {
     if (slice.length === 0) {
       return {
         yDecimals: 2,
         yDomain: ["auto", "auto"] as [string, string],
-        chartTitle: "Equity (last 24h)",
+        chartTitle: "Equity",
+        multiDay: false,
       };
     }
     const values = slice.map((d) => d.value);
@@ -106,10 +106,11 @@ export function EquityCard() {
     const lastTs = slice[slice.length - 1].ts_ms;
     const spanMs = lastTs - firstTs;
     const spanHours = spanMs / (1000 * 60 * 60);
+    const spanDays = spanHours / 24;
     const spanMinutes = spanMs / (1000 * 60);
     let title: string;
-    if (spanHours >= 23) {
-      title = "Equity (last 24h)";
+    if (spanDays >= 2) {
+      title = `Equity (last ${Math.floor(spanDays)}d)`;
     } else if (spanHours >= 1) {
       title = `Equity (last ${Math.floor(spanHours)}h)`;
     } else {
@@ -117,7 +118,7 @@ export function EquityCard() {
       title = `Equity (last ${mins}m)`;
     }
 
-    return { yDecimals: dec, yDomain: domain, chartTitle: title };
+    return { yDecimals: dec, yDomain: domain, chartTitle: title, multiDay: spanDays >= 1 };
   }, [slice]);
 
   return (
@@ -175,10 +176,15 @@ export function EquityCard() {
             <XAxis
               dataKey="ts_ms"
               tickFormatter={(v: number) =>
-                tsMsToDate(v).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
+                multiDay
+                  ? tsMsToDate(v).toLocaleDateString([], {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : tsMsToDate(v).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
               }
               tick={{ fontSize: 11 }}
               minTickGap={60}

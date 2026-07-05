@@ -158,6 +158,44 @@ async def test_get_equity_limit_returns_most_recent(api_client, session_factory)
      assert data[2]["ts_ms"] == _ms(9)
 
 
+async def test_get_equity_bucket_ms_downsamples_and_since_ms_bounds(
+    api_client, session_factory
+):
+    # Six per-minute snapshots spanning two hours (3 in each hour). With
+    # bucket_ms=1h we expect one row per hour — the latest in each bucket —
+    # and since_ms clips the earlier hour away.
+    minute = 60_000
+    base = _ms(0)  # top of an hour
+    async with session_scope(session_factory) as s:
+        stg = Strategy(name="s3", version="v1", params_json={}, status="idle")
+        s.add(stg)
+        await s.flush()
+        sid = stg.id
+        offsets = [0, minute, 2 * minute,  # hour 0
+                   3600_000, 3600_000 + minute, 3600_000 + 2 * minute]  # hour 1
+        for i, off in enumerate(offsets):
+            s.add(EquitySnapshot(
+                strategy_id=sid, ts_ms=base + off,
+                total_equity=1000.0 + i, cash=500.0, spot_value=0.0,
+                perp_unrealized=0.0, perp_realized_cum=0.0,
+                funding_cum=0.0, fees_cum=0.0,
+            ))
+
+    resp = await api_client.get(
+        f"/api/equity?strategy_id={sid}&bucket_ms=3600000"
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # One point per hour: the last snapshot in each bucket.
+    assert [d["ts_ms"] for d in data] == [base + 2 * minute, base + 3600_000 + 2 * minute]
+
+    # since_ms drops the first hour's bucket entirely.
+    resp2 = await api_client.get(
+        f"/api/equity?strategy_id={sid}&bucket_ms=3600000&since_ms={base + 3600_000}"
+    )
+    assert [d["ts_ms"] for d in resp2.json()] == [base + 3600_000 + 2 * minute]
+
+
 # ---------------------------------------------------------------------------
 # /api/positions — stubbed in Step 3
 # ---------------------------------------------------------------------------

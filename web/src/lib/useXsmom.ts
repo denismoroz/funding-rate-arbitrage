@@ -82,7 +82,9 @@ export function useXsmomEquity() {
   const strategyId = useXsmomStrategyId();
   return useQuery({
     queryKey: ["xsmom-equity", strategyId],
-    queryFn: () => fetchEquity(strategyId!, { limit: 2000 }),
+    // Hourly downsample so the chart spans the full baseline window (~weeks)
+    // instead of the last ~33h that a raw per-minute limit=2000 would clip to.
+    queryFn: () => fetchEquity(strategyId!, { limit: 2000, bucketMs: 3_600_000 }),
     enabled: !!strategyId,
     refetchInterval: 60_000,
   });
