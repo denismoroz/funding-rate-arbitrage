@@ -255,6 +255,13 @@ export function fetchEquity(
   return apiFetch<EquitySnapshot[]>(`/equity?${params}`);
 }
 
+/** Clip the equity chart start to now for a strategy (hides older history). */
+export function resetEquity(strategyId: number): Promise<{ equity_baseline_ms: number }> {
+  return apiPost<{ equity_baseline_ms: number }>(
+    `/equity/reset?strategy_id=${strategyId}`,
+  );
+}
+
 export type EquitySummary = {
   ts_ms: number;
   total: number;

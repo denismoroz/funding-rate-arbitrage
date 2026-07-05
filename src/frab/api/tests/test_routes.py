@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -98,6 +99,32 @@ async def test_get_strategy_by_id_not_found(api_client):
 async def test_get_equity_requires_strategy_id(api_client):
     resp = await api_client.get("/api/equity")
     assert resp.status_code == 422
+
+
+async def test_reset_equity_baseline_sets_now(api_client, session_factory):
+    async with session_scope(session_factory) as s:
+        stg = Strategy(name="frab", version="v1", params_json={"budget_cap_usdc": 1000},
+                       status="active")
+        s.add(stg)
+        await s.flush()
+        sid = stg.id
+
+    before = int(time.time() * 1000)
+    resp = await api_client.post(f"/api/equity/reset?strategy_id={sid}")
+    assert resp.status_code == 200
+    baseline = resp.json()["equity_baseline_ms"]
+    assert before <= baseline <= int(time.time() * 1000)
+
+    # Persisted onto params_json without clobbering existing keys.
+    async with session_scope(session_factory) as s:
+        row = await s.get(Strategy, sid)
+        assert row.params_json["equity_baseline_ms"] == baseline
+        assert row.params_json["budget_cap_usdc"] == 1000
+
+
+async def test_reset_equity_baseline_unknown_strategy_404(api_client):
+    resp = await api_client.post("/api/equity/reset?strategy_id=999999")
+    assert resp.status_code == 404
 
 
 async def test_get_equity_returns_snapshots_for_strategy(api_client, session_factory):

@@ -8,7 +8,7 @@ from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from frab.api.deps import get_session
-from frab.db.models import EquitySnapshot, FarbPosition as DBFarbPosition
+from frab.db.models import EquitySnapshot, FarbPosition as DBFarbPosition, Strategy
 from frab.domain.enums import ACTIVE_STATES, FarbState
 from frab.domain.equity import total_equity_usd
 
@@ -70,6 +70,27 @@ async def list_equity(
         }
         for s in snapshots
     ]
+
+
+@router.post("/reset")
+async def reset_equity_baseline(
+    strategy_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Set ``equity_baseline_ms = now`` in the strategy's params_json.
+
+    Clips the equity chart start to now (older history is hidden, not deleted).
+    Generic across strategies; the key is ignored by TwoPhaseParams.from_dict.
+    """
+    row = await session.get(Strategy, strategy_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    now = int(time.time() * 1000)
+    current = dict(row.params_json) if row.params_json else {}
+    current["equity_baseline_ms"] = now
+    row.params_json = current
+    session.add(row)
+    return {"equity_baseline_ms": now}
 
 
 @router.get("/wallet-history")

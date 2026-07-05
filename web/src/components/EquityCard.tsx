@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   LineChart,
   Line,
@@ -12,12 +13,16 @@ import {
 import {
   fetchEquity,
   fetchEquitySummary,
+  fetchStrategies,
+  resetEquity,
   tsMsToDate,
 } from "../lib/api";
 import { formatCurrency } from "../lib/format";
-import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Skeleton } from "./ui/Skeleton";
 import { ErrorMsg } from "./ui/ErrorMsg";
+
+/** Default equity-chart window when no baseline has been set (35 days). */
+const DEFAULT_WINDOW_MS = 35 * 24 * 60 * 60 * 1000;
 
 type ChartPoint = {
   ts_ms: number;
@@ -50,7 +55,22 @@ function EquityTooltip({
 }
 
 export function EquityCard() {
-  const strategyId = useActiveStrategyId();
+  const queryClient = useQueryClient();
+
+  const { data: strategies } = useQuery({
+    queryKey: ["strategies"],
+    queryFn: fetchStrategies,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+  const strategy = strategies?.find((s) => s.status !== "stopped");
+  const strategyId = strategy?.id;
+
+  // Chart start: explicit baseline if set, else default to 35 days ago.
+  const baseline =
+    typeof strategy?.params_json?.equity_baseline_ms === "number"
+      ? (strategy.params_json.equity_baseline_ms as number)
+      : Date.now() - DEFAULT_WINDOW_MS;
 
   const { data: stratData, isLoading, error } = useQuery({
     queryKey: ["equity", strategyId],
@@ -66,14 +86,37 @@ export function EquityCard() {
     refetchInterval: 30_000,
   });
 
+  const resetMutation = useMutation({
+    mutationFn: () => resetEquity(strategyId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["strategies"] });
+      queryClient.invalidateQueries({ queryKey: ["equity"] });
+    },
+    onError: (err: Error) => {
+      toast.error("Reset failed", { description: err.message });
+    },
+  });
+
+  function onReset() {
+    if (
+      window.confirm(
+        "Reset equity chart start to now? Older history will be hidden.",
+      )
+    ) {
+      resetMutation.mutate();
+    }
+  }
+
   const slice: ChartPoint[] = useMemo(() => {
-    return (stratData ?? []).map<ChartPoint>((s) => ({
-      ts_ms: s.ts_ms,
-      value: s.total_equity,
-      funding_cum: s.funding_cum,
-      fees_cum: s.fees_cum,
-    }));
-  }, [stratData]);
+    return (stratData ?? [])
+      .filter((s) => s.ts_ms >= baseline)
+      .map<ChartPoint>((s) => ({
+        ts_ms: s.ts_ms,
+        value: s.total_equity,
+        funding_cum: s.funding_cum,
+        fees_cum: s.fees_cum,
+      }));
+  }, [stratData, baseline]);
 
   const latestStrat = stratData && stratData.length > 0 ? stratData[stratData.length - 1] : undefined;
   const totalDisplay = latestStrat?.total_equity;
@@ -123,10 +166,11 @@ export function EquityCard() {
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold text-gray-700">
+      <div className="mb-3 flex items-baseline justify-between gap-x-3">
+        <h2 className="shrink-0 text-sm font-semibold text-gray-700">
           {chartTitle}
         </h2>
+        <div className="flex items-baseline gap-x-3">
         {(totalDisplay != null || latestStrat || summary) && (
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-gray-500">
             <span>
@@ -166,6 +210,15 @@ export function EquityCard() {
             )}
           </div>
         )}
+          <button
+            type="button"
+            onClick={onReset}
+            disabled={resetMutation.isPending || !strategyId}
+            className="shrink-0 whitespace-nowrap rounded border border-gray-300 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {resetMutation.isPending ? "Resetting…" : "Reset start"}
+          </button>
+        </div>
       </div>
       {isLoading && <Skeleton rows={6} />}
       {error instanceof Error && <ErrorMsg message={error.message} />}
