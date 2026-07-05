@@ -394,14 +394,24 @@ class EngineLoop:
         that share the table.
         """
         cutoff = now_ms - _WALLET_SNAPSHOT_RETENTION_MS
+        # Delete every old row that is strictly older than the freshest row in its
+        # own (exchange_id, coin, clock-hour) bucket — i.e. keep one row per hour.
+        # The earlier correlated-subquery form re-scanned the whole table once per
+        # candidate row (the ts_ms/3600000 expression can't use the index), which
+        # cost ~29s on prod and held the write lock long enough that the *other*
+        # EngineLoop's hourly funding save timed out on busy_timeout ("database is
+        # locked"). A single window-function pass over the old rows is identical in
+        # effect but runs in ~0.03s.
         async with session_scope(self._sf) as s:
             await s.execute(
                 text(
-                    "DELETE FROM wallet_snapshots WHERE ts_ms < :cutoff "
-                    "AND ts_ms < (SELECT MAX(w2.ts_ms) FROM wallet_snapshots w2 "
-                    "WHERE w2.exchange_id = wallet_snapshots.exchange_id "
-                    "AND w2.coin = wallet_snapshots.coin "
-                    "AND w2.ts_ms / 3600000 = wallet_snapshots.ts_ms / 3600000)"
+                    "DELETE FROM wallet_snapshots WHERE rowid IN ("
+                    "  SELECT rowid FROM ("
+                    "    SELECT rowid, ts_ms, MAX(ts_ms) OVER ("
+                    "      PARTITION BY exchange_id, coin, ts_ms / 3600000"
+                    "    ) AS grp_max"
+                    "    FROM wallet_snapshots WHERE ts_ms < :cutoff"
+                    "  ) WHERE ts_ms < grp_max)"
                 ),
                 {"cutoff": cutoff},
             )

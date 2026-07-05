@@ -16,9 +16,15 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from frab.db.models import Exchange as ExchangeRow, FundingRate as FundingRateRow, Price as PriceRow, Strategy as StrategyRow
+from frab.db.models import (
+    Exchange as ExchangeRow,
+    FundingRate as FundingRateRow,
+    Price as PriceRow,
+    Strategy as StrategyRow,
+    WalletSnapshot as WalletSnapshotRow,
+)
 from frab.db.session import init_db, make_session_factory, session_scope
-from frab.engine.loop import EngineLoop, utcnow_ms
+from frab.engine.loop import _WALLET_SNAPSHOT_RETENTION_MS, EngineLoop, utcnow_ms
 from frab.events.bus import EventBus
 from frab.exchanges.protocol import FundingTick, Quote, WalletKind
 from frab.strategy.two_phase import TwoPhaseParams
@@ -768,3 +774,49 @@ async def test_default_params_loader_unchanged(
     mock_strategy.reload_params.assert_called_once()
     called_arg = mock_strategy.reload_params.call_args[0][0]
     assert isinstance(called_arg, TwoPhaseParams)
+
+
+# ─── _prune_wallet_snapshots downsamples old rows to one-per-clock-hour ────────
+
+@pytest.mark.asyncio
+async def test_prune_wallet_snapshots_keeps_one_per_hour(
+    mock_exchange, mock_strategy, mock_ledger, seeded_db_session_factory,
+):
+    """Old rows (< cutoff) are thinned to the freshest row per (exchange, coin,
+    clock-hour); recent rows (>= cutoff) are never touched. This locks in the
+    window-function prune that replaced the O(N^2) correlated subquery."""
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, seeded_db_session_factory)
+    eid = await loop._resolve_exchange_id()
+
+    now_ms = 1_800_000_000_000
+    cutoff = now_ms - _WALLET_SNAPSHOT_RETENTION_MS
+    hour = 3_600_000
+    old_h = (cutoff // hour - 5) * hour          # an hour bucket safely older than cutoff
+    rec_h = (cutoff // hour + 2) * hour          # an hour bucket safely newer than cutoff
+
+    def snap(coin: str, ts: int) -> WalletSnapshotRow:
+        return WalletSnapshotRow(
+            exchange_id=eid, coin=coin, ts_ms=ts,
+            balance=1.0, source="test", account="0xabc",
+        )
+
+    async with session_scope(seeded_db_session_factory) as s:
+        # OLD, BTC, same hour → 3 rows, keep max (old_h + 120_000)
+        s.add_all([snap("BTC", old_h), snap("BTC", old_h + 60_000), snap("BTC", old_h + 120_000)])
+        # OLD, ETH, same hour → 2 rows, keep max (old_h + 60_000) — proves per-coin partition
+        s.add_all([snap("ETH", old_h), snap("ETH", old_h + 60_000)])
+        # RECENT, BTC, same hour → 2 rows, both survive (ts_ms >= cutoff)
+        s.add_all([snap("BTC", rec_h), snap("BTC", rec_h + 60_000)])
+
+    await loop._prune_wallet_snapshots(now_ms)
+
+    async with session_scope(seeded_db_session_factory) as s:
+        rows = (await s.execute(select(WalletSnapshotRow))).scalars().all()
+    survivors = {(r.coin, r.ts_ms) for r in rows}
+
+    assert survivors == {
+        ("BTC", old_h + 120_000),   # freshest of old BTC hour
+        ("ETH", old_h + 60_000),    # freshest of old ETH hour
+        ("BTC", rec_h),             # recent — untouched
+        ("BTC", rec_h + 60_000),    # recent — untouched
+    }
