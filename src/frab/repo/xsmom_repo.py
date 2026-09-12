@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from frab.domain import Side, XsmomPosition, XsmomState, XSMOM_ACTIVE_STATES
+from frab.domain import PositionStatus, Side, XsmomPosition, XsmomState, XSMOM_ACTIVE_STATES
+from frab.db.models import Position as DBPosition
 from frab.db.models import XsmomPosition as XsmomPositionRow
 from frab.db.models import XsmomScan as XsmomScanRow
 from frab.db.models import XsmomDailyPrice as XsmomDailyPriceRow
@@ -331,6 +332,28 @@ class XsmomRepo:
             updated_row = result.scalar_one_or_none()
             if updated_row is None:
                 raise XsmomStateConflict(id, "non-terminal", XsmomState(current.state))
+
+            # Release the COLLATERAL bookkeeping row. FAILED is terminal and never
+            # reaches CLOSE, the only other place that releases it, so the lock would
+            # stay OPEN forever and inflate reserved margin (4 stale locks = $179.40
+            # by Sep 2026). Kept open while the perp leg is still live: there the
+            # margin is genuinely in use and the operator needs to see it.
+            if updated_row.collateral_position_id is not None:
+                coll = await session.get(DBPosition, updated_row.collateral_position_id)
+                perp = (
+                    await session.get(DBPosition, updated_row.perp_position_id)
+                    if updated_row.perp_position_id is not None
+                    else None
+                )
+                perp_live = perp is not None and perp.status == PositionStatus.OPEN.value
+                if (
+                    coll is not None
+                    and coll.status == PositionStatus.OPEN.value
+                    and not perp_live
+                ):
+                    coll.status = PositionStatus.CLOSED.value
+                    coll.closed_at = now_ms
+
             return _to_domain(updated_row)
 
     # ── XsmomScan ─────────────────────────────────────────────────────────────

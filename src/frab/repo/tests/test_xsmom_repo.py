@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from frab.domain import Side, XsmomPosition, XsmomState
+from frab.domain import Instrument, PositionStatus, Side, XsmomPosition, XsmomState
 from frab.repo.xsmom_repo import XsmomRepo, XsmomStateConflict
 
 
@@ -600,3 +600,67 @@ async def test_state_conflict_error_message(session_factory, strategy_id):
     assert str(xp.id) in msg
     assert "opened" in msg
     assert "new" in msg
+
+
+# ---------------------------------------------------------------------------
+# mark_failed releases the COLLATERAL lock (FAILED never reaches CLOSE)
+# ---------------------------------------------------------------------------
+
+async def _make_position(session_factory, *, instrument, status=PositionStatus.OPEN, qty=44.85):
+    """Insert a standalone Position row and return its id."""
+    from frab.db.models import Exchange, Position
+    from frab.db.session import session_scope
+    async with session_scope(session_factory) as s:
+        exc = Exchange(name=f"HL-{instrument.value}-{qty}", funding_interval_h=1,
+                       spot_taker_bps=7.0, perp_taker_bps=3.5)
+        s.add(exc)
+        await s.flush()
+        pos = Position(
+            exchange_id=exc.id, coin="USDC", instrument=instrument, side=Side.NONE,
+            qty=qty, entry_price=1.0, opened_at=1_700_000_000_000, closed_at=None,
+            status=status, farb_position_id=None,
+        )
+        s.add(pos)
+        await s.flush()
+        return pos.id
+
+
+async def _position_status(session_factory, pid):
+    from frab.db.models import Position
+    from frab.db.session import session_scope
+    async with session_scope(session_factory) as s:
+        return (await s.get(Position, pid)).status
+
+
+async def test_mark_failed_releases_collateral_when_no_perp(session_factory, strategy_id):
+    """A FAILED position with no live perp leg must not keep its collateral locked.
+
+    Four such locks ($179.40) accumulated on prod because FAILED skips CLOSE.
+    """
+    coll_id = await _make_position(session_factory, instrument=Instrument.COLLATERAL)
+    repo = _repo(session_factory)
+    xp = await repo.create(
+        strategy_id=strategy_id, coin="JTO", side=Side.SHORT,
+        initial_state=XsmomState.NEW, state_data={},
+    )
+    await repo.set_leg(xp.id, collateral_position_id=coll_id)
+
+    await repo.mark_failed(xp.id, reason="HL order error: insufficient margin")
+
+    assert await _position_status(session_factory, coll_id) == PositionStatus.CLOSED
+
+
+async def test_mark_failed_keeps_collateral_while_perp_is_live(session_factory, strategy_id):
+    """If the perp leg is still OPEN the margin is genuinely used — keep the lock."""
+    coll_id = await _make_position(session_factory, instrument=Instrument.COLLATERAL)
+    perp_id = await _make_position(session_factory, instrument=Instrument.PERP, qty=1.0)
+    repo = _repo(session_factory)
+    xp = await repo.create(
+        strategy_id=strategy_id, coin="JTO", side=Side.SHORT,
+        initial_state=XsmomState.OPENED, state_data={},
+    )
+    await repo.set_leg(xp.id, collateral_position_id=coll_id, perp_position_id=perp_id)
+
+    await repo.mark_failed(xp.id, reason="close failed")
+
+    assert await _position_status(session_factory, coll_id) == PositionStatus.OPEN
