@@ -236,6 +236,22 @@ async def get_xsmom_summary(
         except Exception:  # noqa: BLE001
             cash = 0.0
 
+    # All-time result as HL computes it, net of deposits/withdrawals (best-effort).
+    # pnl_total below is unrealized on OPEN legs only, so a deposit can mask a
+    # drawdown and a closed losing cohort disappears from it entirely.
+    deposited: float | None = None
+    account_value: float | None = None
+    pnl_since_inception: float | None = None
+    if exchange is not None and hasattr(exchange, "get_portfolio"):
+        try:
+            portfolio = await exchange.get_portfolio()
+        except Exception:  # noqa: BLE001
+            portfolio = None
+        if portfolio is not None:
+            deposited = portfolio.net_deposits
+            account_value = portfolio.account_value
+            pnl_since_inception = portfolio.all_time_pnl
+
     # OPENED positions
     stmt = (
         select(XsmomPositionRow)
@@ -297,6 +313,9 @@ async def get_xsmom_summary(
 
     return {
         "cash": cash,
+        "deposited": deposited,
+        "account_value": account_value,
+        "pnl_since_inception": pnl_since_inception,
         "locked": locked,
         "free": max(cash - locked, 0.0),
         "long_total": long_total,

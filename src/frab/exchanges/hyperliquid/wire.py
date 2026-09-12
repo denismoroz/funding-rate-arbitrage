@@ -122,3 +122,22 @@ class HLCandle:
     open_ms: int    # candle open time (t)
     close_ms: int   # candle close time (T)
     close: float    # parsed from c
+
+
+@dataclass(frozen=True)
+class HLPortfolio:
+    """All-time account result as HL itself computes it.
+
+    HL's `portfolio` info endpoint reports PnL net of deposits and withdrawals,
+    so `all_time_pnl` answers "what did this wallet actually earn since day one",
+    which neither the raw balance (a deposit inflates it) nor the open-position
+    unrealized (a closed losing cohort vanishes from it) can answer alone.
+    """
+
+    account_value: float
+    all_time_pnl: float
+
+    @property
+    def net_deposits(self) -> float:
+        """Capital put in, net of withdrawals: value now minus what it earned."""
+        return self.account_value - self.all_time_pnl

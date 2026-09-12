@@ -30,6 +30,7 @@ from frab.exchanges.hyperliquid.wire import (
     HLPerpAssetPosition,
     HLPerpMarketSpec,
     HLPerpState,
+    HLPortfolio,
     HLSpotBalance,
     HLSpotMeta,
     HLSpotPair,
@@ -302,6 +303,22 @@ class HLClient:
         if self._info is None:
             raise RuntimeError("HLClient SDK reads require `info` handle")
         return self._info
+
+    async def portfolio(self, address: str) -> HLPortfolio:
+        """Return all-time account value and PnL for `address`.
+
+        The /info `portfolio` response is a list of [period, data] pairs; we read
+        the "allTime" bucket, whose pnlHistory is already net of transfers.
+        """
+        raw = await self._post({"type": "portfolio", "user": address})
+        buckets = dict(raw or [])
+        data = buckets.get("allTime") or {}
+        av = data.get("accountValueHistory") or []
+        pnl = data.get("pnlHistory") or []
+        return HLPortfolio(
+            account_value=float(av[-1][1]) if av else 0.0,
+            all_time_pnl=float(pnl[-1][1]) if pnl else 0.0,
+        )
 
     async def user_state(self, address: str) -> HLPerpState:
         """Return parsed perp account state for address."""

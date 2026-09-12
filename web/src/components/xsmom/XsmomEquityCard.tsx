@@ -137,6 +137,24 @@ export function XsmomEquityCard() {
             </>
           )}
         </div>
+        {summary?.pnl_since_inception != null && (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-gray-500">
+            <span title="Capital put in, net of withdrawals — a deposit no longer hides a drawdown">
+              in <span className="font-mono">{formatCurrency(summary.deposited ?? 0)}</span>
+            </span>
+            <span title="Account value now, as HL reports it">
+              now <span className="font-mono">{formatCurrency(summary.account_value ?? 0)}</span>
+            </span>
+            <span
+              className={`font-mono font-semibold ${
+                summary.pnl_since_inception >= 0 ? "text-green-600" : "text-red-500"
+              }`}
+              title="Result since day one, net of transfers — includes losses already realised on closed cohorts"
+            >
+              since start {formatCurrency(summary.pnl_since_inception)}
+            </span>
+          </div>
+        )}
         <button
           type="button"
           onClick={onReset}

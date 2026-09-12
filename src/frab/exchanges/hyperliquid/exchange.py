@@ -35,7 +35,13 @@ from frab.exchanges.hyperliquid.actions.transfer import TransferAction
 from frab.exchanges.hyperliquid.client import HLClient, HLTransferError
 from frab.exchanges.hyperliquid.symbols import HLSymbols
 from frab.exchanges.hyperliquid.tokens import BRIDGE_TOKEN_BLACKLIST
-from frab.exchanges.hyperliquid.wire import HLCandle, HLPerpState, HLSpotState, HLUserFill
+from frab.exchanges.hyperliquid.wire import (
+    HLCandle,
+    HLPerpState,
+    HLPortfolio,
+    HLSpotState,
+    HLUserFill,
+)
 from frab.exchanges.protocol import (
     FundingTick,
     MarketSpec,
@@ -364,6 +370,17 @@ class HLExchange:
     async def get_account_snapshot(self) -> tuple[HLPerpState, HLSpotState]:
         """Return typed perp + spot account state in one round-trip pair."""
         return await self._account_snapshot_action.get_snapshot()
+
+    async def get_portfolio(self) -> HLPortfolio | None:
+        """Return HL's own all-time account result, or None if no address is known.
+
+        Answers "what has this wallet earned since day one", net of deposits and
+        withdrawals — which neither the raw balance nor open-position unrealized
+        can answer on their own.
+        """
+        if self._address is None:
+            return None
+        return await self._hl_client.portfolio(self._address)
 
     async def fetch_wallet_state(
         self,

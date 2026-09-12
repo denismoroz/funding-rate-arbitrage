@@ -392,6 +392,12 @@ export async function manualOpenFarbPosition(coin: string): Promise<ManualOpenRe
 
 export type XsmomSummary = {
   cash: number;
+  /** Capital put in, net of withdrawals (HL all-time). null if HL unreachable. */
+  deposited: number | null;
+  /** Account value now, as HL reports it. */
+  account_value: number | null;
+  /** Result since day one, net of transfers — what pnl_total cannot show. */
+  pnl_since_inception: number | null;
   locked: number;
   free: number;
   long_total: number;

@@ -840,3 +840,41 @@ async def test_aclose_closes_owned_client_only(mocker):
 ])
 def test_safe_float(d, key, default, expected):
     assert _safe_float(d, key, default) == pytest.approx(expected)
+
+
+class TestPortfolio:
+    """`portfolio` reads HL's all-time bucket, which is already net of transfers."""
+
+    @pytest.mark.asyncio
+    async def test_reads_all_time_bucket(self, monkeypatch):
+        client = HLClient(client=httpx.AsyncClient(), api_url="http://x")
+        captured = {}
+
+        async def fake_post(body):
+            captured.update(body)
+            return [
+                ["day", {"accountValueHistory": [[1, "10"]], "pnlHistory": [[1, "-3.46"]]}],
+                ["month", {"accountValueHistory": [[1, "20"]], "pnlHistory": [[1, "-5.49"]]}],
+                ["allTime", {"accountValueHistory": [[1, "257.21"]], "pnlHistory": [[1, "-22.19"]]}],
+            ]
+
+        monkeypatch.setattr(client, "_post", fake_post)
+        p = await client.portfolio("0xabc")
+        assert captured == {"type": "portfolio", "user": "0xabc"}
+        assert p.account_value == pytest.approx(257.21)
+        assert p.all_time_pnl == pytest.approx(-22.19)
+        # net_deposits is what makes a deposit stop hiding a drawdown
+        assert p.net_deposits == pytest.approx(279.40)
+        await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_missing_all_time_is_zeros_not_crash(self, monkeypatch):
+        client = HLClient(client=httpx.AsyncClient(), api_url="http://x")
+
+        async def fake_post(_body):
+            return [["day", {"accountValueHistory": [], "pnlHistory": []}]]
+
+        monkeypatch.setattr(client, "_post", fake_post)
+        p = await client.portfolio("0xabc")
+        assert p.account_value == 0.0 and p.all_time_pnl == 0.0
+        await client.aclose()
