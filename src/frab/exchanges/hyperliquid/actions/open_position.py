@@ -103,9 +103,19 @@ class OpenPositionAction(HLAction):
                 )
             fee = real_fee if real_fee is not None else estimate
 
-        if qty_filled < wire_qty * (1 - self._partial_fill_tolerance):
+        is_partial = qty_filled < wire_qty * (1 - self._partial_fill_tolerance)
+        if is_partial and not req.accept_partial:
             raise PartialFillError(
                 requested_qty=wire_qty, filled_qty=qty_filled, fill_price=fill_price
+            )
+        if is_partial:
+            # Recorded at the qty actually filled — the exchange holds exactly this,
+            # and a position we refuse to record is one nothing will ever close.
+            logger.warning(
+                "%s %s partial fill accepted: requested %s, filled %s (%.1f%%) — "
+                "recording the filled part",
+                req.coin, req.instrument.value, wire_qty, qty_filled,
+                qty_filled / wire_qty * 100 if wire_qty else 0.0,
             )
 
         async with session_scope(self._sf) as s:

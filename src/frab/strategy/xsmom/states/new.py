@@ -124,17 +124,31 @@ class NewState(State):
             side=fp.side,
             qty=rounded_qty,
             leverage=self._params.leverage,
+            # A partially filled leg is still a real position on HL. Rejecting it here
+            # used to leave it unlinked and invisible — an orphan no rebalance closes
+            # (JTO/BCH, Sep 2026). Take the filled part and size the book to reality.
+            accept_partial=True,
         )
         perp_pos = await self._exchange.open_position(perp_req)
         await self._repo.set_leg(fp.id, perp_position_id=perp_pos.id)
 
         # ── 5. Transition to OPENED ───────────────────────────────────────────
+        # Notional from what HL ACTUALLY filled, not what we asked for: on a partial
+        # fill the two differ, and the card/exposure must show the real book.
+        filled_notional = float(perp_pos.qty) * float(perp_pos.entry_price)
+        partial_fill = filled_notional < notional * 0.999
+        if partial_fill:
+            logger.warning(
+                "%s opened partially: notional %.2f requested -> %.2f filled",
+                fp.coin, notional, filled_notional,
+            )
         # Round-trip taker fee estimate: open + close, single perp leg only.
-        total_fees_paid = notional * PERP_TAKER * 2
+        total_fees_paid = filled_notional * PERP_TAKER * 2
         new_state_data = {
             **fp.state_data,
             "required_margin": required,
-            "notional": notional,
+            "notional": filled_notional,
+            "requested_notional": notional if partial_fill else None,
             "leverage": self._params.leverage,
             "gross_funding_so_far": 0.0,
             "total_fees_paid": total_fees_paid,

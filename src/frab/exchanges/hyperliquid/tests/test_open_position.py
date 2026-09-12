@@ -406,3 +406,41 @@ async def test_no_exchange_in_db_raises(mock_client, symbols):
         await action.execute(req)
 
     await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# accept_partial — a filled-but-rejected order becomes an orphan nobody closes
+# (JTO/BCH left open on HL with no DB row, Sep 2026)
+# ---------------------------------------------------------------------------
+
+async def test_partial_below_tolerance_recorded_when_accepted(
+    session_factory, mock_client, symbols
+):
+    """accept_partial=True records the FILLED qty instead of raising."""
+    mock_client.market_open.return_value = _filled_response(0.6, 50000.0, fee_usdc=10.5)
+    action = make_action(session_factory, mock_client, symbols, tol=0.01)
+    req = OpenRequest(
+        instrument=Instrument.PERP, coin="BTC", qty=1.0, side=Side.LONG,
+        accept_partial=True,
+    )
+
+    pos = await action.execute(req)
+
+    assert pos.qty == pytest.approx(0.6), "must record what HL actually filled"
+    async with session_factory() as s:
+        row = (await s.execute(select(DBPosition))).scalar_one()
+    assert row.qty == pytest.approx(0.6)
+    assert row.status == PositionStatus.OPEN.value
+
+
+async def test_partial_still_raises_when_not_accepted(session_factory, mock_client, symbols):
+    """Default stays strict, and writes nothing — composite books reconcile themselves."""
+    mock_client.market_open.return_value = _filled_response(0.6, 50000.0, fee_usdc=10.5)
+    action = make_action(session_factory, mock_client, symbols, tol=0.01)
+    req = OpenRequest(instrument=Instrument.PERP, coin="BTC", qty=1.0, side=Side.LONG)
+
+    with pytest.raises(PartialFillError):
+        await action.execute(req)
+
+    async with session_factory() as s:
+        assert (await s.execute(select(DBPosition))).first() is None

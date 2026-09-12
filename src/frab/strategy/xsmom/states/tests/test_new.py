@@ -220,10 +220,13 @@ async def test_new_uses_spot_price_when_available(mocker):
     exchange.round_qty_to_nearest = mocker.AsyncMock(side_effect=lambda c, q: q)
 
     coll_pos = _make_coll_pos(mocker)
-    perp_pos = _make_perp_pos(mocker, entry_price=spot_price)
 
     def _open(req):
-        return coll_pos if req.instrument == Instrument.COLLATERAL else perp_pos
+        # Fill exactly what was asked, as a healthy exchange does — the recorded
+        # notional is derived from the FILL, so the mock must reflect the request.
+        if req.instrument == Instrument.COLLATERAL:
+            return coll_pos
+        return _make_perp_pos(mocker, entry_price=spot_price, qty=req.qty)
 
     exchange.open_position = mocker.AsyncMock(side_effect=_open)
 
@@ -251,10 +254,13 @@ async def test_new_uses_state_data_notional_if_present(mocker):
     exchange.round_qty_to_nearest = mocker.AsyncMock(side_effect=lambda c, q: q)
 
     coll_pos = _make_coll_pos(mocker)
-    perp_pos = _make_perp_pos(mocker)
+    # Preset notional 777 on target_qty 0.01 implies this fill price.
+    preset_price = preset_notional / 0.01
 
     def _open(req):
-        return coll_pos if req.instrument == Instrument.COLLATERAL else perp_pos
+        if req.instrument == Instrument.COLLATERAL:
+            return coll_pos
+        return _make_perp_pos(mocker, entry_price=preset_price, qty=req.qty)
 
     exchange.open_position = mocker.AsyncMock(side_effect=_open)
 
@@ -397,3 +403,67 @@ async def test_new_no_target_qty_marks_failed(mocker):
     reason = repo.mark_failed.await_args.kwargs["reason"]
     assert "target_qty" in reason
     exchange.open_position.assert_not_awaited()
+
+
+# ── Partial fills must never become orphans ───────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_new_requests_accept_partial(mocker):
+    """A partially filled leg is real; XSMOM must opt in to recording it.
+
+    Rejecting it (accept_partial=False) is what left JTO/BCH open on HL in Sep 2026
+    with no DB row, so no rebalance ever closed them.
+    """
+    params = _make_params()
+    exchange = mocker.AsyncMock()
+    quote = mocker.MagicMock(); quote.mark = 100.0; quote.spot = None
+    exchange.get_quote.return_value = quote
+    exchange.get_wallet.return_value = 9999.0
+    exchange.round_qty_to_nearest = mocker.AsyncMock(side_effect=lambda c, q: q)
+    coll_pos = _make_coll_pos(mocker)
+
+    def _open(req):
+        if req.instrument == Instrument.COLLATERAL:
+            return coll_pos
+        return _make_perp_pos(mocker, entry_price=100.0, qty=req.qty)
+
+    exchange.open_position = mocker.AsyncMock(side_effect=_open)
+    repo = mocker.AsyncMock()
+    ctx = _make_ctx(mocker, exchange=exchange, xsmom_repo=repo, params=params)
+    await NewState(ctx).execute(_make_fp(target_qty=1.0))
+
+    perp_req = exchange.open_position.await_args_list[1].args[0]
+    assert perp_req.accept_partial is True, "XSMOM perp leg must accept partial fills"
+    coll_req = exchange.open_position.await_args_list[0].args[0]
+    assert coll_req.accept_partial is False, "collateral lock needs no partial handling"
+
+
+@pytest.mark.asyncio
+async def test_new_partial_fill_is_linked_and_sized_to_reality(mocker):
+    """On a partial fill: leg still linked, and notional reflects what HL filled."""
+    params = _make_params()
+    exchange = mocker.AsyncMock()
+    quote = mocker.MagicMock(); quote.mark = 100.0; quote.spot = None
+    exchange.get_quote.return_value = quote
+    exchange.get_wallet.return_value = 9999.0
+    exchange.round_qty_to_nearest = mocker.AsyncMock(side_effect=lambda c, q: q)
+    coll_pos = _make_coll_pos(mocker)
+
+    def _open(req):
+        if req.instrument == Instrument.COLLATERAL:
+            return coll_pos
+        # HL fills only 60% of the request
+        return _make_perp_pos(mocker, pos_id=77, entry_price=100.0, qty=req.qty * 0.6)
+
+    exchange.open_position = mocker.AsyncMock(side_effect=_open)
+    repo = mocker.AsyncMock()
+    ctx = _make_ctx(mocker, exchange=exchange, xsmom_repo=repo, params=params)
+    await NewState(ctx).execute(_make_fp(target_qty=1.0))
+
+    # The filled leg is LINKED — this is what prevents the orphan
+    repo.set_leg.assert_any_await(mocker.ANY, perp_position_id=77)
+    sd = repo.transition.await_args.kwargs["state_data"]
+    assert sd["notional"] == pytest.approx(60.0), "notional must follow the fill, not the request"
+    assert sd["requested_notional"] == pytest.approx(100.0)
+    # and the state is OPENED, not FAILED
+    assert repo.transition.await_args.kwargs["to_state"] == XsmomState.OPENED

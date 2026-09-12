@@ -50,6 +50,13 @@ class OpenRequest:
     qty: float           # for COLLATERAL, qty is USDC amount; entry_price=1.0
     farb_position_id: int | None = None   # link if the open is part of a composite
     leverage: int | None = None   # PERP only: cross-margin leverage to set before the order
+    # When HL fills less than requested beyond tolerance, the filled part is REAL and
+    # sits on the exchange. accept_partial=True records it as the position and returns
+    # normally; False raises PartialFillError (the caller must then reconcile itself).
+    # Single-leg books (XSMOM) set True: a rejected-but-filled leg becomes an orphan
+    # nobody closes. Composite delta-neutral books (FRAB) keep False — there a short
+    # leg against a full spot leg is a broken hedge, not a smaller position.
+    accept_partial: bool = False
 
 
 class WalletKind(str, Enum):
