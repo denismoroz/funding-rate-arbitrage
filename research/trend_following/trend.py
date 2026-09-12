@@ -30,8 +30,15 @@ Vol-targeting: применяется ЦЕНТРАЛЬНО в portfolio_returns_
 Только numpy/pandas.
 """
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+
+# One sentinel for the whole research tree: the xsec guard is the canonical one.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "cross_sectional"))
+from xsec import NO_ACCRUAL, _NoAccrual  # noqa: E402
 
 
 # ── Vol helper (причинная realized vol) ─────────────────────────────────────────
@@ -149,7 +156,8 @@ def portfolio_returns_directional(
     positions: pd.DataFrame,
     fwd_ret: pd.DataFrame,
     costs_bps: float,
-    accrual: pd.DataFrame | None = None,
+    *,
+    accrual: "pd.DataFrame | _NoAccrual",
     vol: pd.DataFrame | None = None,
     vol_target: float | None = None,
     leverage_cap: float | None = None,
@@ -167,8 +175,8 @@ def portfolio_returns_directional(
       accrual:   ОПЦ. funding cash-flow панель формы fwd_ret, в дробных per-period
                  единицах. held[t]*accrual[t] добавляется КАЖДЫЙ удерживаемый день.
                  Знак следует за позицией (long+pos funding зарабатывает; short+neg
-                 funding ТОЖЕ зарабатывает, held*accr>0). accrual=None (DEFAULT) →
-                 начисление ВЫКЛ, инвариант: out = gross − cost.
+                 funding ТОЖЕ зарабатывает, held*accr>0). ОБЯЗАТЕЛЕН, дефолта нет (как в xsec.portfolio_returns):
+                 NO_ACCRUAL → начисление выкл, out = gross − cost; None отвергается.
       vol:       ОПЦ. realized vol панель (см. realized_vol), формы positions. Если
                  vol_target задан И vol передан — позиция масштабируется к целевой
                  per-asset vol: scale[t,c] = vol_target / vol[t,c]. Vol-targeting
@@ -205,8 +213,13 @@ def portfolio_returns_directional(
         factor[over] = leverage_cap / gross_abs[over]  # сжать только превышение
         pos = pos.mul(factor, axis=0)
 
+    if accrual is None:
+        raise TypeError(
+            "portfolio_returns_directional(accrual=...) is REQUIRED. Pass the funding "
+            "cash-flow panel, or NO_ACCRUAL to state explicitly that this book has none."
+        )
     accr_aligned = None
-    if accrual is not None:
+    if not isinstance(accrual, _NoAccrual):
         accr_aligned = accrual.reindex_like(fwd_ret).fillna(0.0)
 
     prev = pd.Series(0.0, index=pos.columns)  # держимая позиция вчера
@@ -294,12 +307,12 @@ if __name__ == "__main__":
     check((don["UP"].iloc[4:] >= 0.0).all() and (don["UP"].iloc[-1] == 1.0),
           f"donchian: UP must be long on continued breakouts:\n{don['UP']}")
 
-    # ── 4) portfolio_returns_directional: accrual=None → out == gross − cost ──
+    # ── 4) portfolio_returns_directional: NO_ACCRUAL → out == gross − cost ──
     COSTS_BPS = 8.5  # mirror survivorship.COSTS_BPS (imported downstream)
     # Use a simple fixed position book: long UP, short DN, flat OSC, every day.
     pos = pd.DataFrame({"UP": 1.0, "DN": -1.0, "OSC": 0.0},
                        index=dates)
-    pnl = portfolio_returns_directional(pos, fwd_ret, costs_bps=COSTS_BPS)
+    pnl = portfolio_returns_directional(pos, fwd_ret, costs_bps=COSTS_BPS, accrual=NO_ACCRUAL)
     # Day 0 by hand:
     #   held = [UP=1, DN=-1, OSC=0]; prev = 0 → turnover = |1|+|-1|+0 = 2
     #   cost = 2 * 8.5/1e4
@@ -367,9 +380,9 @@ if __name__ == "__main__":
           f"HIV under same signal: LOV={last['LOV']:.3f} HIV={last['HIV']:.3f}")
     # And that portfolio_returns_directional actually applies it (smoke: runs,
     # finite output, vol-scaling changes the pnl vs no scaling).
-    pnl_vt = portfolio_returns_directional(same_sig, vfwd, costs_bps=COSTS_BPS,
+    pnl_vt = portfolio_returns_directional(same_sig, vfwd, costs_bps=COSTS_BPS, accrual=NO_ACCRUAL,
                                            vol=vvol, vol_target=vt)
-    pnl_novt = portfolio_returns_directional(same_sig, vfwd, costs_bps=COSTS_BPS)
+    pnl_novt = portfolio_returns_directional(same_sig, vfwd, costs_bps=COSTS_BPS, accrual=NO_ACCRUAL)
     check(np.isfinite(pnl_vt.values).all(),
           "vol-target: pnl must be finite")
     check(not np.allclose(pnl_vt.values, pnl_novt.values),
@@ -391,12 +404,12 @@ if __name__ == "__main__":
     check(np.isclose(gross_capped.iloc[0], cap),
           "leverage_cap: an over-cap day must be scaled to exactly the cap")
     # End-to-end: function runs with the cap and produces finite pnl.
-    pnl_cap = portfolio_returns_directional(big, fwd_ret, costs_bps=COSTS_BPS,
+    pnl_cap = portfolio_returns_directional(big, fwd_ret, costs_bps=COSTS_BPS, accrual=NO_ACCRUAL,
                                             leverage_cap=cap)
     check(np.isfinite(pnl_cap.values).all(),
           "leverage_cap: capped pnl must be finite")
     # Under-cap book (gross 2 = cap) is unaffected: long UP + short DN.
-    pnl_under = portfolio_returns_directional(pos, fwd_ret, costs_bps=COSTS_BPS,
+    pnl_under = portfolio_returns_directional(pos, fwd_ret, costs_bps=COSTS_BPS, accrual=NO_ACCRUAL,
                                               leverage_cap=cap)
     check(np.allclose(pnl_under.values, pnl.values),
           "leverage_cap: a book at/under the cap must be unchanged")
