@@ -4,14 +4,14 @@ import time, json, datetime as dt
 from pathlib import Path
 import requests
 
-OUT = Path("/private/tmp/claude-501/-Users-d-prj-funding-rate-arbitrage/619a0272-724d-477f-be5a-cd442e6762db/scratchpad/daily")
-OUT.mkdir(exist_ok=True)
+OUT = Path("/private/tmp/claude-501/-Users-d-prj-funding-rate-arbitrage/5f1f1c94-f80e-4bdd-88c5-68cfed37b7b4/scratchpad/daily")
+OUT.mkdir(parents=True, exist_ok=True)
 URL = "https://api.binance.com/api/v3/klines"
 KMAP = {"PEPE":"1000PEPE","BONK":"1000BONK","SHIB":"1000SHIB","FLOKI":"1000FLOKI"}
 UNIVERSE = ["AAVE","ADA","APT","ARB","ATOM","AVAX","BCH","BNB","BTC","CRV","DOGE","DOT",
             "EIGEN","ENA","ETH","INJ","JTO","JUP","LINK","LTC","NEAR","PENDLE","PYTH","SOL",
             "SUI","TAO","TRX","UNI","WLD","XLM","XRP","ZRO"]
-START = int(dt.datetime(2023,1,1,tzinfo=dt.timezone.utc).timestamp()*1000)
+START = int(dt.datetime(2021,1,1,tzinfo=dt.timezone.utc).timestamp()*1000)
 
 def fetch(coin):
     sym = KMAP.get(coin,coin)+"USDT"

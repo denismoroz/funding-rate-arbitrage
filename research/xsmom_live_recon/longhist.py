@@ -5,7 +5,7 @@ sys.path.insert(0, "/Users/d/prj/funding-rate-arbitrage/src")
 import numpy as np, pandas as pd
 from frab.strategy.xsmom.evaluators.signal import compute_scores
 
-D = "/private/tmp/claude-501/-Users-d-prj-funding-rate-arbitrage/619a0272-724d-477f-be5a-cd442e6762db/scratchpad/daily"
+D = "/private/tmp/claude-501/-Users-d-prj-funding-rate-arbitrage/5f1f1c94-f80e-4bdd-88c5-68cfed37b7b4/scratchpad/daily"
 DAY_MS=86_400_000; LB=(14,21,30,45,60); K=8
 COST_BPS_LEG=4.4   # per leg one-way (live-measured HL perp cost)
 
