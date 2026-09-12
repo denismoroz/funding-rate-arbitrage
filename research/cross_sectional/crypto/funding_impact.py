@@ -123,7 +123,7 @@ def score_panels() -> dict[str, pd.DataFrame]:
 def pnl_pair(score: pd.DataFrame, accrual: pd.DataFrame | None = ACCR_PRIMARY):
     """(pnl_nofund, pnl_fund) for a score panel, identical wiring bar accrual."""
     w = xsec.rank_to_weights(score)
-    pnl_nofund = xsec.portfolio_returns(w, FWD, costs_bps=CB, rebal_every=REBAL)
+    pnl_nofund = xsec.portfolio_returns(w, FWD, costs_bps=CB, rebal_every=REBAL, accrual=xsec.NO_ACCRUAL)
     pnl_fund = xsec.portfolio_returns(w, FWD, costs_bps=CB, rebal_every=REBAL,
                                       accrual=accrual)
     return w, pnl_nofund, pnl_fund

@@ -257,7 +257,7 @@ if __name__ == "__main__":
     accrual_panel = -funding.shift(-1)  # per cryptodata / funding_impact convention
     pnl_nofund = xsec.portfolio_returns(
         weights, fwd_ret, costs_bps=COSTS_BPS, rebal_every=REBAL,
-    )
+     accrual=xsec.NO_ACCRUAL)
     pnl_fund = xsec.portfolio_returns(
         weights, fwd_ret, costs_bps=COSTS_BPS, rebal_every=REBAL,
         accrual=accrual_panel,

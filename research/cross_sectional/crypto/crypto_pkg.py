@@ -42,7 +42,8 @@ import xsec
 from costs import Costs, TAKER
 
 _HERE = Path(__file__).parent
-UNIVERSE_JSON = _HERE / "universe.json"
+UNIVERSE_JSON     = _HERE / "universe.json"       # survivors only (biased)
+UNIVERSE_PIT_JSON = _HERE / "universe_pit.json"   # point-in-time (DEFAULT)
 
 # ── Menu lookbacks (days). MAX drives purge (seam-safety lower bound). ──────────
 MOM_LOOKBACKS = (30, 60, 90)     # momentum configs mom30/mom60/mom90
@@ -53,9 +54,21 @@ MAX_LOOKBACK_DAYS = max(max(MOM_LOOKBACKS), CARRY_SMOOTH)   # = 90 → purge >= 
 SELECTED = "blend"
 
 
-def _frozen_universe() -> list[str]:
-    """Load the FROZEN coin list (deterministic backtest). NOT a live universe()."""
-    return list(json.loads(UNIVERSE_JSON.read_text())["coins"])
+def _frozen_universe(survivors_only: bool = False) -> list[str]:
+    """Load the FROZEN coin list (deterministic backtest). NOT a live universe().
+
+    DEFAULT is the POINT-IN-TIME universe (62 coins = 34 survivors + 28 coins that
+    listed and later died). Dead coins drop out of ranking on the date their price
+    feed ends, so each one participates only while it was actually tradable.
+
+    `survivors_only=True` restores the old 34-coin frozen list — the one whose own
+    stress test (survivorship.json) is stamped "LARGE SURVIVORSHIP BIAS — FORWARD
+    NUMBERS UNRELIABLE": it reads Sharpe 1.22 where point-in-time reads 0.76, i.e.
+    +0.46 Sharpe / +20.6%/yr of pure selection. Pass it only to REPRODUCE an old
+    result, never to plan forward.
+    """
+    path = UNIVERSE_JSON if survivors_only else UNIVERSE_PIT_JSON
+    return list(json.loads(path.read_text())["coins"])
 
 
 class _XSecStrategy:
@@ -103,12 +116,14 @@ class CryptoXSecPackage:
     selected_name = SELECTED
     coins = ["XSEC"]
 
-    def __init__(self, *, rebal_every: int = 7, costs: Costs = TAKER,
+    def __init__(self, *, survivors_only: bool = False,
+                 rebal_every: int = 7, costs: Costs = TAKER,
                  costs_bps: float | None = None):
         self.rebal_every = rebal_every
         self._costs = costs
         self.costs_bps = (costs.perp_cost * 1e4) if costs_bps is None else costs_bps
-        self._frozen = _frozen_universe()
+        self._frozen = _frozen_universe(survivors_only=survivors_only)
+        self._survivors_only = survivors_only
         self._panel: dict | None = None
         self._menu_cache: dict[str, pd.Series] | None = None
 
@@ -140,7 +155,7 @@ class CryptoXSecPackage:
         return xsec.portfolio_returns(
             weights, P["fwd_ret"],
             costs_bps=self.costs_bps, rebal_every=self.rebal_every,
-        )
+         accrual=xsec.NO_ACCRUAL)
 
     def _build_menu(self) -> dict[str, pd.Series]:
         if self._menu_cache is not None:
@@ -178,7 +193,8 @@ class CryptoXSecPackage:
 # ── Self-test ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     pkg = CryptoXSecPackage()
-    print(f"frozen universe: {len(pkg._frozen)} coins")
+    print(f"frozen universe: {len(pkg._frozen)} coins "
+          f"({'SURVIVORS-ONLY (biased)' if pkg._survivors_only else 'point-in-time'})")
     print(f"rebal_every={pkg.rebal_every}d  costs_bps={pkg.costs_bps:.2f}  "
           f"MAX_LOOKBACK_DAYS={MAX_LOOKBACK_DAYS}")
     df = pkg.load("XSEC")

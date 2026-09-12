@@ -52,7 +52,7 @@ def _toy_weights_fwd(seed=0, n_days=120, n_coins=8):
 def test_path_engine_reproduces_baseline():
     """(6) Path-aware sim with an unreachable stop == carry-forward baseline EXACTLY."""
     w, fwd = _toy_weights_fwd(seed=1)
-    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
     path = overlay.path_aware_overlay(
         w, fwd, threshold=-9.99, mode="stop",
         pair_rule="worst_opposite", reentry="next_rebalance",
@@ -66,7 +66,7 @@ def test_path_engine_reproduces_baseline():
 def test_stop_never_triggers():
     """(2) Paired stop with S=-999% == baseline (covers both pair rules / reentries)."""
     w, fwd = _toy_weights_fwd(seed=2)
-    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
     for pr in ("worst_opposite", "symmetric_rank"):
         for e in ("next_rebalance", "none"):
             p = overlay.path_aware_overlay(
@@ -80,7 +80,7 @@ def test_stop_never_triggers():
 def test_take_profit_never_triggers():
     """(3) Take-profit with P=+999% == baseline."""
     w, fwd = _toy_weights_fwd(seed=3)
-    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
     for pr in ("worst_opposite", "symmetric_rank"):
         for e in ("next_rebalance", "none"):
             p = overlay.path_aware_overlay(
@@ -97,7 +97,7 @@ def test_arm_a_huge_target_passthrough():
     max_leverage * baseline on every fully-warmed day (scaler saturates at the cap),
     so the ratio is a constant (no per-day distortion of the SHAPE)."""
     w, fwd = _toy_weights_fwd(seed=4)
-    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
 
     passthru = overlay.vol_target_scale(base, target_vol_annual=1e6, vol_window=20,
                                         ewma=True, max_leverage=1.0)
@@ -215,7 +215,7 @@ def test_arm_a_no_lookahead():
     Perturb base_pnl at a single day d and confirm the overlay output at day d is
     UNCHANGED (scaler[d] uses vol up to d-1). Outputs at d+1.. may change (legit)."""
     w, fwd = _toy_weights_fwd(seed=7)
-    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
     out0 = overlay.vol_target_scale(base, 0.15, 40, ewma=True)
     d = 80
     base2 = base.copy()
@@ -252,7 +252,7 @@ def test_pnl_units_sane():
 def test_replacement_stop_never_triggers():
     """(D1) replacement_overlay with S=-999% (fixed-%) ≈ baseline (never triggers)."""
     w, fwd = _toy_weights_fwd(seed=10, n_days=120, n_coins=8)
-    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
     # Use the weights as trivial scores (arbitrary — just needs same shape)
     repl = overlay.replacement_overlay(
         w, w, fwd,
@@ -269,7 +269,7 @@ def test_replacement_stop_never_triggers():
 def test_replacement_take_profit_never_triggers():
     """(E1) replacement_overlay with P=+999% (fixed-%) ≈ baseline (never triggers)."""
     w, fwd = _toy_weights_fwd(seed=11, n_days=120, n_coins=8)
-    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
     repl = overlay.replacement_overlay(
         w, w, fwd,
         threshold=+9.99, mode="take_profit", vol_linked=False,
@@ -285,7 +285,7 @@ def test_replacement_take_profit_never_triggers():
 def test_vol_linked_stop_never_triggers():
     """(F1) replacement_overlay vol-linked with k=999 ≈ baseline (effectively never triggers)."""
     w, fwd = _toy_weights_fwd(seed=12, n_days=120, n_coins=8)
-    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+    base = xsec.portfolio_returns(w, fwd, costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
     repl = overlay.replacement_overlay(
         w, w, fwd,
         threshold=999.0, mode="stop", vol_linked=True, vol_window=20,

@@ -51,12 +51,24 @@ def rank_to_weights(scores: pd.DataFrame, tercile_frac: float = 1 / 3) -> pd.Dat
     return w
 
 
+class _NoAccrual:
+    """Sentinel: caller has explicitly decided this book has NO held-position
+    cash-flow. Spelled out so that FORGETTING funding is impossible — omitting
+    `accrual` raises instead of silently simulating a free-to-hold book."""
+    __slots__ = ()
+    def __repr__(self) -> str: return "xsec.NO_ACCRUAL"
+
+
+NO_ACCRUAL = _NoAccrual()
+
+
 def portfolio_returns(
     weights: pd.DataFrame,
     fwd_ret: pd.DataFrame,
     costs_bps: float = 5.0,
     rebal_every: int = 1,
-    accrual: pd.DataFrame | None = None,
+    *,
+    accrual: "pd.DataFrame | _NoAccrual",
 ) -> pd.Series:
     """Нетто-доходность long-short книги по периодам.
 
@@ -79,9 +91,13 @@ def portfolio_returns(
              accrual ТОЖЕ зарабатывает (held*accrual>0) — это by-construction
              корректно для rate-differential / funding flow.
 
-             accrual=None (DEFAULT) → начисление ВЫКЛЮЧЕНО, out[i]=gross-cost, т.е.
-             поведение В ТОЧНОСТИ как раньше (это инвариант, на котором держится
-             неизменность crypto-книги — crypto никогда не передаёт accrual).
+             **accrual ОБЯЗАТЕЛЕН (keyword-only) — дефолта нет.** Чтобы получить
+             книгу без начисления, надо явно передать `accrual=NO_ACCRUAL`;
+             тогда out[i]=gross-cost. Так сделано намеренно: раньше дефолтом было
+             None, и крипто-книга ни разу не передала funding — живой XSMOM платит
+             −4.65%/год, которых в бэктесте не было (см. research/xsmom_live_recon/
+             AUDIT_2026_09.md). Забыть включить начисление было легко; теперь
+             забыть нельзя, а отказ от него виден в вызове.
 
     Возврат: pd.Series нетто-доходности, индексирована датами. Это «один актив»
              (вся книга) для скармливания в validation_harness.
@@ -91,8 +107,15 @@ def portfolio_returns(
     idx = w.index
     cost_rate = costs_bps / 1e4
 
+    if accrual is None:
+        raise TypeError(
+            "portfolio_returns(accrual=...) is REQUIRED. Pass the held-position "
+            "cash-flow panel (funding / swap / borrow), or xsec.NO_ACCRUAL to "
+            "state explicitly that this book has none. `None` is not accepted — "
+            "that default is exactly how crypto ran for years without funding."
+        )
     accr_aligned = None
-    if accrual is not None:
+    if not isinstance(accrual, _NoAccrual):
         accr_aligned = accrual.reindex_like(fwd_ret).fillna(0.0)
 
     held = pd.Series(0.0, index=w.columns)  # текущие удерживаемые веса
@@ -225,7 +248,7 @@ if __name__ == "__main__":
     )
 
     costs_bps = 5.0
-    pnl = portfolio_returns(w, fwd, costs_bps=costs_bps, rebal_every=1)
+    pnl = portfolio_returns(w, fwd, costs_bps=costs_bps, rebal_every=1, accrual=NO_ACCRUAL)
 
     # Ручной расчёт period 0:
     #   gross = 1*0.02 + (-1)*(-0.01) = 0.03
@@ -244,19 +267,19 @@ if __name__ == "__main__":
     # --- rebal_every: держим веса period0 два периода ---------------------
     # При rebal_every=2 на i=1 ребаланса нет: held остаётся [1,0,0,-1].
     #   gross_1 = 1*0 + (-1)*0 = 0, cost=0 → net_1 = 0
-    pnl2 = portfolio_returns(w, fwd, costs_bps=costs_bps, rebal_every=2)
+    pnl2 = portfolio_returns(w, fwd, costs_bps=costs_bps, rebal_every=2, accrual=NO_ACCRUAL)
     assert np.isclose(pnl2.iloc[1], 0.0), f"rebal_every=2 period1 {pnl2.iloc[1]} != 0"
     assert np.isclose(pnl2.iloc[0], exp_p0), "rebal_every=2 period0 mismatch"
 
-    # --- accrual=None regression guard: identical to the no-accrual pnl ----
+    # --- NO_ACCRUAL regression guard: identical to the no-accrual pnl ----
     pnl_none = portfolio_returns(w, fwd, costs_bps=costs_bps, rebal_every=1,
-                                 accrual=None)
+                                 accrual=NO_ACCRUAL)
     assert np.allclose(pnl_none.values, pnl.values), \
-        "accrual=None must reproduce the original pnl EXACTLY"
+        "accrual=NO_ACCRUAL must reproduce the original pnl EXACTLY"
     pnl2_none = portfolio_returns(w, fwd, costs_bps=costs_bps, rebal_every=2,
-                                  accrual=None)
+                                  accrual=NO_ACCRUAL)
     assert np.allclose(pnl2_none.values, pnl2.values), \
-        "accrual=None (rebal_every=2) must reproduce the original pnl EXACTLY"
+        "accrual=NO_ACCRUAL (rebal_every=2) must reproduce the original pnl EXACTLY"
 
     # --- hand-checkable accrual case: a single held long with a constant rate -
     # One instrument 'X', held long (weight +1) every period, zero spot return,
@@ -292,7 +315,7 @@ if __name__ == "__main__":
     print(pnl2.round(6).to_string())
     print(f"\nperiod0 net = {pnl.iloc[0]:.6f} (expected {exp_p0:.6f})")
     print(f"period1 net = {pnl.iloc[1]:.6f} (expected {exp_p1:.6f})")
-    print("\n=== xsec accrual ===  accrual=None reproduces original pnl exactly; "
+    print("\n=== xsec accrual ===  NO_ACCRUAL reproduces original pnl exactly; "
           f"\n  held-long const rate {rate} adds exactly held*rate each period "
           "(long & short symmetric)  OK")
     # --- zscore_cross_section: each valid row mean≈0, std≈1 ---------------

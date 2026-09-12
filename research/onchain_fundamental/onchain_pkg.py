@@ -162,7 +162,7 @@ class OnchainFundamentalPackage:
             w, fwd_ret,
             costs_bps=self.costs_bps,
             rebal_every=self.rebal_every,
-        )
+         accrual=xsec.NO_ACCRUAL)
 
     def _build_menu(self) -> dict[str, pd.Series]:
         """Build full-period pnl for each menu config (no look-ahead)."""

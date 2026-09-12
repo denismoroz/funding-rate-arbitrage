@@ -160,7 +160,7 @@ class OverlayPackage:
         return xsec.portfolio_returns(
             self._target_weights(), P["fwd_ret"],
             costs_bps=self.costs_bps, rebal_every=self.rebal_every,
-        )
+         accrual=xsec.NO_ACCRUAL)
 
     def _arm_a_pnl(self, base: pd.Series, target_vol: float, vol_window: int) -> pd.Series:
         return overlay.vol_target_scale(

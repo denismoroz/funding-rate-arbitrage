@@ -62,7 +62,7 @@ def _build_tsmom_pnl(price: pd.DataFrame, fwd_ret: pd.DataFrame,
     w = sig.tsmom(price, lookback_months=lookback_months)
     return xsec.portfolio_returns(w, fwd_ret,
                                    costs_bps=costs_bps,
-                                   rebal_every=rebal_every)
+                                   rebal_every=rebal_every, accrual=xsec.NO_ACCRUAL)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -96,12 +96,12 @@ def test_cheat(n_assets: int = 8, n_days: int = 600, seed: int = 7) -> None:
 
     # CHEAT: signal = fwd_ret itself (oracle) → via rank_to_weights → large SR
     cheat_w  = xsec.rank_to_weights(fwd_ret)
-    pnl_cheat = xsec.portfolio_returns(cheat_w, fwd_ret, costs_bps=0.0, rebal_every=1)
+    pnl_cheat = xsec.portfolio_returns(cheat_w, fwd_ret, costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
     sr_cheat  = _ann_sharpe(pnl_cheat)
 
     # ANTI-CHEAT: stale signal (2-step lag) → SR ~ 0
     lagged_w  = xsec.rank_to_weights(fwd_ret.shift(2))
-    pnl_lag   = xsec.portfolio_returns(lagged_w, fwd_ret, costs_bps=0.0, rebal_every=1)
+    pnl_lag   = xsec.portfolio_returns(lagged_w, fwd_ret, costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
     sr_lag    = _ann_sharpe(pnl_lag)
 
     print(f"  Cheat SR (oracle signal):     {sr_cheat:+.2f}  (must be >> 0)")
@@ -148,12 +148,12 @@ def test_no_lookahead(n_assets: int = 6, n_days: int = 500, seed: int = 42) -> N
     # Causal tsmom weights
     w_causal  = sig.tsmom(price, lookback_months=3)
     pnl_causal = xsec.portfolio_returns(w_causal, fwd_ret,
-                                         costs_bps=0.0, rebal_every=1)
+                                         costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
 
     # Shifted weights (future info leaked into signal)
     w_shifted  = w_causal.shift(-1)   # use tomorrow's weight today (look-ahead)
     pnl_shifted = xsec.portfolio_returns(w_shifted, fwd_ret,
-                                          costs_bps=0.0, rebal_every=1)
+                                          costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
 
     corr_pnl = float(np.corrcoef(
         pnl_causal.dropna().values,
@@ -255,7 +255,7 @@ def test_deterministic() -> None:
 
     # pnl at a known point: make fwd_ret deterministic
     fwd_ret = price.shift(-1) / price - 1.0
-    pnl = xsec.portfolio_returns(w, fwd_ret, costs_bps=0.0, rebal_every=1)
+    pnl = xsec.portfolio_returns(w, fwd_ret, costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
 
     # At each rebal step the sign of pnl should match the dominant trend direction.
     # (UP up-trends, DN down-trends → w[UP]>0 earns positive, w[DN]<0 also earns

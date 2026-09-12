@@ -23,7 +23,7 @@ Mirrors rebal_validation.py EXACTLY in:
 CORRECTNESS GUARD (mandatory asserts)
 --------------------------------------
 1. portfolio_returns_scheduled(weights, fwd_ret, flags7, COSTS_BPS, accrual) must
-   reproduce xsec.portfolio_returns(..., rebal_every=7, ...) to <1e-9 max abs diff.
+   reproduce xsec.portfolio_returns(..., rebal_every=7, ..., accrual=xsec.NO_ACCRUAL) to <1e-9 max abs diff.
 2. The R=7 scheduled book must reproduce survivorship.run_book(panel) to <1e-9.
 
 DRIFT MODEL
@@ -259,7 +259,7 @@ def _assert_scheduled_equals_reference(
     print(f"    ASSERT 1: scheduled R=7 vs xsec.portfolio_returns => max diff = {diff:.2e}")
     assert diff < 1e-9, (
         f"ASSERT FAILED: portfolio_returns_scheduled(flags7) != "
-        f"xsec.portfolio_returns(rebal_every=7)! diff={diff:.2e}\n"
+        f"xsec.portfolio_returns(rebal_every=7, accrual=xsec.NO_ACCRUAL)! diff={diff:.2e}\n"
         "Check that the cost arithmetic is identical to xsec.portfolio_returns."
     )
     print("    ASSERT 1 PASSED: scheduled R=7 reproduces xsec.portfolio_returns exactly.")

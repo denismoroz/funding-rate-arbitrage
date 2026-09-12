@@ -90,7 +90,7 @@ def _book_pnl(panel: dict, score: pd.DataFrame) -> pd.Series:
     """score panel → dollar-neutral weights → net daily book pnl (full period)."""
     w = xsec.rank_to_weights(score, tercile_frac=TERCILE_FRAC)
     return xsec.portfolio_returns(w, panel["fwd_ret"],
-                                  costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+                                  costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
 
 
 def build_books(panel: dict) -> tuple[dict[int, pd.Series], pd.Series]:

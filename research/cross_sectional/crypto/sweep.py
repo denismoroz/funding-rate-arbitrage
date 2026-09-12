@@ -47,7 +47,7 @@ def _pnl(panel: dict, score: pd.DataFrame,
     """score panel → dollar-neutral weights → net daily book pnl (full period)."""
     w = xsec.rank_to_weights(score, tercile_frac=tercile_frac)
     return xsec.portfolio_returns(w, panel["fwd_ret"],
-                                  costs_bps=costs_bps, rebal_every=rebal_every)
+                                  costs_bps=costs_bps, rebal_every=rebal_every, accrual=xsec.NO_ACCRUAL)
 
 
 # ── plateau / spike verdict ─────────────────────────────────────────────────────

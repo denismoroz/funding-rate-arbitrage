@@ -174,7 +174,7 @@ def main():
     try:
         w_T_big = arm_T_weights(P, trend_lb=500, lookbacks=LOOKBACKS, tercile_frac=1/3)
         pnl_T_big = _xsec.portfolio_returns(
-            w_T_big, P["fwd_ret"], costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY)
+            w_T_big, P["fwd_ret"], costs_bps=COSTS_BPS, rebal_every=REBAL_EVERY, accrual=xsec.NO_ACCRUAL)
         r_big = pnl_T_big.dropna().values
         big_ann = r_big.mean() * 252
         check(abs(big_ann - base_ann) < max(0.10, abs(base_ann) * 1.5),

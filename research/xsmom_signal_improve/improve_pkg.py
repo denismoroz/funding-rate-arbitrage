@@ -120,7 +120,7 @@ class ImprovePackage:
             w, P["fwd_ret"],
             costs_bps=self.costs_bps,
             rebal_every=self.rebal_every,
-        )
+         accrual=xsec.NO_ACCRUAL)
 
     def _weights_to_pnl(self, w: pd.DataFrame) -> pd.Series:
         """Precomputed weights → portfolio_returns."""
@@ -129,7 +129,7 @@ class ImprovePackage:
             w, P["fwd_ret"],
             costs_bps=self.costs_bps,
             rebal_every=self.rebal_every,
-        )
+         accrual=xsec.NO_ACCRUAL)
 
     # ── Full menu construction ─────────────────────────────────────────────────
     def _build_menu(self) -> dict[str, pd.Series]:

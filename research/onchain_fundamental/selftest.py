@@ -82,13 +82,13 @@ def test_cheat(n_coins: int = 8, n_days: int = 500, seed: int = 7) -> None:
     # Dollar-neutral weights from this signal → must yield large positive Sharpe
     cheat_signal = fwd_ret.copy()  # signal = future return (oracle cheat)
     w_cheat = xsec.rank_to_weights(cheat_signal)
-    pnl_cheat = xsec.portfolio_returns(w_cheat, fwd_ret, costs_bps=0.0, rebal_every=1)
+    pnl_cheat = xsec.portfolio_returns(w_cheat, fwd_ret, costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
     sr_cheat = _annualized_sharpe(pnl_cheat)
 
     # ANTI-CHEAT: signal = fwd_ret shifted +2 (stale, useless)
     lagged_signal = fwd_ret.shift(2)
     w_lag = xsec.rank_to_weights(lagged_signal)
-    pnl_lag = xsec.portfolio_returns(w_lag, fwd_ret, costs_bps=0.0, rebal_every=1)
+    pnl_lag = xsec.portfolio_returns(w_lag, fwd_ret, costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
     sr_lag = _annualized_sharpe(pnl_lag)
 
     print(f"  Cheat SR (oracle signal):     {sr_cheat:+.2f}  (must be >> 0)")
@@ -139,13 +139,13 @@ def test_no_lookahead(n_coins: int = 8, n_days: int = 300, seed: int = 13) -> No
     # All coins are "defi" for this test
     z_normal = xsec.zscore_cross_section(raw_normal)
     w_normal = xsec.rank_to_weights(z_normal)
-    pnl_normal = xsec.portfolio_returns(w_normal, fwd_ret, costs_bps=0.0, rebal_every=1)
+    pnl_normal = xsec.portfolio_returns(w_normal, fwd_ret, costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
 
     # Shifted signal (uses fees[t+1] — look-ahead)
     raw_shifted = raw_normal.shift(-1)  # shift -1 = use future fees
     z_shifted = xsec.zscore_cross_section(raw_shifted)
     w_shifted = xsec.rank_to_weights(z_shifted)
-    pnl_shifted = xsec.portfolio_returns(w_shifted, fwd_ret, costs_bps=0.0, rebal_every=1)
+    pnl_shifted = xsec.portfolio_returns(w_shifted, fwd_ret, costs_bps=0.0, rebal_every=1, accrual=xsec.NO_ACCRUAL)
 
     # They must differ. For daily data with rebal_every=1 and a 30d rolling window,
     # adjacent rows t and t+1 are *highly* correlated (fees change slowly → ranks
@@ -295,7 +295,7 @@ def test_deterministic_pipeline() -> None:
     pnl = xsec.portfolio_returns(
         xsec.rank_to_weights(z), fwd_ret,
         costs_bps=0.0, rebal_every=1,
-    )
+     accrual=xsec.NO_ACCRUAL)
 
     # At t=61: z-scores are AAVE=+1, SOL=+1, ETH=-1, UNI=-1
     # Tie between AAVE and SOL for long; tie between ETH and UNI for short.
