@@ -124,9 +124,10 @@ export default function B2() {
               <span title="P&L since start, annualised linearly — noise until the test has run for weeks">
                 APR{" "}
                 <span className={`font-mono font-semibold ${(s.apr_pct ?? 0) >= 0 ? "text-green-600" : "text-red-500"}`}>
-                  {s.apr_pct != null ? `${s.apr_pct >= 0 ? "+" : ""}${s.apr_pct.toFixed(1)}%` : "—"}
+                  {s.apr_pct != null && s.hours >= 24 ? `${s.apr_pct >= 0 ? "+" : ""}${s.apr_pct.toFixed(1)}%` : "—"}
                 </span>
-                {s.hours < 168 && <span className="text-xs text-amber-600"> (&lt;1 week: noise)</span>}
+                {s.hours < 24 && <span className="text-xs text-gray-400"> (shown after 24h)</span>}
+                {s.hours >= 24 && s.hours < 168 && <span className="text-xs text-amber-600"> (&lt;1 week: noise)</span>}
               </span>
               <span>running <span className="font-mono">{s.hours}h</span> since {fmtTs(s.started_ms)}</span>
               <span>last bar {fmtTs(s.last_bar_ms)}</span>
