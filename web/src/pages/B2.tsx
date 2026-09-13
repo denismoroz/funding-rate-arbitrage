@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Header } from "../components/Header";
-import { fetchB2Events, fetchB2Equity, fetchB2Summary, type B2Coin } from "../lib/api";
+import { fetchB2Events, fetchB2Equity, fetchB2Summary, type B2Coin, type B2Summary } from "../lib/api";
 import { formatCurrency } from "../lib/format";
 
 const KIND_LABEL: Record<string, string> = {
@@ -80,6 +80,113 @@ function CoinRow({ c }: { c: B2Coin }) {
   );
 }
 
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-md border border-gray-100 bg-gray-50/60 p-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function ResultPanel({ s }: { s: B2Summary }) {
+  const pos = (s.pnl ?? 0) >= 0;
+  const aprReady = s.apr_pct != null && s.hours >= 24;
+  return (
+    <Panel title="Result">
+      <div className="text-2xl font-semibold text-gray-900">{s.equity != null ? formatCurrency(s.equity) : "—"}</div>
+      <div className="text-sm text-gray-500">started with {formatCurrency(s.capital)}</div>
+      <div className={`mt-2 font-mono text-sm font-semibold ${pos ? "text-green-600" : "text-red-500"}`}>
+        {s.pnl != null ? `${signed(s.pnl)} (${(s.pnl_pct ?? 0).toFixed(2)}%)` : "—"}
+      </div>
+      <div className="mt-1 text-sm text-gray-500" title="P&L since start, annualised linearly">
+        APR{" "}
+        {aprReady ? (
+          <span className={`font-mono font-semibold ${(s.apr_pct ?? 0) >= 0 ? "text-green-600" : "text-red-500"}`}>
+            {(s.apr_pct ?? 0) >= 0 ? "+" : ""}{(s.apr_pct ?? 0).toFixed(1)}%
+          </span>
+        ) : (
+          <span className="text-gray-400">appears after 24h</span>
+        )}
+        {aprReady && s.hours < 168 && <span className="text-xs text-amber-600"> · first week is noise</span>}
+      </div>
+      <div className="mt-2 text-xs text-gray-400">
+        running {s.hours}h since {fmtTs(s.started_ms)} MSK
+        {s.status !== "active" && <span className="text-amber-600"> · {s.status}</span>}
+      </div>
+      {s.engine_last_error && <div className="mt-1 text-xs text-red-500">engine error: {s.engine_last_error}</div>}
+    </Panel>
+  );
+}
+
+function MoneyPanel({ s }: { s: B2Summary }) {
+  const parts = [
+    { label: "Spot coins", hint: "could sit in a cold wallet", value: s.spot_value ?? 0, color: "bg-blue-500" },
+    { label: "HL: margin for open shorts", hint: "USDC locked by hedges / carry", value: s.margin_used ?? 0, color: "bg-amber-500" },
+    { label: "HL: free USDC", hint: "for the next hedge, carry, top-ups", value: Math.max(s.free_margin ?? 0, 0), color: "bg-gray-300" },
+  ];
+  const total = parts.reduce((a, p) => a + p.value, 0) || 1;
+  return (
+    <Panel title="Where the money is">
+      <div className="flex h-3 overflow-hidden rounded-full bg-gray-100">
+        {parts.map((p) => (
+          <div key={p.label} className={p.color} style={{ width: `${(p.value / total) * 100}%` }} />
+        ))}
+      </div>
+      <ul className="mt-3 space-y-1.5 text-sm">
+        {parts.map((p) => (
+          <li key={p.label} className="flex items-baseline gap-2">
+            <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${p.color}`} />
+            <span className="text-gray-700">{p.label}</span>
+            <span className="text-xs text-gray-400">{p.hint}</span>
+            <span className="ml-auto font-mono text-gray-900">{formatCurrency(p.value)}</span>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+function ProtectionPanel({ s }: { s: B2Summary }) {
+  const started = s.coins.filter((c) => c.started);
+  const hedged = started.filter((c) => c.hedge_on).map((c) => c.coin);
+  const open = started.filter((c) => !c.hedge_on).map((c) => c.coin);
+  const carry = started.filter((c) => c.carry_on).map((c) => c.coin);
+  const nearest = started
+    .filter((c) => c.liq_distance_pct != null)
+    .sort((a, b) => (a.liq_distance_pct ?? 0) - (b.liq_distance_pct ?? 0))[0];
+  return (
+    <Panel title="Protection now">
+      <dl className="space-y-1.5 text-sm">
+        <div className="flex gap-2">
+          <dt className="w-32 shrink-0 text-gray-500">Hedged</dt>
+          <dd className="font-medium text-gray-900">{hedged.length ? hedged.join(", ") : "none"}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="w-32 shrink-0 text-gray-500">Not hedged</dt>
+          <dd className="text-gray-700">{open.length ? open.join(", ") : "none"}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="w-32 shrink-0 text-gray-500">Carry on</dt>
+          <dd className="text-gray-700">{carry.length ? carry.join(", ") : "none"}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="w-32 shrink-0 text-gray-500">Short leverage</dt>
+          <dd className="font-mono text-gray-700">{started.map((c) => `${c.coin} ${lev(c.leverage)}`).join("  ")}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="w-32 shrink-0 text-gray-500">Liquidation</dt>
+          <dd className={nearest && (nearest.liq_distance_pct ?? 0) < 15 ? "text-red-500" : "text-gray-700"}>
+            {nearest
+              ? <>nearest {nearest.coin}: price must rise <b>+{(nearest.liq_distance_pct ?? 0).toFixed(0)}%</b></>
+              : "no shorts open"}
+          </dd>
+        </div>
+      </dl>
+    </Panel>
+  );
+}
+
 export default function B2() {
   const summary = useQuery({ queryKey: ["b2-summary"], queryFn: fetchB2Summary, refetchInterval: 60_000 });
   const equity = useQuery({ queryKey: ["b2-equity"], queryFn: fetchB2Equity, refetchInterval: 60_000 });
@@ -90,73 +197,23 @@ export default function B2() {
     () => (equity.data ?? []).map((p) => ({ t: p.ts_ms, label: fmtTs(p.ts_ms), equity: p.equity })),
     [equity.data],
   );
-  const pnlPos = (s?.pnl ?? 0) >= 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Header wsStatus="open" route="b2" />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-          <b>PAPER MODE.</b> Strategy B v2 reads live Hyperliquid prices and funding and simulates fills at the hourly close
-          with taker fee + slippage. No order is ever sent — the engine has no signing key.
-          {s?.margin_enabled && (
-            <div className="mt-1">
-              Margin is modelled: each coin is its own HL cross pool holding USDC only (spot is not collateral, so it could sit
-              in a cold wallet); shorts open at the leverage below, a pump is topped up by selling spot and cutting the short,
-              a spike through the liquidation price liquidates. Same config in backtest: bull 2023-25 +34%/yr, bear 2025-26
-              +3%/yr, Jun–Sep 2026 +14%/yr.
-            </div>
-          )}
+          <b>PAPER MODE</b> — live Hyperliquid prices and funding, simulated fills, no real orders.
+          {s?.margin_enabled && <> Same config in backtest: rising market +34%/yr, falling market +3%/yr, Jun–Sep 2026 +14%/yr.</>}
         </div>
 
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           {summary.isError && <div className="text-red-500">B2 engine unavailable: {String(summary.error)}</div>}
           {s && (
-            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm text-gray-500">
-              <span>
-                Equity{" "}
-                <span className="text-xl font-semibold text-gray-900">{s.equity != null ? formatCurrency(s.equity) : "—"}</span>
-              </span>
-              <span>capital <span className="font-mono">{formatCurrency(s.capital)}</span></span>
-              <span className={`font-mono font-semibold ${pnlPos ? "text-green-600" : "text-red-500"}`}>
-                P&L {s.pnl != null ? `${signed(s.pnl)} (${(s.pnl_pct ?? 0).toFixed(2)}%)` : "—"}
-              </span>
-              <span title="P&L since start, annualised linearly — noise until the test has run for weeks">
-                APR{" "}
-                <span className={`font-mono font-semibold ${(s.apr_pct ?? 0) >= 0 ? "text-green-600" : "text-red-500"}`}>
-                  {s.apr_pct != null && s.hours >= 24 ? `${s.apr_pct >= 0 ? "+" : ""}${s.apr_pct.toFixed(1)}%` : "—"}
-                </span>
-                {s.hours < 24 && <span className="text-xs text-gray-400"> (shown after 24h)</span>}
-                {s.hours >= 24 && s.hours < 168 && <span className="text-xs text-amber-600"> (&lt;1 week: noise)</span>}
-              </span>
-              <span>running <span className="font-mono">{s.hours}h</span> since {fmtTs(s.started_ms)}</span>
-              <span>last bar {fmtTs(s.last_bar_ms)}</span>
-              <span>status <span className="font-mono">{s.status}</span></span>
-              {s.engine_last_error && <span className="text-red-500">engine error: {s.engine_last_error}</span>}
-            </div>
-          )}
-          {s?.margin_enabled && (
-            <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm text-gray-500">
-              <span>
-                short leverage{" "}
-                <span className="font-mono text-gray-800">
-                  {s.coins.map((c) => `${c.coin} ${lev(c.leverage)}`).join(" · ")}
-                </span>
-              </span>
-              <span>
-                spot <span className="font-mono text-gray-800">{s.spot_value != null ? formatCurrency(s.spot_value) : "—"}</span>
-                <span className="text-xs text-gray-400"> (cold-wallet-able)</span>
-              </span>
-              <span>
-                on HL <span className="font-mono text-gray-800">{s.hl_account_value != null ? formatCurrency(s.hl_account_value) : "—"}</span>
-                <span className="text-xs text-gray-400">
-                  {" "}margin used {formatCurrency(s.margin_used ?? 0)} · free {formatCurrency(s.free_margin ?? 0)}
-                </span>
-              </span>
-              <span>
-                shorts <span className="font-mono text-gray-800">{formatCurrency(s.short_notional)}</span>
-                <span className="text-xs text-gray-400"> · account leverage {lev(s.effective_leverage)}</span>
-              </span>
+            <div className="grid gap-4 md:grid-cols-3">
+              <ResultPanel s={s} />
+              {s.margin_enabled && <MoneyPanel s={s} />}
+              {s.margin_enabled && <ProtectionPanel s={s} />}
             </div>
           )}
           <div className="mt-3 h-64">
