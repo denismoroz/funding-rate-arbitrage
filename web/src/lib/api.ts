@@ -640,3 +640,70 @@ export async function deleteCoin(coin: string): Promise<void> {
     throw new Error(`${res.status}: ${msg}`);
   }
 }
+
+// ── Strategy B v2 (paper) ─────────────────────────────────────────────────────
+
+export type B2Coin = {
+  coin: string;
+  started: boolean;
+  price?: number;
+  equity?: number;
+  capital?: number;
+  pnl?: number;
+  pnl_pct?: number;
+  hedge_on?: boolean;
+  carry_on?: boolean;
+  spot_value?: number;
+  short_pnl?: number;
+  cash?: number;
+  carry_cash?: number;
+  funding_on_hedge?: number;
+  hedge_realized?: number;
+  carry_funding?: number;
+  fees?: number;
+  hedges?: number;
+  rebalances?: number;
+  carry_entries?: number;
+};
+
+export type B2Summary = {
+  mode: string;
+  status: string;
+  params: Record<string, unknown>;
+  capital: number;
+  equity: number | null;
+  pnl: number | null;
+  pnl_pct: number | null;
+  started_ms: number | null;
+  last_bar_ms: number | null;
+  hours: number;
+  engine_last_tick_ms: number | null;
+  engine_last_error: string | null;
+  coins: B2Coin[];
+};
+
+export type B2EquityPoint = { ts_ms: number; equity: number };
+
+export type B2Event = {
+  ts_ms: number;
+  coin: string;
+  kind: string;
+  qty: number;
+  price: number;
+  notional: number;
+  fee: number;
+  is_paper: boolean;
+  details: Record<string, unknown> | null;
+};
+
+export function fetchB2Summary(): Promise<B2Summary> {
+  return apiFetch<B2Summary>("/b2/summary");
+}
+
+export function fetchB2Equity(): Promise<B2EquityPoint[]> {
+  return apiFetch<B2EquityPoint[]>("/b2/equity");
+}
+
+export function fetchB2Events(limit = 200): Promise<B2Event[]> {
+  return apiFetch<B2Event[]>(`/b2/events?limit=${limit}`);
+}

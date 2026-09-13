@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from frab.api.routes import (
     alerts as alerts_routes,
+    b2 as b2_routes,
     coins as coins_routes,
     equity as equity_routes,
     events as events_routes,
@@ -43,6 +44,7 @@ def create_app(
     app.include_router(funding_routes.router, prefix="/api/funding", tags=["funding"])
     app.include_router(events_routes.router, prefix="/api/events", tags=["events"])
     app.include_router(alerts_routes.router, prefix="/api/alerts", tags=["alerts"])
+    app.include_router(b2_routes.router, prefix="/api/b2", tags=["b2"])
     app.include_router(xsmom_routes.router, prefix="/api/xsmom", tags=["xsmom"])
 
     if event_bus is not None:

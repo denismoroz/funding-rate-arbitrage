@@ -6,6 +6,7 @@ import Journal from "./pages/Journal";
 import Xsmom from "./pages/Xsmom";
 import XsmomSettingsPage from "./pages/XsmomSettingsPage";
 import XsmomJournalPage from "./pages/XsmomJournalPage";
+import B2 from "./pages/B2";
 import type { Route } from "./components/Header";
 
 function readHash(): Route {
@@ -16,6 +17,7 @@ function readHash(): Route {
   if (hash === "#/xsmom/settings") return "xsmom-settings";
   if (hash === "#/xsmom/journal") return "xsmom-journal";
   if (hash === "#/xsmom") return "xsmom";
+  if (hash === "#/b2") return "b2";
   return "dashboard";
 }
 
@@ -37,5 +39,6 @@ export default function App() {
   if (route === "xsmom-settings") return <XsmomSettingsPage />;
   if (route === "xsmom-journal") return <XsmomJournalPage />;
   if (route === "xsmom") return <Xsmom />;
+  if (route === "b2") return <B2 />;
   return <Dashboard />;
 }

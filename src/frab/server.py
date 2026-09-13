@@ -28,6 +28,10 @@ from frab.repo.xsmom_repo import XsmomRepo
 from frab.settings import Settings, get_settings
 from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 from frab.strategy.xsmom.params import XsmomParams
+from frab.exchanges.hyperliquid.client import HLClient
+from frab.repo.b2_repo import B2Repo
+from frab.strategy.b2.engine import B2PaperEngine
+from frab.strategy.b2.params import B2Params
 from frab.strategy.xsmom.strategy import XsmomStrategy
 from frab.strategy.xsmom.protection.margin_watchdog import XsmomMarginWatchdog
 
@@ -40,6 +44,8 @@ _STRATEGY_NAME = "two_phase"
 _STRATEGY_VERSION = "v2"
 
 _XSMOM_STRATEGY_NAME = "xsmom"
+_B2_STRATEGY_NAME = "b2"
+_B2_STRATEGY_VERSION = "v2-paper"
 _XSMOM_STRATEGY_VERSION = "v1"
 
 
@@ -155,6 +161,24 @@ async def _get_or_create_xsmom_strategy(
                 strategy_id, row.name, row.version, row.status,
             )
     return strategy_id, params
+
+
+async def _get_or_create_b2_strategy(session_factory) -> int:
+    """Return the b2 strategy row id, creating it ACTIVE with validated defaults if absent.
+
+    B2 runs in paper mode only (no signing key is ever passed), so starting active is safe.
+    """
+    async with session_scope(session_factory) as s:
+        row = (await s.execute(select(StrategyRow).where(StrategyRow.name == _B2_STRATEGY_NAME))).scalar_one_or_none()
+        if row is None:
+            row = StrategyRow(name=_B2_STRATEGY_NAME, version=_B2_STRATEGY_VERSION,
+                           params_json=B2Params().to_dict(), status="active")
+            s.add(row)
+            await s.flush()
+            logger.info("Created b2 strategy row id=%s (paper, active)", row.id)
+        else:
+            B2Params.from_dict(dict(row.params_json))   # fail loud on bad params
+        return row.id
 
 
 def build_app(*, dry_run: bool = False) -> FastAPI:
@@ -383,6 +407,17 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         else:
             logger.info("xsmom credentials not set; skipping xsmom engine")
 
+        # ── Strategy B v2 PAPER engine (read-only client, no signing key) ──
+        b2_client = HLClient(api_url=_hl_info_url(settings), timeout_s=settings.hl_request_timeout_s)
+        b2_strategy_id = await _get_or_create_b2_strategy(session_factory)
+        b2_engine = B2PaperEngine(session_factory=session_factory, client=b2_client,
+                                  strategy_id=b2_strategy_id, repo=B2Repo(session_factory), event_bus=bus)
+        await b2_engine.start()
+        app.state.b2_engine = b2_engine
+        app.state.b2_client = b2_client
+        app.state.b2_strategy_id = b2_strategy_id
+        logger.info("b2 paper engine started (strategy_id=%s)", b2_strategy_id)
+
         # ── Stash on app.state ────────────────────────────────────────────
         app.state.exchange = exchange
         app.state.farb_repo = farb_repo
@@ -394,6 +429,10 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         try:
             yield
         finally:
+            b2_engine_state = getattr(app.state, "b2_engine", None)
+            if b2_engine_state is not None:
+                await b2_engine_state.stop()
+                await app.state.b2_client.aclose()
             # Stop xsmom engine first (if it was built)
             xsmom_loop_state = getattr(app.state, "xsmom_loop", None)
             if xsmom_loop_state is not None:

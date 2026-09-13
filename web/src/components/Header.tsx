@@ -19,9 +19,10 @@ export type Route =
   | "journal"
   | "xsmom"
   | "xsmom-journal"
-  | "xsmom-settings";
+  | "xsmom-settings"
+  | "b2";
 
-type Section = "frab" | "xsmom";
+type Section = "frab" | "xsmom" | "b2";
 
 const WS_DOT: Record<WsStatus, string> = {
   open: "bg-green-500",
@@ -30,6 +31,7 @@ const WS_DOT: Record<WsStatus, string> = {
 };
 
 function sectionOf(route: Route): Section {
+  if (route === "b2") return "b2";
   return route.startsWith("xsmom") ? "xsmom" : "frab";
 }
 
@@ -47,6 +49,8 @@ const XSMOM_TABS: SubTab[] = [
   { label: "Journal", href: "#/xsmom/journal", match: "xsmom-journal" },
   { label: "Settings", href: "#/xsmom/settings", match: "xsmom-settings" },
 ];
+
+const B2_TABS: SubTab[] = [{ label: "Overview (paper)", href: "#/b2", match: "b2" }];
 
 // ── presentational on/off switch ──────────────────────────────────────────────
 
@@ -165,7 +169,7 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: Route }
     : eventsQ.data?.find((e) => e.kind.startsWith("engine."));
   const engineLabel = engineAlive ? "running" : engineEvent?.message;
 
-  const tabs = section === "xsmom" ? XSMOM_TABS : FRAB_TABS;
+  const tabs = section === "xsmom" ? XSMOM_TABS : section === "b2" ? B2_TABS : FRAB_TABS;
 
   const sectionBtn = (label: string, href: string, active: boolean) => (
     <a
@@ -189,6 +193,7 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: Route }
         <nav className="flex items-center gap-2">
           {sectionBtn("FRAB", "#/", section === "frab")}
           {sectionBtn("XSMOM", "#/xsmom", section === "xsmom")}
+          {sectionBtn("B v2 · paper", "#/b2", section === "b2")}
         </nav>
 
         <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400">
@@ -226,7 +231,13 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: Route }
           ))}
         </nav>
         <span className="ml-auto">
-          {section === "xsmom" ? <XsmomToggle /> : <FrabToggle />}
+          {section === "xsmom" ? (
+            <XsmomToggle />
+          ) : section === "b2" ? (
+            <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">PAPER</span>
+          ) : (
+            <FrabToggle />
+          )}
         </span>
       </div>
     </header>

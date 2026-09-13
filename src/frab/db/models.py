@@ -338,3 +338,59 @@ class XsmomDailyPrice(Base):
     coin: Mapped[str] = mapped_column(String, nullable=False)
     day_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     close: Mapped[float] = mapped_column(nullable=False)
+
+
+# ── Strategy B v2 (paper) ─────────────────────────────────────────────────────
+
+class B2Book(Base):
+    """Per-coin state of a Strategy B v2 book (serialized CoinBook)."""
+    __tablename__ = "b2_books"
+    __table_args__ = (UniqueConstraint("strategy_id", "coin"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    state_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    last_bar_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    updated_at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class B2Event(Base):
+    """A fill produced by a Strategy B v2 book (paper fills carry is_paper=True)."""
+    __tablename__ = "b2_events"
+    __table_args__ = (Index("ix_b2_events_strategy_ts", "strategy_id", "ts_ms"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    qty: Mapped[float] = mapped_column(nullable=False)
+    price: Mapped[float] = mapped_column(nullable=False)
+    notional: Mapped[float] = mapped_column(nullable=False)
+    fee: Mapped[float] = mapped_column(nullable=False)
+    is_paper: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    details_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+class B2Equity(Base):
+    """Hourly equity snapshot of one Strategy B v2 coin book."""
+    __tablename__ = "b2_equity"
+    __table_args__ = (
+        UniqueConstraint("strategy_id", "coin", "ts_ms"),
+        Index("ix_b2_equity_strategy_ts", "strategy_id", "ts_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    price: Mapped[float] = mapped_column(nullable=False)
+    equity: Mapped[float] = mapped_column(nullable=False)
+    book_equity: Mapped[float] = mapped_column(nullable=False)
+    cash: Mapped[float] = mapped_column(nullable=False)
+    spot_value: Mapped[float] = mapped_column(nullable=False)
+    short_pnl: Mapped[float] = mapped_column(nullable=False)
+    carry_cash: Mapped[float] = mapped_column(nullable=False)
+    hedge_on: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    carry_on: Mapped[bool] = mapped_column(Boolean, nullable=False)
