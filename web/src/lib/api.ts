@@ -681,6 +681,7 @@ export type B2Coin = {
 };
 
 export type B2Summary = {
+  test: string;
   mode: string;
   status: string;
   params: Record<string, unknown>;
@@ -718,14 +719,16 @@ export type B2Event = {
   details: Record<string, unknown> | null;
 };
 
-export function fetchB2Summary(): Promise<B2Summary> {
-  return apiFetch<B2Summary>("/b2/summary");
+export type B2Test = "b2" | "b2_cold";
+
+export function fetchB2Summary(test: B2Test = "b2"): Promise<B2Summary> {
+  return apiFetch<B2Summary>(`/b2/summary?test=${test}`);
 }
 
-export function fetchB2Equity(): Promise<B2EquityPoint[]> {
-  return apiFetch<B2EquityPoint[]>("/b2/equity");
+export function fetchB2Equity(test: B2Test = "b2"): Promise<B2EquityPoint[]> {
+  return apiFetch<B2EquityPoint[]>(`/b2/equity?test=${test}`);
 }
 
-export function fetchB2Events(limit = 200): Promise<B2Event[]> {
-  return apiFetch<B2Event[]>(`/b2/events?limit=${limit}`);
+export function fetchB2Events(limit = 200, test: B2Test = "b2"): Promise<B2Event[]> {
+  return apiFetch<B2Event[]>(`/b2/events?limit=${limit}&test=${test}`);
 }

@@ -20,7 +20,8 @@ export type Route =
   | "xsmom"
   | "xsmom-journal"
   | "xsmom-settings"
-  | "b2";
+  | "b2"
+  | "b2-cold";
 
 type Section = "frab" | "xsmom" | "b2";
 
@@ -31,7 +32,7 @@ const WS_DOT: Record<WsStatus, string> = {
 };
 
 function sectionOf(route: Route): Section {
-  if (route === "b2") return "b2";
+  if (route === "b2" || route === "b2-cold") return "b2";
   return route.startsWith("xsmom") ? "xsmom" : "frab";
 }
 
@@ -50,7 +51,10 @@ const XSMOM_TABS: SubTab[] = [
   { label: "Settings", href: "#/xsmom/settings", match: "xsmom-settings" },
 ];
 
-const B2_TABS: SubTab[] = [{ label: "Overview (paper)", href: "#/b2", match: "b2" }];
+const B2_TABS: SubTab[] = [
+  { label: "Main: spot + hedge + carry", href: "#/b2", match: "b2" },
+  { label: "Cold wallet: spot + hedge", href: "#/b2/cold", match: "b2-cold" },
+];
 
 // ── presentational on/off switch ──────────────────────────────────────────────
 

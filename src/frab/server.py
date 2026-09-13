@@ -46,6 +46,13 @@ _STRATEGY_VERSION = "v2"
 _XSMOM_STRATEGY_NAME = "xsmom"
 _B2_STRATEGY_NAME = "b2"
 _B2_STRATEGY_VERSION = "v2-paper"
+# Paper tests of Strategy B v2 run side by side: (strategy name, version, params on first start).
+_B2_TESTS = (
+    (_B2_STRATEGY_NAME, _B2_STRATEGY_VERSION, B2Params(capital_usd=257.0)),
+    # "cold wallet": spot could sit off-exchange, HL holds only USDC for the hedge; no carry
+    # (it needs spot on HL); the pool covers a hedge on spot grown to the 1.5x ratchet line.
+    ("b2_cold", "v2-paper-cold", B2Params(capital_usd=257.0, carry_enabled=False, hedge_margin_headroom=1.5)),
+)
 _XSMOM_STRATEGY_VERSION = "v1"
 
 
@@ -163,19 +170,20 @@ async def _get_or_create_xsmom_strategy(
     return strategy_id, params
 
 
-async def _get_or_create_b2_strategy(session_factory) -> int:
-    """Return the b2 strategy row id, creating it ACTIVE with validated defaults if absent.
+async def _get_or_create_b2_strategy(session_factory, name: str = _B2_STRATEGY_NAME,
+                                     version: str = _B2_STRATEGY_VERSION, defaults: B2Params | None = None) -> int:
+    """Return a B2 paper-test strategy row id, creating it ACTIVE with `defaults` if absent.
 
     B2 runs in paper mode only (no signing key is ever passed), so starting active is safe.
     """
     async with session_scope(session_factory) as s:
-        row = (await s.execute(select(StrategyRow).where(StrategyRow.name == _B2_STRATEGY_NAME))).scalar_one_or_none()
+        row = (await s.execute(select(StrategyRow).where(StrategyRow.name == name))).scalar_one_or_none()
         if row is None:
-            row = StrategyRow(name=_B2_STRATEGY_NAME, version=_B2_STRATEGY_VERSION,
-                           params_json=B2Params().to_dict(), status="active")
+            row = StrategyRow(name=name, version=version,
+                           params_json=(defaults or B2Params()).to_dict(), status="active")
             s.add(row)
             await s.flush()
-            logger.info("Created b2 strategy row id=%s (paper, active)", row.id)
+            logger.info("Created %s strategy row id=%s (paper, active)", name, row.id)
         else:
             B2Params.from_dict(dict(row.params_json))   # fail loud on bad params
         return row.id
@@ -407,16 +415,22 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         else:
             logger.info("xsmom credentials not set; skipping xsmom engine")
 
-        # ── Strategy B v2 PAPER engine (read-only client, no signing key) ──
+        # ── Strategy B v2 PAPER engines (read-only client, no signing key) ──
         b2_client = HLClient(api_url=_hl_info_url(settings), timeout_s=settings.hl_request_timeout_s)
-        b2_strategy_id = await _get_or_create_b2_strategy(session_factory)
-        b2_engine = B2PaperEngine(session_factory=session_factory, client=b2_client,
-                                  strategy_id=b2_strategy_id, repo=B2Repo(session_factory), event_bus=bus)
-        await b2_engine.start()
-        app.state.b2_engine = b2_engine
         app.state.b2_client = b2_client
-        app.state.b2_strategy_id = b2_strategy_id
-        logger.info("b2 paper engine started (strategy_id=%s)", b2_strategy_id)
+        app.state.b2_tests = {}
+        app.state.b2_engines = {}
+        for i, (b2_name, b2_version, b2_defaults) in enumerate(_B2_TESTS):
+            sid = await _get_or_create_b2_strategy(session_factory, b2_name, b2_version, b2_defaults)
+            # stagger the hourly ticks so the tests never write to SQLite at the same moment
+            b2_engine = B2PaperEngine(session_factory=session_factory, client=b2_client, strategy_id=sid,
+                                      repo=B2Repo(session_factory), event_bus=bus, tick_delay_s=75.0 + 60.0 * i)
+            await b2_engine.start()
+            app.state.b2_tests[b2_name] = sid
+            app.state.b2_engines[sid] = b2_engine
+            logger.info("b2 paper engine started (test=%s strategy_id=%s)", b2_name, sid)
+        app.state.b2_strategy_id = app.state.b2_tests[_B2_STRATEGY_NAME]
+        app.state.b2_engine = app.state.b2_engines[app.state.b2_strategy_id]
 
         # ── Stash on app.state ────────────────────────────────────────────
         app.state.exchange = exchange
@@ -429,9 +443,9 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         try:
             yield
         finally:
-            b2_engine_state = getattr(app.state, "b2_engine", None)
-            if b2_engine_state is not None:
+            for b2_engine_state in getattr(app.state, "b2_engines", {}).values():
                 await b2_engine_state.stop()
+            if getattr(app.state, "b2_client", None) is not None:
                 await app.state.b2_client.aclose()
             # Stop xsmom engine first (if it was built)
             xsmom_loop_state = getattr(app.state, "xsmom_loop", None)

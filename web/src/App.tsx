@@ -18,6 +18,7 @@ function readHash(): Route {
   if (hash === "#/xsmom/journal") return "xsmom-journal";
   if (hash === "#/xsmom") return "xsmom";
   if (hash === "#/b2") return "b2";
+  if (hash === "#/b2/cold") return "b2-cold";
   return "dashboard";
 }
 
@@ -39,6 +40,7 @@ export default function App() {
   if (route === "xsmom-settings") return <XsmomSettingsPage />;
   if (route === "xsmom-journal") return <XsmomJournalPage />;
   if (route === "xsmom") return <Xsmom />;
-  if (route === "b2") return <B2 />;
+  if (route === "b2") return <B2 test="b2" />;
+  if (route === "b2-cold") return <B2 key="b2_cold" test="b2_cold" />;
   return <Dashboard />;
 }

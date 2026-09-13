@@ -306,6 +306,57 @@
   }
  },
  {
+  "variant": "cold_wallet_headroom_1.5",
+  "train": {
+   "ret": 91.41005987973195,
+   "ann": 38.73156601513274,
+   "dd": 8.227403078860684,
+   "fees": 4.0989202562971565,
+   "hedge_funding": 5.5652036328426835,
+   "carry_funding": 0.0,
+   "min_liq_distance": 36.80698309125867,
+   "trades": 164.0,
+   "margin_rebals": 0.0,
+   "liquidations": 0.0,
+   "hedge_limited": 0.0,
+   "carry_blocked_hours": 0.0,
+   "carry_trades": 0.0
+  },
+  "hl_pool": 470.5196267696268,
+  "spot_target": 529.4803732303732,
+  "carry_target": 0.0,
+  "test": {
+   "ret": 2.9047365810607406,
+   "ann": 3.073430234512853,
+   "dd": 11.428943702206729,
+   "fees": 2.5318881615499667,
+   "hedge_funding": 1.5873152697278785,
+   "carry_funding": 0.0,
+   "min_liq_distance": 33.92998894205381,
+   "trades": 108.0,
+   "margin_rebals": 0.0,
+   "liquidations": 0.0,
+   "hedge_limited": 4.0,
+   "carry_blocked_hours": 0.0,
+   "carry_trades": 0.0
+  },
+  "forward": {
+   "ret": 4.9065043509218365,
+   "ann": 18.19558656908513,
+   "dd": 3.676216684186384,
+   "fees": 0.8096000676919309,
+   "hedge_funding": 0.34694945448566195,
+   "carry_funding": 0.0,
+   "min_liq_distance": 50.078802622444705,
+   "trades": 38.0,
+   "margin_rebals": 0.0,
+   "liquidations": 0.0,
+   "hedge_limited": 0.0,
+   "carry_blocked_hours": 0.0,
+   "carry_trades": 0.0
+  }
+ },
+ {
   "variant": "sell_spot_no_carry",
   "train": {
    "ret": 152.8487138108595,

@@ -64,3 +64,36 @@ async def test_b2_routes_503_when_engine_absent():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         assert (await c.get("/api/b2/summary")).status_code == 503
     await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_b2_routes_select_the_paper_test():
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+    await init_db(eng)
+    sf = make_session_factory(eng)
+    tests, engines = {}, {}
+    clock = {"now": T0 + 3000 * HOUR_MS + 90_000}
+    for name, p in (("b2", B2Params(coins=("BTC", "ETH"), capital_usd=2000.0, min_order_usd=0.0)),
+                    ("b2_cold", B2Params(coins=("BTC", "ETH"), capital_usd=2000.0, min_order_usd=0.0,
+                                         carry_enabled=False, hedge_margin_headroom=1.5))):
+        async with session_scope(sf) as s:
+            row = Strategy(name=name, version="v2-paper", params_json=p.to_dict(), status="active")
+            s.add(row)
+            await s.flush()
+            sid = row.id
+        engine = B2PaperEngine(session_factory=sf, client=FakeClient(), strategy_id=sid, clock=lambda: clock["now"])
+        await engine.tick()
+        tests[name], engines[sid] = sid, engine
+    app = create_app(sf)
+    app.state.b2_tests, app.state.b2_engines = tests, engines
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        main = (await c.get("/api/b2/summary")).json()
+        cold = (await c.get("/api/b2/summary", params={"test": "b2_cold"})).json()
+        cold_ev = (await c.get("/api/b2/events", params={"test": "b2_cold"})).json()
+        missing = await c.get("/api/b2/summary", params={"test": "nope"})
+    assert main["test"] == "b2" and main["params"]["carry_enabled"] is True
+    assert cold["test"] == "b2_cold" and cold["params"]["carry_enabled"] is False
+    assert cold["spot_value"] > main["spot_value"], "no carry -> more of the capital sits in spot"
+    assert cold_ev and all(e["kind"] in ("init_spot_buy", "hedge_open") for e in cold_ev)
+    assert missing.status_code == 404
+    await eng.dispose()

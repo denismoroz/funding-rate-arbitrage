@@ -11,23 +11,36 @@ from frab.strategy.b2.params import B2Params
 router = APIRouter()
 
 
-def _state(request: Request) -> tuple[int, B2Repo]:
-    sid = getattr(request.app.state, "b2_strategy_id", None)
-    if sid is None:
+def _state(request: Request, test: str) -> tuple[int, B2Repo]:
+    """Strategy id of the paper test `test` ("b2" = main, "b2_cold" = cold wallet)."""
+    tests = getattr(request.app.state, "b2_tests", None)
+    if tests is None:                                   # single-test wiring (tests, older app state)
+        sid = getattr(request.app.state, "b2_strategy_id", None)
+        tests = {"b2": sid} if sid is not None else {}
+    if not tests:
         raise HTTPException(status_code=503, detail="B2 engine is not running")
-    return sid, B2Repo(request.app.state.session_factory)
+    if test not in tests:
+        raise HTTPException(status_code=404, detail=f"unknown B2 test {test!r}; available: {sorted(tests)}")
+    return tests[test], B2Repo(request.app.state.session_factory)
+
+
+def _engine(request: Request, sid: int):
+    engines = getattr(request.app.state, "b2_engines", None)
+    if engines is not None:
+        return engines.get(sid)
+    return getattr(request.app.state, "b2_engine", None)
 
 
 @router.get("/summary")
-async def get_summary(request: Request) -> dict:
-    sid, repo = _state(request)
+async def get_summary(request: Request, test: str = "b2") -> dict:
+    sid, repo = _state(request, test)
     async with request.app.state.session_factory() as s:
         row = await s.get(Strategy, sid)
     params = B2Params.from_dict(dict(row.params_json))
     books = {b.coin: b for b in await repo.books(sid)}
     latest = {e.coin: e for e in await repo.latest_equity(sid)}
     series = await repo.equity_series(sid, len(params.coins))
-    engine = getattr(request.app.state, "b2_engine", None)
+    engine = _engine(request, sid)
 
     coins = []
     for coin in params.coins:
@@ -71,7 +84,7 @@ async def get_summary(request: Request) -> dict:
     short_notional = sum(c["hedge_notional"] + c["carry_notional"] for c in started)
     hl_av = total("hl_account_value")
     return {
-        "mode": params.mode, "status": row.status, "params": params.to_dict(),
+        "test": test, "mode": params.mode, "status": row.status, "params": params.to_dict(),
         "capital": capital, "equity": equity,
         "pnl": None if equity is None else equity - capital,
         "pnl_pct": pnl_pct,
@@ -89,8 +102,8 @@ async def get_summary(request: Request) -> dict:
 
 
 @router.get("/equity")
-async def get_equity(request: Request) -> list[dict]:
-    sid, repo = _state(request)
+async def get_equity(request: Request, test: str = "b2") -> list[dict]:
+    sid, repo = _state(request, test)
     async with request.app.state.session_factory() as s:
         row = await s.get(Strategy, sid)
     n = len(B2Params.from_dict(dict(row.params_json)).coins)
@@ -98,8 +111,8 @@ async def get_equity(request: Request) -> list[dict]:
 
 
 @router.get("/events")
-async def get_events(request: Request, limit: int = 200) -> list[dict]:
-    sid, repo = _state(request)
+async def get_events(request: Request, limit: int = 200, test: str = "b2") -> list[dict]:
+    sid, repo = _state(request, test)
     return [{"ts_ms": e.ts_ms, "coin": e.coin, "kind": e.kind, "qty": e.qty, "price": e.price,
              "notional": e.notional, "fee": e.fee, "is_paper": e.is_paper, "details": e.details_json}
             for e in await repo.events(sid, limit=min(limit, 1000))]

@@ -39,6 +39,19 @@ def test_sizing_fits_spot_carry_and_both_margins(coin, lev):
     assert abs(carry - params.carry_fraction * spot) < 1e-12
 
 
+def test_cold_wallet_sizing_reserves_hedge_margin_for_grown_spot():
+    params = B2Params(coins=("SOL",), capital_usd=300.0, carry_enabled=False, hedge_margin_headroom=1.5)
+    spot, reserve, carry = params.book_sizes("SOL")
+    assert carry == 0.0
+    assert reserve == pytest.approx(spot * (1.5 / 1.5 + params.margin_buffer))
+    book = CoinBook.new("SOL", params)
+    start_book(book, bar_ms=0, price=100.0, params=params)
+    book.units_spot *= 1.49                       # spot grew to just under the ratchet line
+    ev = _bar(book, params, 1, 100.0, hedge=True)
+    opened = [e for e in ev if e["kind"] == "hedge_open"]
+    assert opened and not opened[0].get("limited_by_margin"), "the pool must cover a hedge on 1.5x spot"
+
+
 def test_research_sizing_when_margin_disabled():
     spot, reserve, carry = B2Params(coins=("BTC",), capital_usd=400.0, margin_enabled=False).book_sizes("BTC")
     assert (spot, reserve, carry) == (200.0, 200.0, 0.6 * 200.0)

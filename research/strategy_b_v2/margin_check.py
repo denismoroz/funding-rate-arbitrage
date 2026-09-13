@@ -160,6 +160,7 @@ def main():
         ("margin_caps_3_2_1.5_1.5", replace(base, short_leverage=caps), {}),
         ("margin_max_5_3_1.9_2.5", replace(base, short_leverage={"BTC": 5.0, "ETH": 3.0, "SOL": 1.9, "AVAX": 2.5}), {}),
         ("hedge_no_carry_caps", replace(base, short_leverage=caps, carry_enabled=False), {}),
+        ("cold_wallet_headroom_1.5", replace(base, short_leverage=caps, carry_enabled=False, hedge_margin_headroom=1.5), {}),
         ("sell_spot_no_carry", replace(base, margin_enabled=False, carry_enabled=False, spot_share=1 / 1.1),
          dict(zero_funding=True, perp_as_spot=True)),
         ("hedge_no_carry_research", replace(base, margin_enabled=False, carry_enabled=False, spot_share=1 / 1.1), {}),

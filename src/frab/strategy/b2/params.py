@@ -42,8 +42,12 @@ class B2Params:
     maint_margin_rate: dict[str, float] = field(
         default_factory=lambda: {"BTC": 0.0125, "ETH": 0.02, "SOL": 0.025, "AVAX": 0.05})
     default_maint_margin_rate: float = 0.05
-    # Extra USDC per book as a share of the spot target: fees and a hedge on grown spot.
+    # Extra USDC per book as a share of the spot target: fees and top-ups.
     margin_buffer: float = 0.10
+    # Hedge margin is reserved for spot this many times its target. The ratchet lets unhedged
+    # spot grow to (1 + ratchet_threshold) x target before a hedge has to cover it; without a
+    # carry to cut, a 1.0 pool leaves such hedges partial.
+    hedge_margin_headroom: float = 1.0
     # Top up when the shorts' losses leave less than this share of initial margin:
     # sell spot worth the loss and cut the short by the same units (stays delta neutral).
     rebalance_at_im_share: float = 0.5
@@ -65,7 +69,7 @@ class B2Params:
 
         Research sizing: spot = spot_share of capital, carry = carry_fraction of the reserve.
         Margin sizing keeps the research ratio carry = carry_fraction x spot and solves
-        capital = spot + carry spot + carry/L + spot/L + buffer x spot for the spot target;
+        capital = spot + carry spot + carry/L + headroom x spot/L + buffer x spot for the spot target;
         the reserve is everything that must stay on HL as USDC.
         """
         cap = self.book_capital
@@ -74,7 +78,7 @@ class B2Params:
             return spot, cap - spot, self.carry_fraction * (cap - spot)
         lev = self.leverage(coin)
         k = self.carry_fraction if self.carry_enabled else 0.0
-        spot = cap / (1.0 + k + k / lev + 1.0 / lev + self.margin_buffer)
+        spot = cap / (1.0 + k + k / lev + self.hedge_margin_headroom / lev + self.margin_buffer)
         return spot, cap - spot, k * spot
 
     @classmethod

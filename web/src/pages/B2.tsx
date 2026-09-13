@@ -2,8 +2,19 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Header } from "../components/Header";
-import { fetchB2Events, fetchB2Equity, fetchB2Summary, type B2Coin, type B2Summary } from "../lib/api";
+import { fetchB2Events, fetchB2Equity, fetchB2Summary, type B2Coin, type B2Summary, type B2Test } from "../lib/api";
 import { formatCurrency } from "../lib/format";
+
+const TEST_META: Record<B2Test, { title: string; backtest: string }> = {
+  b2: {
+    title: "Main test — spot + trend hedge + funding carry on the idle cash",
+    backtest: "rising market +34%/yr, falling market +3%/yr, Jun–Sep 2026 +14%/yr",
+  },
+  b2_cold: {
+    title: "Cold wallet test — spot (could sit off-exchange) + trend hedge on HL, no carry",
+    backtest: "rising market +39%/yr, falling market +3%/yr, Jun–Sep 2026 +18%/yr",
+  },
+};
 
 const KIND_LABEL: Record<string, string> = {
   init_spot_buy: "start: buy spot",
@@ -120,10 +131,11 @@ function ResultPanel({ s }: { s: B2Summary }) {
 }
 
 function MoneyPanel({ s }: { s: B2Summary }) {
+  const carry = s.params.carry_enabled === true;
   const parts = [
     { label: "Spot coins", hint: "could sit in a cold wallet", value: s.spot_value ?? 0, color: "bg-blue-500" },
     { label: "HL: margin for open shorts", hint: "USDC locked by hedges / carry", value: s.margin_used ?? 0, color: "bg-amber-500" },
-    { label: "HL: free USDC", hint: "for the next hedge, carry, top-ups", value: Math.max(s.free_margin ?? 0, 0), color: "bg-gray-300" },
+    { label: "HL: free USDC", hint: carry ? "for the next hedge, carry, top-ups" : "for the next hedge and top-ups", value: Math.max(s.free_margin ?? 0, 0), color: "bg-gray-300" },
   ];
   const total = parts.reduce((a, p) => a + p.value, 0) || 1;
   return (
@@ -166,10 +178,12 @@ function ProtectionPanel({ s }: { s: B2Summary }) {
           <dt className="w-32 shrink-0 text-gray-500">Not hedged</dt>
           <dd className="text-gray-700">{open.length ? open.join(", ") : "none"}</dd>
         </div>
-        <div className="flex gap-2">
-          <dt className="w-32 shrink-0 text-gray-500">Carry on</dt>
-          <dd className="text-gray-700">{carry.length ? carry.join(", ") : "none"}</dd>
-        </div>
+        {s.params.carry_enabled === true && (
+          <div className="flex gap-2">
+            <dt className="w-32 shrink-0 text-gray-500">Carry on</dt>
+            <dd className="text-gray-700">{carry.length ? carry.join(", ") : "none"}</dd>
+          </div>
+        )}
         <div className="flex gap-2">
           <dt className="w-32 shrink-0 text-gray-500">Short leverage</dt>
           <dd className="font-mono text-gray-700">{started.map((c) => `${c.coin} ${lev(c.leverage)}`).join("  ")}</dd>
@@ -187,10 +201,11 @@ function ProtectionPanel({ s }: { s: B2Summary }) {
   );
 }
 
-export default function B2() {
-  const summary = useQuery({ queryKey: ["b2-summary"], queryFn: fetchB2Summary, refetchInterval: 60_000 });
-  const equity = useQuery({ queryKey: ["b2-equity"], queryFn: fetchB2Equity, refetchInterval: 60_000 });
-  const events = useQuery({ queryKey: ["b2-events"], queryFn: () => fetchB2Events(200), refetchInterval: 60_000 });
+export default function B2({ test }: { test: B2Test }) {
+  const summary = useQuery({ queryKey: ["b2-summary", test], queryFn: () => fetchB2Summary(test), refetchInterval: 60_000 });
+  const equity = useQuery({ queryKey: ["b2-equity", test], queryFn: () => fetchB2Equity(test), refetchInterval: 60_000 });
+  const events = useQuery({ queryKey: ["b2-events", test], queryFn: () => fetchB2Events(200, test), refetchInterval: 60_000 });
+  const meta = TEST_META[test];
   const s = summary.data;
 
   const points = useMemo(
@@ -200,11 +215,12 @@ export default function B2() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header wsStatus="open" route="b2" />
+      <Header wsStatus="open" route={test === "b2_cold" ? "b2-cold" : "b2"} />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-          <b>PAPER MODE</b> — live Hyperliquid prices and funding, simulated fills, no real orders.
-          {s?.margin_enabled && <> Same config in backtest: rising market +34%/yr, falling market +3%/yr, Jun–Sep 2026 +14%/yr.</>}
+          <div className="font-semibold">{meta.title}</div>
+          <b>PAPER MODE</b> — live Hyperliquid prices and funding, simulated fills, no real orders. Same config in backtest:{" "}
+          {meta.backtest}.
         </div>
 
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
