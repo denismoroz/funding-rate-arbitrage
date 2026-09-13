@@ -1,0 +1,177 @@
+{
+ "axes": {
+  "lb": {
+   "L": {
+    "disc_median": 0.054,
+    "hold_median": -0.616,
+    "hold_pos_share": 0.049
+   },
+   "M": {
+    "disc_median": 0.088,
+    "hold_median": -0.471,
+    "hold_pos_share": 0.094
+   },
+   "S": {
+    "disc_median": 0.235,
+    "hold_median": -0.082,
+    "hold_pos_share": 0.41
+   },
+   "XL": {
+    "disc_median": -0.0,
+    "hold_median": -0.385,
+    "hold_pos_share": 0.08
+   }
+  },
+  "skip": {
+   "0": {
+    "disc_median": 0.058,
+    "hold_median": -0.425,
+    "hold_pos_share": 0.101
+   },
+   "7": {
+    "disc_median": 0.107,
+    "hold_median": -0.292,
+    "hold_pos_share": 0.215
+   }
+  },
+  "k": {
+   "5": {
+    "disc_median": 0.127,
+    "hold_median": -0.409,
+    "hold_pos_share": 0.167
+   },
+   "8": {
+    "disc_median": 0.023,
+    "hold_median": -0.344,
+    "hold_pos_share": 0.177
+   },
+   "12": {
+    "disc_median": 0.049,
+    "hold_median": -0.322,
+    "hold_pos_share": 0.13
+   }
+  },
+  "invvol": {
+   "false": {
+    "disc_median": 0.103,
+    "hold_median": -0.428,
+    "hold_pos_share": 0.155
+   },
+   "true": {
+    "disc_median": 0.043,
+    "hold_median": -0.316,
+    "hold_pos_share": 0.161
+   }
+  },
+  "resid": {
+   "false": {
+    "disc_median": 0.092,
+    "hold_median": -0.348,
+    "hold_pos_share": 0.17
+   },
+   "true": {
+    "disc_median": 0.06,
+    "hold_median": -0.363,
+    "hold_pos_share": 0.146
+   }
+  },
+  "overlay": {
+   "funding": {
+    "disc_median": 0.613,
+    "hold_median": -0.138,
+    "hold_pos_share": 0.365
+   },
+   "gate": {
+    "disc_median": -0.091,
+    "hold_median": -0.335,
+    "hold_pos_share": 0.087
+   },
+   "none": {
+    "disc_median": 0.163,
+    "hold_median": -0.536,
+    "hold_pos_share": 0.08
+   },
+   "voltarget": {
+    "disc_median": 0.215,
+    "hold_median": -0.455,
+    "hold_pos_share": 0.101
+   }
+  },
+  "structure": {
+   "long_btc": {
+    "disc_median": -0.208,
+    "hold_median": -0.493,
+    "hold_pos_share": 0.052
+   },
+   "ls": {
+    "disc_median": 0.207,
+    "hold_median": -0.656,
+    "hold_pos_share": 0.133
+   },
+   "short_btc": {
+    "disc_median": 0.566,
+    "hold_median": -0.132,
+    "hold_pos_share": 0.289
+   }
+  }
+ },
+ "levers": {
+  "prod (tranched)": {
+   "disc": 0.09180791067283746,
+   "hold": -1.3588117444966468,
+   "hold_total": -40.66007577615359,
+   "live_total": -20.949469891457838
+  },
+  "+funding penalty": {
+   "disc": 0.6105740984400304,
+   "hold": -0.3606648746399278,
+   "hold_total": -15.661050594925886,
+   "live_total": -4.796177020366366
+  },
+  "+inverse vol": {
+   "disc": 0.08805599385069604,
+   "hold": -0.9414583239415198,
+   "hold_total": -30.62988522102864,
+   "live_total": -15.14251528996774
+  },
+  "+skip 7": {
+   "disc": 0.28472043902916594,
+   "hold": -1.0806105011230438,
+   "hold_total": -35.519500549480476,
+   "live_total": -7.859135549675489
+  },
+  "+residual": {
+   "disc": 0.07683570058468531,
+   "hold": -1.5006779700651327,
+   "hold_total": -41.953509127405866,
+   "live_total": -17.441990276201192
+  },
+  "+short lookbacks S": {
+   "disc": 0.43919895809929044,
+   "hold": -0.5366169225424756,
+   "hold_total": -18.20949619082467,
+   "live_total": -8.422902912730635
+  },
+  "+vol target": {
+   "disc": 0.13946017328749108,
+   "hold": -1.1370691260622687,
+   "hold_total": -31.333431302393766,
+   "live_total": -15.519354143560115
+  },
+  "+funding +invvol": {
+   "disc": 0.8024703455361327,
+   "hold": -0.20932761635583452,
+   "hold_total": -9.309933764152245,
+   "live_total": -4.470682892175093
+  },
+  "+funding +invvol +skip7 +resid +S (k8)": {
+   "disc": 0.7424683967541132,
+   "hold": 0.2337383158861053,
+   "hold_total": 3.8511909058332794,
+   "live_total": 1.949117520424637
+  }
+ },
+ "top20_holdout_median": -0.11014215092968878,
+ "share_hold_pos": 0.1579861111111111,
+ "corr_disc_hold": 0.42045649314251016
+}

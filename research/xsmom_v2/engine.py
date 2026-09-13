@@ -130,6 +130,8 @@ LOOKBACKS = {"S": (7, 14, 21), "M": (14, 21, 30, 45, 60), "L": (30, 60, 90), "XL
 def score(p: Panel, lb: str, skip: int, resid: bool, funding_penalty: bool) -> np.ndarray:
     legs = []
     for L in LOOKBACKS[lb]:
+        if L <= skip:                                     # skipping the whole window leaves nothing to measure
+            continue
         raw = residual_momentum(p, L, skip) if resid else momentum(p, L, skip)
         legs.append(zscore_rows(raw, p.elig))
     arr = np.stack(legs)
