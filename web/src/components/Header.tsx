@@ -52,7 +52,7 @@ const XSMOM_TABS: SubTab[] = [
 ];
 
 const B2_TABS: SubTab[] = [
-  { label: "Main: spot + hedge + carry", href: "#/b2", match: "b2" },
+  { label: "Main: spot + hedge", href: "#/b2", match: "b2" },
   { label: "Cold wallet: spot + hedge", href: "#/b2/cold", match: "b2-cold" },
 ];
 

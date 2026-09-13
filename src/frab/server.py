@@ -48,7 +48,8 @@ _B2_STRATEGY_NAME = "b2"
 _B2_STRATEGY_VERSION = "v2-paper"
 # Paper tests of Strategy B v2 run side by side: (strategy name, version, params on first start).
 _B2_TESTS = (
-    (_B2_STRATEGY_NAME, _B2_STRATEGY_VERSION, B2Params(capital_usd=257.0)),
+    # carry removed 2026-09-13: B is spot + hedge only; funding income belongs to FRAB
+    (_B2_STRATEGY_NAME, _B2_STRATEGY_VERSION, B2Params(capital_usd=257.0, carry_enabled=False)),
     # "cold wallet": spot could sit off-exchange, HL holds only USDC for the hedge; no carry
     # (it needs spot on HL); the pool covers a hedge on spot grown to the 1.5x ratchet line.
     ("b2_cold", "v2-paper-cold", B2Params(capital_usd=257.0, carry_enabled=False, hedge_margin_headroom=1.5)),

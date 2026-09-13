@@ -7,11 +7,11 @@ import { formatCurrency } from "../lib/format";
 
 const TEST_META: Record<B2Test, { title: string; backtest: string }> = {
   b2: {
-    title: "Main test — spot + trend hedge + funding carry on the idle cash",
-    backtest: "rising market +34%/yr, falling market +3%/yr, Jun–Sep 2026 +14%/yr",
+    title: "Main test — spot + trend hedge, larger USDC reserve on HL (spot ≈ 39% of capital)",
+    backtest: "rising market +30%/yr, falling market +2%/yr, Jun–Sep 2026 +13%/yr",
   },
   b2_cold: {
-    title: "Cold wallet test — spot (could sit off-exchange) + trend hedge on HL, no carry",
+    title: "Cold wallet test — spot (could sit off-exchange) + trend hedge on HL (spot ≈ 53% of capital)",
     backtest: "rising market +39%/yr, falling market +3%/yr, Jun–Sep 2026 +18%/yr",
   },
 };
@@ -57,7 +57,7 @@ function CoinRow({ c }: { c: B2Coin }) {
     return (
       <tr className="border-t border-gray-100">
         <td className="py-2 font-semibold">{c.coin}</td>
-        <td colSpan={12} className="py-2 text-gray-400">waiting for the first closed hour…</td>
+        <td colSpan={11} className="py-2 text-gray-400">waiting for the first closed hour…</td>
       </tr>
     );
   }
@@ -71,7 +71,6 @@ function CoinRow({ c }: { c: B2Coin }) {
         {signed(c.pnl)} ({(c.pnl_pct ?? 0).toFixed(2)}%)
       </td>
       <td className="py-2 font-sans"><Pill on={c.hedge_on} label="hedge" /></td>
-      <td className="py-2 font-sans"><Pill on={c.carry_on} label="carry" /></td>
       <td className="py-2">{formatCurrency(c.spot_value ?? 0)}</td>
       <td className="py-2">{signed((c.short_pnl ?? 0) + (c.hedge_realized ?? 0) + (c.funding_on_hedge ?? 0))}</td>
       <td className="py-2">{lev(c.leverage)}</td>
@@ -134,7 +133,7 @@ function MoneyPanel({ s }: { s: B2Summary }) {
   const carry = s.params.carry_enabled === true;
   const parts = [
     { label: "Spot coins", hint: "could sit in a cold wallet", value: s.spot_value ?? 0, color: "bg-blue-500" },
-    { label: "HL: margin for open shorts", hint: "USDC locked by hedges / carry", value: s.margin_used ?? 0, color: "bg-amber-500" },
+    { label: "HL: margin for open shorts", hint: carry ? "USDC locked by hedges / carry" : "USDC locked by hedges", value: s.margin_used ?? 0, color: "bg-amber-500" },
     { label: "HL: free USDC", hint: carry ? "for the next hedge, carry, top-ups" : "for the next hedge and top-ups", value: Math.max(s.free_margin ?? 0, 0), color: "bg-gray-300" },
   ];
   const total = parts.reduce((a, p) => a + p.value, 0) || 1;
@@ -257,7 +256,7 @@ export default function B2({ test }: { test: B2Test }) {
             <table className="w-full text-left text-sm">
               <thead className="text-xs uppercase text-gray-400">
                 <tr>
-                  <th className="py-1">coin</th><th>price</th><th>equity</th><th>P&L</th><th>hedge</th><th>carry</th>
+                  <th className="py-1">coin</th><th>price</th><th>equity</th><th>P&L</th><th>hedge</th>
                   <th>spot</th><th>hedge result</th><th>lev</th><th>HL acct</th><th>to liq</th>
                   <th title="margin top-ups / liquidations / margin-limited hedges">top-up/liq/lim</th><th>fees</th>
                 </tr>
