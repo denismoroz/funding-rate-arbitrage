@@ -35,25 +35,55 @@ async def get_summary(request: Request) -> dict:
         if b is None or e is None:
             coins.append({"coin": coin, "started": False})
             continue
+        liq = b.liquidation_price() if params.margin_enabled else None
+        av = b.account_value(e.price)
+        hedge_notional = b.hedge_units() * e.price
+        carry_notional = b.carry_units * e.price
         coins.append({
             "coin": coin, "started": True, "price": e.price, "equity": e.equity, "capital": b.capital,
+            "spot_target": b.position_size, "hl_reserve": b.reserve,
+            "leverage": b.leverage if params.margin_enabled else None,
+            "hl_account_value": av if params.margin_enabled else None,
+            "margin_used": b.initial_margin(e.price) if params.margin_enabled else None,
+            "free_margin": b.free_margin(e.price) if params.margin_enabled else None,
+            "hedge_notional": hedge_notional, "carry_notional": carry_notional,
+            "liq_price": liq, "liq_distance_pct": (liq / e.price - 1) * 100 if liq else None,
+            "margin_rebalances": b.margin_rebals, "liquidations": b.liquidations,
+            "hedge_limited": b.hedge_limited, "carry_blocked_hours": b.carry_blocked_hours,
             "pnl": e.equity - b.capital, "pnl_pct": (e.equity / b.capital - 1) * 100,
             "hedge_on": e.hedge_on, "carry_on": e.carry_on, "spot_value": e.spot_value,
             "short_pnl": e.short_pnl, "cash": e.cash, "carry_cash": e.carry_cash,
             "funding_on_hedge": b.funding_total, "hedge_realized": b.short_realized,
-            "carry_funding": b.carry_funding, "fees": b.perp_fees + b.spot_fees + b.carry_fees,
+            "carry_funding": b.carry_funding,
+            "fees": b.perp_fees + b.spot_fees + b.carry_fees + b.margin_fees,
             "hedges": b.trades, "rebalances": b.rebals, "carry_entries": b.carry_trades,
         })
     started = [c for c in coins if c["started"]]
     capital = params.capital_usd
-    equity = sum(c["equity"] for c in started) if len(started) == len(params.coins) else None
+    complete = len(started) == len(params.coins)
+    equity = sum(c["equity"] for c in started) if complete else None
+    hours = len(series)
+    pnl_pct = None if equity is None else (equity / capital - 1) * 100
+
+    def total(key: str) -> float | None:
+        return sum(c[key] for c in started) if complete and params.margin_enabled else None
+
+    short_notional = sum(c["hedge_notional"] + c["carry_notional"] for c in started)
+    hl_av = total("hl_account_value")
     return {
         "mode": params.mode, "status": row.status, "params": params.to_dict(),
         "capital": capital, "equity": equity,
         "pnl": None if equity is None else equity - capital,
-        "pnl_pct": None if equity is None else (equity / capital - 1) * 100,
+        "pnl_pct": pnl_pct,
+        # simple annualisation of the P&L since start: pure noise for the first days
+        "apr_pct": None if pnl_pct is None or hours == 0 else pnl_pct * 8760 / hours,
+        "margin_enabled": params.margin_enabled,
+        "spot_value": sum(c["spot_value"] for c in started) if complete else None,
+        "hl_account_value": hl_av, "margin_used": total("margin_used"), "free_margin": total("free_margin"),
+        "short_notional": short_notional,
+        "effective_leverage": short_notional / hl_av if hl_av else None,
         "started_ms": series[0][0] if series else None, "last_bar_ms": series[-1][0] if series else None,
-        "hours": len(series), "engine_last_tick_ms": getattr(engine, "last_tick_ms", None),
+        "hours": hours, "engine_last_tick_ms": getattr(engine, "last_tick_ms", None),
         "engine_last_error": getattr(engine, "last_error", None), "coins": coins,
     }
 

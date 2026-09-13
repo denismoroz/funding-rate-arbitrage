@@ -664,6 +664,20 @@ export type B2Coin = {
   hedges?: number;
   rebalances?: number;
   carry_entries?: number;
+  spot_target?: number;
+  hl_reserve?: number;
+  leverage?: number | null;
+  hl_account_value?: number | null;
+  margin_used?: number | null;
+  free_margin?: number | null;
+  hedge_notional?: number;
+  carry_notional?: number;
+  liq_price?: number | null;
+  liq_distance_pct?: number | null;
+  margin_rebalances?: number;
+  liquidations?: number;
+  hedge_limited?: number;
+  carry_blocked_hours?: number;
 };
 
 export type B2Summary = {
@@ -674,6 +688,14 @@ export type B2Summary = {
   equity: number | null;
   pnl: number | null;
   pnl_pct: number | null;
+  apr_pct: number | null;
+  margin_enabled: boolean;
+  spot_value: number | null;
+  hl_account_value: number | null;
+  margin_used: number | null;
+  free_margin: number | null;
+  short_notional: number;
+  effective_leverage: number | null;
   started_ms: number | null;
   last_bar_ms: number | null;
   hours: number;

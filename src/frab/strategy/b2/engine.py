@@ -106,6 +106,7 @@ class B2PaperEngine:
 
         candles = await self._client.candle_snapshot(coin, "1h", hist_start, last_closed + HOUR_MS)
         closes = {c.open_ms: c.close for c in candles}
+        highs = {c.open_ms: c.high for c in candles}
         funding_recs = await self._client.funding_history(coin, hist_start)
         funding = {_floor_hour(r.ts_ms): r.rate for r in funding_recs}
 
@@ -132,7 +133,7 @@ class B2PaperEngine:
             i = pos[h]
             events += step(book, bar_ms=h, price=px[i], funding_rate=fr[i],
                            closes=px[max(0, i - HISTORY_BARS + 9):i + 1],
-                           funding_hist=fr[max(0, i - 8):i + 1], params=params)
+                           funding_hist=fr[max(0, i - 8):i + 1], params=params, high=highs.get(h))
             p = px[i]
             eq_rows.append(dict(ts_ms=h + HOUR_MS, price=p, equity=book.equity(p), book_equity=book.book_equity(p),
                                 cash=book.cash, spot_value=book.units_spot * p, short_pnl=book.short_pnl(p),

@@ -47,7 +47,7 @@ def test_book_matches_research_simulator(n_bars):
     ref_carry = np.cumsum(H.carry_pnl(df, 0.0005))
 
     params = B2Params(coins=("BTC",), capital_usd=TOTAL, spot_share=0.5, sticky_exit_hours=12,
-                      ratchet_threshold=0.50, carry_enabled=True, min_order_usd=0.0)
+                      ratchet_threshold=0.50, carry_enabled=True, min_order_usd=0.0, margin_enabled=False)
     book = CoinBook.new("BTC", params)
     start_book(book, bar_ms=0, price=float(close[0]), params=params)
     worst_eq = worst_carry = 0.0
@@ -66,7 +66,7 @@ def test_book_matches_research_simulator(n_bars):
 
 
 def test_min_order_blocks_tiny_actions():
-    params = B2Params(coins=("BTC",), capital_usd=15.0, min_order_usd=10.0, carry_enabled=True)
+    params = B2Params(coins=("BTC",), capital_usd=15.0, min_order_usd=10.0, carry_enabled=True, margin_enabled=False)
     book = CoinBook.new("BTC", params)            # spot $7.5, reserve $7.5, carry notional $4.5
     start_book(book, bar_ms=0, price=100.0, params=params)
     book.hedge_prev = True

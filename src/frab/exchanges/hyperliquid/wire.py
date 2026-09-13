@@ -122,6 +122,7 @@ class HLCandle:
     open_ms: int    # candle open time (t)
     close_ms: int   # candle close time (T)
     close: float    # parsed from c
+    high: float | None = None   # parsed from h
 
 
 @dataclass(frozen=True)

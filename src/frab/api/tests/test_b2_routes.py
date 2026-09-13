@@ -50,6 +50,10 @@ async def test_b2_summary_equity_events(app_and_sid):
     assert abs(s["equity"] - sum(coin["equity"] for coin in s["coins"])) < 1e-9
     assert s["hours"] == len(eq) == 6
     assert any(e["kind"] == "init_spot_buy" for e in ev) and all(e["is_paper"] for e in ev)
+    assert s["margin_enabled"] and s["apr_pct"] == pytest.approx(s["pnl_pct"] * 8760 / 6)
+    btc = next(c for c in s["coins"] if c["coin"] == "BTC")
+    assert btc["leverage"] == 3.0 and btc["spot_target"] + btc["hl_reserve"] == pytest.approx(1000.0)
+    assert s["hl_account_value"] == pytest.approx(sum(c["hl_account_value"] for c in s["coins"]))
 
 
 @pytest.mark.asyncio

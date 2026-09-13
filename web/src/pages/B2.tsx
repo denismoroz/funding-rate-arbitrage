@@ -13,7 +13,14 @@ const KIND_LABEL: Record<string, string> = {
   ratchet_sell: "ratchet: sell spot",
   carry_open: "carry ON",
   carry_close: "carry OFF",
+  carry_reduce: "carry cut: margin for hedge",
+  margin_rebalance: "margin top-up: sell spot + cut short",
+  liquidation: "LIQUIDATION",
 };
+
+function lev(x: number | null | undefined): string {
+  return x == null ? "—" : `${Number(x.toFixed(2))}×`;
+}
 
 function fmtTs(ms: number | null | undefined): string {
   if (!ms) return "—";
@@ -39,7 +46,7 @@ function CoinRow({ c }: { c: B2Coin }) {
     return (
       <tr className="border-t border-gray-100">
         <td className="py-2 font-semibold">{c.coin}</td>
-        <td colSpan={8} className="py-2 text-gray-400">waiting for the first closed hour…</td>
+        <td colSpan={12} className="py-2 text-gray-400">waiting for the first closed hour…</td>
       </tr>
     );
   }
@@ -56,6 +63,18 @@ function CoinRow({ c }: { c: B2Coin }) {
       <td className="py-2 font-sans"><Pill on={c.carry_on} label="carry" /></td>
       <td className="py-2">{formatCurrency(c.spot_value ?? 0)}</td>
       <td className="py-2">{signed((c.short_pnl ?? 0) + (c.hedge_realized ?? 0) + (c.funding_on_hedge ?? 0))}</td>
+      <td className="py-2">{lev(c.leverage)}</td>
+      <td className="py-2">
+        {c.hl_account_value != null ? formatCurrency(c.hl_account_value) : "—"}
+        <span className="text-xs text-gray-400"> / used {formatCurrency(c.margin_used ?? 0)}</span>
+      </td>
+      <td className={`py-2 ${c.liq_distance_pct != null && c.liq_distance_pct < 15 ? "text-red-500" : ""}`}
+          title={c.liq_price != null ? `liquidation at ${formatCurrency(c.liq_price)}` : "no short open"}>
+        {c.liq_distance_pct != null ? `+${c.liq_distance_pct.toFixed(0)}%` : "—"}
+      </td>
+      <td className="py-2 text-gray-500" title="margin top-ups / liquidations / margin-limited hedges">
+        {c.margin_rebalances ?? 0} / <span className={(c.liquidations ?? 0) > 0 ? "text-red-500" : ""}>{c.liquidations ?? 0}</span> / {c.hedge_limited ?? 0}
+      </td>
       <td className="py-2 text-gray-500">{formatCurrency(c.fees ?? 0)}</td>
     </tr>
   );
@@ -80,6 +99,14 @@ export default function B2() {
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
           <b>PAPER MODE.</b> Strategy B v2 reads live Hyperliquid prices and funding and simulates fills at the hourly close
           with taker fee + slippage. No order is ever sent — the engine has no signing key.
+          {s?.margin_enabled && (
+            <div className="mt-1">
+              Margin is modelled: each coin is its own HL cross pool holding USDC only (spot is not collateral, so it could sit
+              in a cold wallet); shorts open at the leverage below, a pump is topped up by selling spot and cutting the short,
+              a spike through the liquidation price liquidates. Same config in backtest: bull 2023-25 +34%/yr, bear 2025-26
+              +3%/yr, Jun–Sep 2026 +14%/yr.
+            </div>
+          )}
         </div>
 
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
@@ -94,10 +121,41 @@ export default function B2() {
               <span className={`font-mono font-semibold ${pnlPos ? "text-green-600" : "text-red-500"}`}>
                 P&L {s.pnl != null ? `${signed(s.pnl)} (${(s.pnl_pct ?? 0).toFixed(2)}%)` : "—"}
               </span>
+              <span title="P&L since start, annualised linearly — noise until the test has run for weeks">
+                APR{" "}
+                <span className={`font-mono font-semibold ${(s.apr_pct ?? 0) >= 0 ? "text-green-600" : "text-red-500"}`}>
+                  {s.apr_pct != null ? `${s.apr_pct >= 0 ? "+" : ""}${s.apr_pct.toFixed(1)}%` : "—"}
+                </span>
+                {s.hours < 168 && <span className="text-xs text-amber-600"> (&lt;1 week: noise)</span>}
+              </span>
               <span>running <span className="font-mono">{s.hours}h</span> since {fmtTs(s.started_ms)}</span>
               <span>last bar {fmtTs(s.last_bar_ms)}</span>
               <span>status <span className="font-mono">{s.status}</span></span>
               {s.engine_last_error && <span className="text-red-500">engine error: {s.engine_last_error}</span>}
+            </div>
+          )}
+          {s?.margin_enabled && (
+            <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm text-gray-500">
+              <span>
+                short leverage{" "}
+                <span className="font-mono text-gray-800">
+                  {s.coins.map((c) => `${c.coin} ${lev(c.leverage)}`).join(" · ")}
+                </span>
+              </span>
+              <span>
+                spot <span className="font-mono text-gray-800">{s.spot_value != null ? formatCurrency(s.spot_value) : "—"}</span>
+                <span className="text-xs text-gray-400"> (cold-wallet-able)</span>
+              </span>
+              <span>
+                on HL <span className="font-mono text-gray-800">{s.hl_account_value != null ? formatCurrency(s.hl_account_value) : "—"}</span>
+                <span className="text-xs text-gray-400">
+                  {" "}margin used {formatCurrency(s.margin_used ?? 0)} · free {formatCurrency(s.free_margin ?? 0)}
+                </span>
+              </span>
+              <span>
+                shorts <span className="font-mono text-gray-800">{formatCurrency(s.short_notional)}</span>
+                <span className="text-xs text-gray-400"> · account leverage {lev(s.effective_leverage)}</span>
+              </span>
             </div>
           )}
           <div className="mt-3 h-64">
@@ -126,7 +184,8 @@ export default function B2() {
               <thead className="text-xs uppercase text-gray-400">
                 <tr>
                   <th className="py-1">coin</th><th>price</th><th>equity</th><th>P&L</th><th>hedge</th><th>carry</th>
-                  <th>spot</th><th>hedge result</th><th>fees</th>
+                  <th>spot</th><th>hedge result</th><th>lev</th><th>HL acct</th><th>to liq</th>
+                  <th title="margin top-ups / liquidations / margin-limited hedges">top-up/liq/lim</th><th>fees</th>
                 </tr>
               </thead>
               <tbody>{(s?.coins ?? []).map((c) => <CoinRow key={c.coin} c={c} />)}</tbody>

@@ -240,7 +240,7 @@ class HLClient:
         """Return daily candles for coin in [start_ms, end_ms], sorted ascending by close_ms.
 
         Body: {"type": "candleSnapshot", "req": {"coin", "interval", "startTime", "endTime"}}.
-        Candle keys: t=open_ms, T=close_ms, c=close (string). Returns [] on empty/None response.
+        Candle keys: t=open_ms, T=close_ms, c=close, h=high (strings). Returns [] on empty/None response.
         """
         data = await self._post({
             "type": "candleSnapshot",
@@ -261,6 +261,7 @@ class HLClient:
                     open_ms=int(raw["t"]),
                     close_ms=int(raw["T"]),
                     close=float(raw["c"]),
+                    high=float(raw["h"]) if raw.get("h") is not None else None,
                 ))
             except (KeyError, TypeError, ValueError):
                 continue
