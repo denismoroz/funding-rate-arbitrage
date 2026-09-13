@@ -105,7 +105,7 @@ export default function B2() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={points}>
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={40} />
-                  <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11 }} width={60} tickFormatter={(v) => `$${Number(v).toFixed(0)}`} />
+                  <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11 }} width={60} tickFormatter={(v) => `$${Number(v).toFixed(2)}`} />
                   <Tooltip formatter={(v: number) => formatCurrency(v)} />
                   {s && <ReferenceLine y={s.capital} stroke="#9ca3af" strokeDasharray="4 4" />}
                   <Line type="monotone" dataKey="equity" stroke="#2563eb" dot={false} strokeWidth={2} />
