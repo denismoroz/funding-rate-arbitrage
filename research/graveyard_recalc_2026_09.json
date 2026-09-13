@@ -1,0 +1,142 @@
+[
+ {
+  "name": "value dd90",
+  "old_settings": "survivors, 8.5bp, funding",
+  "old": {
+   "ann": -33.060339718939495,
+   "sharpe": -0.7344774763650752,
+   "dd": -76.52693093732343
+  },
+  "new": {
+   "ann": -42.86160770219854,
+   "sharpe": -1.0120360727077753,
+   "dd": -85.70395221344333
+  }
+ },
+ {
+  "name": "value dd180",
+  "old_settings": "survivors, 8.5bp, funding",
+  "old": {
+   "ann": -24.148502399942334,
+   "sharpe": -0.5038912117265716,
+   "dd": -71.46168478018254
+  },
+  "new": {
+   "ann": -48.84075809849008,
+   "sharpe": -1.0935139679201833,
+   "dd": -81.91509866535868
+  }
+ },
+ {
+  "name": "value dist_from_ma100",
+  "old_settings": "survivors, 8.5bp, funding",
+  "old": {
+   "ann": -34.64605752568062,
+   "sharpe": -0.7921347088969345,
+   "dd": -75.845853932676
+  },
+  "new": {
+   "ann": -37.8556450062998,
+   "sharpe": -0.9050898173702797,
+   "dd": -76.88315046865594
+  }
+ },
+ {
+  "name": "long-term reversal 120d",
+  "old_settings": "survivors, 8.5bp, funding",
+  "old": {
+   "ann": -13.886015330528537,
+   "sharpe": -0.31348817059228384,
+   "dd": -59.28388713125754
+  },
+  "new": {
+   "ann": -40.24652709191432,
+   "sharpe": -0.9511072842446375,
+   "dd": -82.19313546917635
+  }
+ },
+ {
+  "name": "reversal 7d (cross-section)",
+  "old_settings": "survivors, 8.5bp, funding",
+  "old": {
+   "ann": -41.04755699090033,
+   "sharpe": -0.9986485590347017,
+   "dd": -84.58909970341828
+  },
+  "new": {
+   "ann": -22.018116823381106,
+   "sharpe": -0.581375077743645,
+   "dd": -74.63037881001732
+  }
+ },
+ {
+  "name": "TS mean-reversion raw (daily)",
+  "old_settings": "survivors, 8.5bp, funding, daily",
+  "old": {
+   "ann": -55.42826045052767,
+   "sharpe": -0.48390244639975166,
+   "dd": -98.08980557261455
+  },
+  "new": {
+   "ann": -34.91290764070442,
+   "sharpe": -0.304281452558353,
+   "dd": -97.1216093330498
+  }
+ },
+ {
+  "name": "TS mean-reversion beta-neutral",
+  "old_settings": "survivors, 8.5bp, funding, daily",
+  "old": {
+   "ann": -96.56663415350688,
+   "sharpe": -2.1068867089549412,
+   "dd": -96.57205474051514
+  },
+  "new": {
+   "ann": -48.4343172796532,
+   "sharpe": -0.9960663623463015,
+   "dd": -87.92834303953684
+  }
+ },
+ {
+  "name": "crypto carry (x-section)",
+  "old_settings": "survivors, 8.5bp, NO funding",
+  "old": {
+   "ann": -7.05220115945587,
+   "sharpe": -0.21999514710233994,
+   "dd": -64.40974744768222
+  },
+  "new": {
+   "ann": 4.145085487438031,
+   "sharpe": 0.1410092035139286,
+   "dd": -45.17842441750503
+  }
+ },
+ {
+  "name": "REFERENCE: XSMOM momentum",
+  "old_settings": "survivors, 8.5bp, funding",
+  "old": {
+   "ann": 52.33369253354198,
+   "sharpe": 1.235465351227965,
+   "dd": -26.60472254318672
+  },
+  "new": {
+   "ann": 33.12113428408789,
+   "sharpe": 0.8235828274326462,
+   "dd": -26.281681945710567
+  }
+ },
+ {
+  "name": "on-chain fee growth",
+  "old_settings": "4.4bp, NO funding",
+  "old": {
+   "ann": 23.322403940591926,
+   "sharpe": 0.5375014219183271,
+   "dd": -53.33356364251125
+  },
+  "new": {
+   "ann": 17.482751476012837,
+   "sharpe": 0.402866211665028,
+   "dd": -55.91102036642761
+  }
+ }
+]
