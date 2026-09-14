@@ -72,7 +72,8 @@ def _cached(name: str, fetch) -> pd.Series:
         fetch().to_csv(f)
         time.sleep(0.3)
     s = pd.read_csv(f, index_col=0, parse_dates=[0]).iloc[:, 0]
-    s.index = pd.to_datetime(s.index, utc=True)
+    s.index = pd.to_datetime(s.index, utc=True).normalize()     # Yahoo stamps rows at 23:00 / intraday
+    s = s[~s.index.duplicated(keep="last")]
     return s.dropna()
 
 
@@ -137,7 +138,8 @@ def carry_book(price: pd.DataFrame, rate: pd.DataFrame, usd_rate: pd.Series, *, 
                         cur[c] = -0.5 / k
         w.loc[t] = cur
     turn = w.diff().abs().fillna(w.abs())
-    earned = (diff - np.sign(w).mul(haircut_ann, axis=0).abs().where(w != 0, 0.0)) / 252.0
+    # the broker's markup always costs, whichever side the leg is on: w * (diff - sign(w) * haircut)
+    earned = (diff - np.sign(w) * haircut_ann) / 252.0
     pnl = (w * fwd.fillna(0.0)).sum(axis=1) + (w * earned.fillna(0.0)).sum(axis=1) - turn.sum(axis=1) * bps / 1e4
     return pnl.dropna()
 
