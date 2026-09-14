@@ -7,6 +7,7 @@ import Xsmom from "./pages/Xsmom";
 import XsmomSettingsPage from "./pages/XsmomSettingsPage";
 import XsmomJournalPage from "./pages/XsmomJournalPage";
 import B2 from "./pages/B2";
+import Trend from "./pages/Trend";
 import type { Route } from "./components/Header";
 
 function readHash(): Route {
@@ -19,6 +20,7 @@ function readHash(): Route {
   if (hash === "#/xsmom") return "xsmom";
   if (hash === "#/b2") return "b2";
   if (hash === "#/b2/cold") return "b2-cold";
+  if (hash === "#/trend") return "trend";
   return "dashboard";
 }
 
@@ -42,5 +44,6 @@ export default function App() {
   if (route === "xsmom") return <Xsmom />;
   if (route === "b2") return <B2 test="b2" />;
   if (route === "b2-cold") return <B2 key="b2_cold" test="b2_cold" />;
+  if (route === "trend") return <Trend />;
   return <Dashboard />;
 }

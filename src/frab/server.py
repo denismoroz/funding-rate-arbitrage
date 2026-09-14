@@ -32,6 +32,9 @@ from frab.exchanges.hyperliquid.client import HLClient
 from frab.repo.b2_repo import B2Repo
 from frab.strategy.b2.engine import B2PaperEngine
 from frab.strategy.b2.params import B2Params
+from frab.repo.trend_repo import TrendRepo
+from frab.strategy.trend.engine import TrendPaperEngine
+from frab.strategy.trend.params import TrendParams
 from frab.strategy.xsmom.strategy import XsmomStrategy
 from frab.strategy.xsmom.protection.margin_watchdog import XsmomMarginWatchdog
 
@@ -55,6 +58,12 @@ _B2_TESTS = (
     ("b2_cold", "v2-paper-cold", B2Params(capital_usd=257.0, carry_enabled=False, hedge_margin_headroom=1.5)),
 )
 _XSMOM_STRATEGY_VERSION = "v1"
+_TREND_STRATEGY_NAME = "trend"
+_TREND_STRATEGY_VERSION = "v1-paper"
+# Paper test of the committed trend book (research/trend_following/FINDINGS.md, 2026-09-14):
+# TSMOM ensemble 30/60/90/120 on HL perps, daily rebalance, run at 0.2 of the research size
+# (~30% annual vol) so $1000 of paper capital still clears HL's $10 minimum order per leg.
+_TREND_DEFAULTS = TrendParams(capital_usd=1000.0)
 
 
 def _hl_info_url(settings: Settings) -> str:
@@ -187,6 +196,24 @@ async def _get_or_create_b2_strategy(session_factory, name: str = _B2_STRATEGY_N
             logger.info("Created %s strategy row id=%s (paper, active)", name, row.id)
         else:
             B2Params.from_dict(dict(row.params_json))   # fail loud on bad params
+        return row.id
+
+
+async def _get_or_create_trend_strategy(session_factory, defaults: TrendParams | None = None) -> int:
+    """Return the trend paper-test strategy row id, creating it ACTIVE with `defaults` if absent.
+
+    Trend runs in paper mode only (no signing key is ever passed), so starting active is safe.
+    """
+    async with session_scope(session_factory) as s:
+        row = (await s.execute(select(StrategyRow).where(StrategyRow.name == _TREND_STRATEGY_NAME))).scalar_one_or_none()
+        if row is None:
+            row = StrategyRow(name=_TREND_STRATEGY_NAME, version=_TREND_STRATEGY_VERSION,
+                              params_json=(defaults or TrendParams()).to_dict(), status="active")
+            s.add(row)
+            await s.flush()
+            logger.info("Created %s strategy row id=%s (paper, active)", _TREND_STRATEGY_NAME, row.id)
+        else:
+            TrendParams.from_dict(dict(row.params_json))   # fail loud on bad params
         return row.id
 
 
@@ -433,6 +460,15 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         app.state.b2_strategy_id = app.state.b2_tests[_B2_STRATEGY_NAME]
         app.state.b2_engine = app.state.b2_engines[app.state.b2_strategy_id]
 
+        trend_sid = await _get_or_create_trend_strategy(session_factory, _TREND_DEFAULTS)
+        trend_engine = TrendPaperEngine(session_factory=session_factory, client=b2_client,
+                                        strategy_id=trend_sid, repo=TrendRepo(session_factory),
+                                        event_bus=bus, tick_delay_s=195.0)
+        await trend_engine.start()
+        app.state.trend_strategy_id = trend_sid
+        app.state.trend_engine = trend_engine
+        logger.info("trend paper engine started (strategy_id=%s)", trend_sid)
+
         # ── Stash on app.state ────────────────────────────────────────────
         app.state.exchange = exchange
         app.state.farb_repo = farb_repo
@@ -446,6 +482,8 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         finally:
             for b2_engine_state in getattr(app.state, "b2_engines", {}).values():
                 await b2_engine_state.stop()
+            if getattr(app.state, "trend_engine", None) is not None:
+                await app.state.trend_engine.stop()
             if getattr(app.state, "b2_client", None) is not None:
                 await app.state.b2_client.aclose()
             # Stop xsmom engine first (if it was built)

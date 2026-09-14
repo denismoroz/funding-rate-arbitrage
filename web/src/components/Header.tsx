@@ -21,9 +21,10 @@ export type Route =
   | "xsmom-journal"
   | "xsmom-settings"
   | "b2"
-  | "b2-cold";
+  | "b2-cold"
+  | "trend";
 
-type Section = "frab" | "xsmom" | "b2";
+type Section = "frab" | "xsmom" | "b2" | "trend";
 
 const WS_DOT: Record<WsStatus, string> = {
   open: "bg-green-500",
@@ -32,6 +33,7 @@ const WS_DOT: Record<WsStatus, string> = {
 };
 
 function sectionOf(route: Route): Section {
+  if (route === "trend") return "trend";
   if (route === "b2" || route === "b2-cold") return "b2";
   return route.startsWith("xsmom") ? "xsmom" : "frab";
 }
@@ -55,6 +57,8 @@ const B2_TABS: SubTab[] = [
   { label: "Main: spot + hedge", href: "#/b2", match: "b2" },
   { label: "Cold wallet: spot + hedge", href: "#/b2/cold", match: "b2-cold" },
 ];
+
+const TREND_TABS: SubTab[] = [{ label: "Book", href: "#/trend", match: "trend" }];
 
 // ── presentational on/off switch ──────────────────────────────────────────────
 
@@ -173,7 +177,8 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: Route }
     : eventsQ.data?.find((e) => e.kind.startsWith("engine."));
   const engineLabel = engineAlive ? "running" : engineEvent?.message;
 
-  const tabs = section === "xsmom" ? XSMOM_TABS : section === "b2" ? B2_TABS : FRAB_TABS;
+  const tabs =
+    section === "xsmom" ? XSMOM_TABS : section === "b2" ? B2_TABS : section === "trend" ? TREND_TABS : FRAB_TABS;
 
   const sectionBtn = (label: string, href: string, active: boolean) => (
     <a
@@ -198,6 +203,7 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: Route }
           {sectionBtn("FRAB", "#/", section === "frab")}
           {sectionBtn("XSMOM", "#/xsmom", section === "xsmom")}
           {sectionBtn("B v2 · paper", "#/b2", section === "b2")}
+          {sectionBtn("Trend · paper", "#/trend", section === "trend")}
         </nav>
 
         <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-400">

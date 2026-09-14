@@ -732,3 +732,77 @@ export function fetchB2Equity(test: B2Test = "b2"): Promise<B2EquityPoint[]> {
 export function fetchB2Events(limit = 200, test: B2Test = "b2"): Promise<B2Event[]> {
   return apiFetch<B2Event[]>(`/b2/events?limit=${limit}&test=${test}`);
 }
+
+// ── Trend (paper) ──────────────────────────────────────────────────────────
+export type TrendPosition = {
+  coin: string;
+  signal: number | null;
+  weight: number;
+  units: number;
+  price: number | null;
+  entry: number | null;
+  notional: number;
+  unrealized: number;
+  side: "long" | "short" | "flat";
+};
+
+export type TrendSummary = {
+  status: string;
+  capital: number;
+  coins: string[];
+  lookbacks: number[];
+  vol_target_daily: number;
+  leverage_cap: number;
+  risk_scale: number;
+  universe: string[];
+  last_tick_ms: number | null;
+  last_error: string | null;
+  hours: number;
+  started: boolean;
+  equity?: number;
+  pnl?: number;
+  pnl_pct?: number | null;
+  apr_pct?: number | null;
+  cash?: number;
+  unrealized?: number;
+  gross_notional?: number;
+  net_notional?: number;
+  gross_leverage?: number | null;
+  net_leverage?: number | null;
+  legs?: number;
+  funding_total?: number;
+  fees?: number;
+  realized?: number;
+  trades?: number;
+  rebalances?: number;
+  liquidations?: number;
+  skipped_min_order?: number;
+  last_rebalance_ms?: number | null;
+  last_bar_ms?: number | null;
+  positions: TrendPosition[];
+};
+
+export type TrendEquityPoint = { ts_ms: number; equity: number };
+
+export type TrendEvent = {
+  ts_ms: number;
+  coin: string;
+  kind: string;
+  qty: number;
+  price: number;
+  notional: number;
+  fee: number;
+  details: Record<string, unknown> | null;
+};
+
+export function fetchTrendSummary(): Promise<TrendSummary> {
+  return apiFetch<TrendSummary>("/trend/summary");
+}
+
+export function fetchTrendEquity(): Promise<TrendEquityPoint[]> {
+  return apiFetch<TrendEquityPoint[]>("/trend/equity");
+}
+
+export function fetchTrendEvents(limit = 200): Promise<TrendEvent[]> {
+  return apiFetch<TrendEvent[]>(`/trend/events?limit=${limit}`);
+}

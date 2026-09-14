@@ -15,6 +15,7 @@ from frab.api.routes import (
     positions as positions_routes,
     signals as signals_routes,
     strategies as strategies_routes,
+    trend as trend_routes,
     wallet as wallet_routes,
     xsmom as xsmom_routes,
 )
@@ -46,6 +47,7 @@ def create_app(
     app.include_router(alerts_routes.router, prefix="/api/alerts", tags=["alerts"])
     app.include_router(b2_routes.router, prefix="/api/b2", tags=["b2"])
     app.include_router(xsmom_routes.router, prefix="/api/xsmom", tags=["xsmom"])
+    app.include_router(trend_routes.router, prefix="/api/trend", tags=["trend"])
 
     if event_bus is not None:
         from frab.api.ws import router as ws_router

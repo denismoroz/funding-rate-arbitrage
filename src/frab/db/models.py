@@ -394,3 +394,54 @@ class B2Equity(Base):
     carry_cash: Mapped[float] = mapped_column(nullable=False)
     hedge_on: Mapped[bool] = mapped_column(Boolean, nullable=False)
     carry_on: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class TrendBookRow(Base):
+    """State of the trend paper book (one row per strategy: the book is portfolio-wide)."""
+    __tablename__ = "trend_books"
+    __table_args__ = (UniqueConstraint("strategy_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    state_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    last_bar_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    updated_at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class TrendEvent(Base):
+    """A fill produced by the trend book (paper fills carry is_paper=True)."""
+    __tablename__ = "trend_events"
+    __table_args__ = (Index("ix_trend_events_strategy_ts", "strategy_id", "ts_ms"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    coin: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    qty: Mapped[float] = mapped_column(nullable=False)
+    price: Mapped[float] = mapped_column(nullable=False)
+    notional: Mapped[float] = mapped_column(nullable=False)
+    fee: Mapped[float] = mapped_column(nullable=False)
+    is_paper: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    details_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+class TrendEquity(Base):
+    """Hourly equity snapshot of the trend paper book."""
+    __tablename__ = "trend_equity"
+    __table_args__ = (
+        UniqueConstraint("strategy_id", "ts_ms"),
+        Index("ix_trend_equity_strategy_ts", "strategy_id", "ts_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("strategies.id", ondelete="CASCADE"))
+    ts_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    equity: Mapped[float] = mapped_column(nullable=False)
+    cash: Mapped[float] = mapped_column(nullable=False)
+    unrealized: Mapped[float] = mapped_column(nullable=False)
+    gross_notional: Mapped[float] = mapped_column(nullable=False)
+    net_notional: Mapped[float] = mapped_column(nullable=False)
+    legs: Mapped[int] = mapped_column(Integer, nullable=False)
+    funding_total: Mapped[float] = mapped_column(nullable=False)
+    fees: Mapped[float] = mapped_column(nullable=False)
