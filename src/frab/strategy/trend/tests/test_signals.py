@@ -4,7 +4,8 @@ from __future__ import annotations
 import math
 
 from frab.strategy.trend.params import TrendParams
-from frab.strategy.trend.signals import ensemble_signal, realized_vol, target_weights, tsmom_sign
+from frab.strategy.trend.signals import (book_vol_scale, ensemble_signal, realized_vol,
+                                         target_weights, tsmom_sign)
 
 P = TrendParams(coins=("BTC", "ETH"), lookbacks=(2, 4), vol_window=3, min_history_days=6)
 
@@ -59,3 +60,40 @@ def test_no_scaling_when_the_book_is_inside_the_cap():
     vol = realized_vol(noisy, p.vol_window)
     assert abs(w["BTC"]) <= p.leverage_cap
     assert math.isclose(abs(w["BTC"]), abs(ensemble_signal(noisy, p)) * p.vol_target_daily / vol, rel_tol=1e-12)
+
+
+def test_book_vol_scale_uses_the_prior_until_the_book_has_its_own_history():
+    p = TrendParams(book_vol_target_ann=0.14, book_vol_prior_ann=0.30, book_vol_min_days=20)
+    assert book_vol_scale([], p) == p.book_vol_target_ann / p.book_vol_prior_ann
+    assert book_vol_scale([1000.0] * 5, p) == p.book_vol_target_ann / p.book_vol_prior_ann
+
+
+def test_book_vol_scale_targets_the_measured_volatility():
+    p = TrendParams(book_vol_target_ann=0.14, book_vol_window_days=60, book_vol_min_days=20)
+    daily = 0.02                                                   # 2% a day -> 38% a year
+    eq = [1000.0 * (1 + daily * (1 if i % 2 else -1)) ** 0 for i in range(1)]
+    eq, v = [1000.0], 1000.0
+    for i in range(40):
+        v *= 1 + (daily if i % 2 else -daily)
+        eq.append(v)
+    got = book_vol_scale(eq, p)
+    rets = [eq[i] / eq[i - 1] - 1 for i in range(1, len(eq))]
+    mean = sum(rets) / len(rets)
+    vol = math.sqrt(sum((r - mean) ** 2 for r in rets) / len(rets)) * math.sqrt(365)
+    assert math.isclose(got, p.book_vol_target_ann / vol, rel_tol=1e-12)
+    assert got < 1                                                 # a wild book gets cut down
+
+
+def test_book_vol_scale_is_clipped_and_can_be_switched_off():
+    quiet = [1000.0 * (1 + 1e-6 * (i % 2)) for i in range(80)]
+    p = TrendParams(book_vol_scale_max=2.0)
+    assert book_vol_scale(quiet, p) == 2.0                         # a dead-calm book is not levered up
+    assert book_vol_scale(quiet, TrendParams(book_vol_target_ann=None)) == 1.0
+
+
+def test_weights_take_the_size_scale():
+    noisy = [100.0 * (1 + 0.03 * math.sin(i / 3)) for i in range(200)]
+    p = TrendParams(coins=("BTC",))
+    full = target_weights({"BTC": noisy}, p)["BTC"]
+    half = target_weights({"BTC": noisy}, p, size_scale=0.5)["BTC"]
+    assert math.isclose(half, full * 0.5, rel_tol=1e-12)

@@ -9,6 +9,14 @@ in production — changing any of it needs a new research pass.
 cap of 3 the book runs at ~150% annual volatility, which is a research scale, not a deployable one.
 The paper test runs the same shape at 0.2 of that size (~30% annual vol) — the scale every return in
 FINDINGS.md is quoted at. risk_scale 1.0 reproduces the research book exactly.
+
+On top of that the book targets ITS OWN volatility (`book_vol_target_ann`), not just each position's.
+The per-asset target ignores how the coins move together, and in crypto they move together a lot
+(average pairwise correlation 0.44 in 2021, 0.68 in 2022, 0.64 in 2025-26), so the book's own risk
+balloons exactly when the market gets rough. Scaling the whole book by its trailing 60-day volatility
+cut the drawdown at a matched 15%/yr return from 22.7% to 13.5% over 2020-2026, and it was the only
+knob of seven that helped on BOTH the fitted and the never-seen window (research/trend_following/
+risk_shaping.py). Picking "weakly correlated coins" instead did NOT help — see that script.
 """
 from __future__ import annotations
 
@@ -35,6 +43,15 @@ class TrendParams:
     vol_target_daily: float = 0.02
     leverage_cap: float = 3.0
     risk_scale: float = 0.2
+    # Target for the volatility of the BOOK itself, annualised, measured on its own trailing daily
+    # returns. None disables it and leaves only the per-asset target.
+    book_vol_target_ann: float | None = 0.14
+    book_vol_window_days: int = 60
+    book_vol_min_days: int = 20
+    book_vol_scale_min: float = 0.25
+    book_vol_scale_max: float = 2.0
+    # Until the book has `book_vol_min_days` of its own history, assume it runs at this volatility.
+    book_vol_prior_ann: float = 0.30
     # A coin needs this many daily closes before it can be traded (longest lookback + vol window).
     min_history_days: int = 151
     # Execution model (paper): taker fee comes from frab.constants, slippage on top.
@@ -76,6 +93,8 @@ class TrendParams:
             raise ValueError("trend lookbacks must be positive")
         if p.vol_target_daily <= 0 or p.leverage_cap <= 0 or p.risk_scale <= 0:
             raise ValueError("trend vol target, leverage cap and risk scale must be positive")
+        if p.book_vol_target_ann is not None and p.book_vol_target_ann <= 0:
+            raise ValueError("trend book volatility target must be positive or null")
         if not 0 <= p.rebalance_hour_utc <= 23:
             raise ValueError("trend rebalance hour must be 0..23")
         return p

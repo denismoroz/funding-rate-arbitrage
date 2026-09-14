@@ -41,12 +41,35 @@ def realized_vol(closes: Sequence[float], window: int) -> float | None:
     return sd if sd > 0 else None
 
 
-def target_weights(closes_by_coin: dict[str, Sequence[float]], params: TrendParams) -> dict[str, float]:
+def book_vol_scale(daily_equity: Sequence[float], params: TrendParams) -> float:
+    """How much to scale the whole book so its own volatility meets the target.
+
+    `daily_equity` is the book's equity sampled once a day, oldest first, ending at the last closed day
+    (causal). Before the book has `book_vol_min_days` of its own history the prior is used instead of a
+    measurement. The result is clipped so a quiet stretch cannot lever the book up without bound.
+    """
+    if params.book_vol_target_ann is None:
+        return 1.0
+    eq = [e for e in daily_equity if e and e > 0][-(params.book_vol_window_days + 1):]
+    rets = [eq[i] / eq[i - 1] - 1.0 for i in range(1, len(eq))]
+    if len(rets) < params.book_vol_min_days:
+        vol = params.book_vol_prior_ann
+    else:
+        mean = sum(rets) / len(rets)
+        vol = math.sqrt(sum((r - mean) ** 2 for r in rets) / len(rets)) * math.sqrt(365)
+    if vol <= 0:
+        vol = params.book_vol_prior_ann
+    return min(max(params.book_vol_target_ann / vol, params.book_vol_scale_min), params.book_vol_scale_max)
+
+
+def target_weights(closes_by_coin: dict[str, Sequence[float]], params: TrendParams,
+                   size_scale: float = 1.0) -> dict[str, float]:
     """Signed book weights (share of equity per coin) for the next day.
 
     weight = signal * vol_target / realised daily vol; if the book's gross exceeds leverage_cap the whole
-    book is scaled down to the cap; finally everything is scaled by risk_scale. A coin without enough
-    history gets weight 0 (the engine then closes any position it holds).
+    book is scaled down to the cap; then everything is scaled by risk_scale and by `size_scale` (the
+    book-volatility scaler, see book_vol_scale). A coin without enough history gets weight 0 (the engine
+    then closes any position it holds).
     """
     raw: dict[str, float] = {}
     for coin in params.coins:
@@ -59,4 +82,4 @@ def target_weights(closes_by_coin: dict[str, Sequence[float]], params: TrendPara
         raw[coin] = 0.0 if vol is None else sig * params.vol_target_daily / vol
     gross = sum(abs(w) for w in raw.values())
     cap = params.leverage_cap / gross if gross > params.leverage_cap else 1.0
-    return {c: w * cap * params.risk_scale for c, w in raw.items()}
+    return {c: w * cap * params.risk_scale * size_scale for c, w in raw.items()}

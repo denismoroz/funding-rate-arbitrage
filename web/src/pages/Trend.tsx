@@ -125,6 +125,15 @@ function RulePanel({ s }: { s: TrendSummary }) {
           </span>
         </div>
         <div className="flex justify-between">
+          <span className="text-gray-500" title="the whole book is scaled every day so its own trailing 60-day volatility meets this target">
+            book volatility target
+          </span>
+          <span className="font-mono">
+            {s.book_vol_target_ann != null ? `${(s.book_vol_target_ann * 100).toFixed(0)}%/yr` : "off"}
+            {s.size_scale != null && <span className="text-gray-400"> · now ×{s.size_scale.toFixed(2)}</span>}
+          </span>
+        </div>
+        <div className="flex justify-between">
           <span className="text-gray-500">universe</span>
           <span className="font-mono">{s.universe.length} of {s.coins.length} coins</span>
         </div>
@@ -192,8 +201,9 @@ export default function Trend() {
                 Long the coins that are trending up, short the ones trending down, on HL perps. Paper only — no orders.
               </p>
               <p className="mt-1 text-xs text-gray-400">
-                Backtest 2020–2026 on HL-listed coins: Sharpe 0.84, about +23%/yr at this size, worst drawdown 35%;
-                uncorrelated with FRAB and with B v2 (research/trend_following/FINDINGS.md).
+                Backtest 2020–2026 on HL-listed coins, sized to a 14%/yr book volatility: about +15%/yr with a 13%
+                worst drawdown; uncorrelated with FRAB and with B v2 (research/trend_following/FINDINGS.md,
+                risk_shaping.py).
               </p>
             </div>
             <div className="text-right text-xs text-gray-400">

@@ -37,6 +37,7 @@ class TrendBook:
     rebalances: int = 0
     liquidations: int = 0
     skipped_min_order: int = 0
+    size_scale: float = 1.0                                    # last book-volatility scaler (reporting)
 
     @classmethod
     def new(cls, params: TrendParams) -> "TrendBook":
@@ -133,10 +134,13 @@ def _trade(book: TrendBook, coin: str, delta: float, price: float, params: Trend
 
 
 def rebalance(book: TrendBook, *, prices: dict[str, float], weights: dict[str, float],
-              signals: dict[str, float], params: TrendParams, bar_ms: int) -> list[dict]:
+              signals: dict[str, float], params: TrendParams, bar_ms: int,
+              size_scale: float | None = None) -> list[dict]:
     """Resize every position to weight * equity. Orders below the exchange minimum are skipped,
     except a full close, which HL allows at any size."""
     equity = book.equity(prices)
+    if size_scale is not None:
+        book.size_scale = size_scale
     book.weights = {c: w for c, w in weights.items() if w}
     book.signals = dict(signals)
     ev: list[dict] = []
@@ -190,13 +194,14 @@ def liquidate_if_breached(book: TrendBook, prices: dict[str, float], params: Tre
 
 def step(book: TrendBook, *, bar_ms: int, prices: dict[str, float], funding: dict[str, float],
          params: TrendParams, weights: dict[str, float] | None = None,
-         signals: dict[str, float] | None = None) -> list[dict]:
+         signals: dict[str, float] | None = None, size_scale: float | None = None) -> list[dict]:
     """Advance one closed hourly bar: funding, liquidation check, then a rebalance if one is due."""
     ev: list[dict] = []
     apply_funding(book, prices, funding, bar_ms)
     ev += liquidate_if_breached(book, prices, params, bar_ms)
     if weights is not None:
-        ev += rebalance(book, prices=prices, weights=weights, signals=signals or {}, params=params, bar_ms=bar_ms)
+        ev += rebalance(book, prices=prices, weights=weights, signals=signals or {}, params=params,
+                        bar_ms=bar_ms, size_scale=size_scale)
     for coin, p in prices.items():
         if p:
             book.prices[coin] = p

@@ -20,7 +20,7 @@ from frab.db.models import Strategy
 from frab.repo.trend_repo import TrendRepo
 from frab.strategy.trend.book import TrendBook, start_book, step
 from frab.strategy.trend.params import TrendParams
-from frab.strategy.trend.signals import ensemble_signal, target_weights
+from frab.strategy.trend.signals import book_vol_scale, ensemble_signal, target_weights
 
 logger = logging.getLogger(__name__)
 
@@ -123,21 +123,26 @@ class TrendPaperEngine:
         if fresh_start:
             events += start_book(book, bar_ms=first - HOUR_MS, params=params)
 
+        daily_eq = [eq for ts, eq in await self._repo.equity_series(self._strategy_id) if ts % DAY_MS == 0]
         eq_rows = []
         for h in range(first, last_closed + HOUR_MS, HOUR_MS):
             prices = {c: d["hourly"].get(h, book.prices.get(c)) for c, d in data.items()}
             prices = {c: p for c, p in prices.items() if p}
             funding = {c: d["funding"].get(h, 0.0) for c, d in data.items()}
             weights = signals = None
+            scale = None
             # daily at the rebalance hour; a brand-new book also sizes itself on its very first bar
             if (h // HOUR_MS) % 24 == params.rebalance_hour_utc or (fresh_start and h == first):
                 closes = {c: [px for ts, px in d["daily"] if ts <= h] for c, d in data.items()}
-                weights = target_weights(closes, params)
+                scale = book_vol_scale(daily_eq, params)
+                weights = target_weights(closes, params, size_scale=scale)
                 signals = {c: ensemble_signal(v, params) for c, v in closes.items()
                            if len(v) >= params.min_history_days}
                 weights = {c: w for c, w in weights.items() if c in prices}
             events += step(book, bar_ms=h, prices=prices, funding=funding, params=params,
-                           weights=weights, signals=signals)
+                           weights=weights, signals=signals, size_scale=scale)
+            if (h + HOUR_MS) % DAY_MS == 0:
+                daily_eq.append(book.equity(prices))
             eq_rows.append(dict(ts_ms=h + HOUR_MS, equity=book.equity(prices), cash=book.cash,
                                 unrealized=book.unrealized(prices), gross_notional=book.gross_notional(prices),
                                 net_notional=book.net_notional(prices), legs=book.legs(),

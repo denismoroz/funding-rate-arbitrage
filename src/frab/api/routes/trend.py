@@ -32,6 +32,7 @@ async def get_summary(request: Request) -> dict:
     base = dict(status=row.status, capital=params.capital_usd, coins=list(params.coins),
                 lookbacks=list(params.lookbacks), vol_target_daily=params.vol_target_daily,
                 leverage_cap=params.leverage_cap, risk_scale=params.risk_scale,
+                book_vol_target_ann=params.book_vol_target_ann,
                 universe=list(getattr(engine, "universe", []) or []),
                 last_tick_ms=getattr(engine, "last_tick_ms", None),
                 last_error=getattr(engine, "last_error", None),
@@ -65,6 +66,7 @@ async def get_summary(request: Request) -> dict:
         "legs": latest.legs, "funding_total": book.funding_total, "fees": book.fees,
         "realized": book.realized, "trades": book.trades, "rebalances": book.rebalances,
         "liquidations": book.liquidations, "skipped_min_order": book.skipped_min_order,
+        "size_scale": book.size_scale,
         "last_rebalance_ms": book.last_rebalance_ms, "last_bar_ms": book.last_bar_ms,
         "positions": positions,
     }

@@ -23,6 +23,14 @@ Windows: NEW 2020-01 .. 2023-06 (never seen by the committed config), OLD 2023-0
 No variant is "selected": the output is a table of return/drawdown pairs to choose a point from, and the
 selection question ("is this knob real or fitted?") is answered by whether a variant helps on BOTH
 windows, not just one.
+
+AMENDMENT 2026-09-14, after the first run: BOOKVOL won, and the user asked whether picking weakly
+correlated coins would calm the book further. Three more variants, all on top of BOOKVOL, judged the
+same way (both windows, drawdown at a matched 15%/yr):
+  LOWCORR12 / LOWCORR8  every day keep only the 12 (8) coins whose average 60-day correlation to the
+                        rest of the eligible set is lowest, among those the signal wants to trade
+  DECORR                keep everything, but weight each position by 1 / (1 + average correlation to
+                        the rest), renormalised to the same gross
 """
 from __future__ import annotations
 
@@ -71,6 +79,36 @@ def net_capped(pos: pd.DataFrame, cap: float = 0.25) -> pd.DataFrame:
     out[pos > 0] = (longs.mul(f_long.where(over_long, 1.0), axis=0))[pos > 0]
     out[pos < 0] = (shorts.mul(f_short.where(over_short, 1.0), axis=0))[pos < 0]
     return out
+
+
+def corr_matrix_scaler(panel, window: int = 60):
+    """Per-coin average correlation to the rest of the book, causal (uses returns strictly before t)."""
+    rets = panel["price"].pct_change()
+    return rets.rolling(window).corr().groupby(level=0).mean().shift(1)
+
+
+def low_corr_subset(pos: pd.DataFrame, avg_corr: pd.DataFrame, k: int) -> pd.DataFrame:
+    """Keep the k least-correlated coins among those the signal wants."""
+    out = pd.DataFrame(0.0, index=pos.index, columns=pos.columns)
+    for t in pos.index:
+        row, c = pos.loc[t], avg_corr.loc[t] if t in avg_corr.index else None
+        wanted = row[row != 0]
+        if c is None or wanted.empty:
+            out.loc[t] = row
+            continue
+        ranked = c.reindex(wanted.index).dropna().nsmallest(k).index
+        keep = ranked if len(ranked) else wanted.index
+        out.loc[t, keep] = row[keep]
+    gross = out.abs().sum(axis=1)
+    return out.div(np.maximum(gross / L.LEVERAGE_CAP, 1.0), axis=0)
+
+
+def decorr_weighted(pos: pd.DataFrame, avg_corr: pd.DataFrame) -> pd.DataFrame:
+    """Weight each position by 1 / (1 + its average correlation to the rest), same gross."""
+    w = 1.0 / (1.0 + avg_corr.reindex_like(pos).clip(lower=-0.9))
+    out = pos * w.fillna(1.0)
+    gross_before, gross_after = pos.abs().sum(axis=1), out.abs().sum(axis=1)
+    return out.mul((gross_before / gross_after.replace(0, np.nan)).fillna(1.0), axis=0)
 
 
 def book_vol_scaled(pnl: pd.Series, target_ann: float = 0.20, window: int = 60) -> pd.Series:
@@ -132,6 +170,10 @@ def main():
         "MAJORS": L.rescale(book(pos[keep])),
         "SLOW": L.rescale(book(scaled_positions(panel, elig, lookbacks=(60, 90, 120, 180)))),
     }
+    avg_corr = corr_matrix_scaler(panel)
+    variants["LOWCORR12"] = book_vol_scaled(L.rescale(book(low_corr_subset(pos, avg_corr, 12))))
+    variants["LOWCORR8"] = book_vol_scaled(L.rescale(book(low_corr_subset(pos, avg_corr, 8))))
+    variants["DECORR"] = book_vol_scaled(L.rescale(book(decorr_weighted(pos, avg_corr))))
 
     res = {"windows": {}, "at_15pct": {}}
     for wname, (lo, hi) in {"NEW": L.NEW, "OLD": L.OLD, "FULL": (L.NEW[0], L.FRESH[1])}.items():

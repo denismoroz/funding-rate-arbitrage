@@ -94,9 +94,11 @@ async def test_gross_matches_the_capped_book_and_funding_is_charged(wired):
     await eng.tick()                                            # holds it for two more hours
     book = await TrendRepo(sf).get_book(sid)
     cap = PARAMS.leverage_cap * PARAMS.risk_scale
-    assert sum(abs(w) for w in book.weights.values()) <= cap + 1e-9        # the target book respects the cap
+    prior_scale = PARAMS.book_vol_target_ann / PARAMS.book_vol_prior_ann   # no own history yet
+    assert book.size_scale == prior_scale
+    assert sum(abs(w) for w in book.weights.values()) <= cap * prior_scale + 1e-9
     gross = book.gross_notional(book.prices) / book.equity(book.prices)
-    assert gross <= cap * 1.05                                             # drifts with prices between rebalances
+    assert gross <= cap * prior_scale * 1.05                               # drifts with prices between rebalances
     assert book.funding_total < 0                               # long book pays a positive rate
     assert book.fees > 0
     assert eng.universe == ["BTC", "ETH"]

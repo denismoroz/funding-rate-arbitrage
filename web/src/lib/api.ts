@@ -754,6 +754,8 @@ export type TrendSummary = {
   vol_target_daily: number;
   leverage_cap: number;
   risk_scale: number;
+  book_vol_target_ann: number | null;
+  size_scale?: number;
   universe: string[];
   last_tick_ms: number | null;
   last_error: string | null;
