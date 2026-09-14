@@ -163,7 +163,7 @@ def basket_run(data, sig, variant, coins, lo, hi):
     for c in coins:
         df = data[c]
         a, b = L.idx_of(df, lo), L.idx_of(df, hi) - 1
-        trend, legs = sig[c]
+        trend, legs = sig[c][0], sig[c][1][variant]
         for share, wish in legs:
             eq, book = run_book(df, c, 1000.0 * share, wish, trend, a, b)
             eq_total = eq if eq_total is None else eq_total[:len(eq)] + eq[:len(eq_total)]
