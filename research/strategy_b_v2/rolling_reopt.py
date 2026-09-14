@@ -36,6 +36,11 @@ PASS (all required):
   3. breadth: on TEST at least half of the 48 adaptive variants beat STATIC_SEL's return, on each basket.
 Descriptive: does the past-lookback ranking of the 54 sets predict the next 1 / 4 weeks (Spearman IC, where
 the past-best set lands next month), switches per year, the whole static grid on TEST/CHOP, yearly table.
+
+AMENDMENT 2026-09-14, after the first run: the user meant re-fitting the two signal windows themselves
+(14/30 -> 7/20 -> 5/15 ...), not a mixed grid. `--windows` re-runs everything under the same rules on a
+finer grid of 36 window pairs (short 3..30 d x long 10..90 d, long >= 1.5 x short), with the sticky exit
+and the ratchet fixed at the production values -> rolling_reopt_windows.json.
 """
 import json, sys, time
 from itertools import product
@@ -61,6 +66,11 @@ EVAL = {"SELECT": {"BTC+ETH": ("2020-05-01", "2023-06-01"), "4 coins": ("2022-01
         "CHOP": {bk: ("2025-06-01", "2026-09-13") for bk in BASKETS}}
 SHADOW_DELAY = 95 * 24
 DD_FLOOR = 10.0
+
+if "--windows" in sys.argv:                                # amendment: re-fit the signal windows only
+    GRID = [((14, 30), 12, 0.5)] + [((s, l), 12, 0.5) for s in (3, 5, 7, 10, 14, 21, 30)
+                                    for l in (10, 15, 20, 30, 45, 60, 90) if l >= 1.5 * s and (s, l) != (14, 30)]
+    OUT = HERE / "rolling_reopt_windows.json"
 
 
 def vname(v):
