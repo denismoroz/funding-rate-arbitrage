@@ -16,7 +16,7 @@ broker charges as swap). Applied per day held, as the crypto book applies fundin
 Costs: 1 bp per leg (majors on a decent broker) and 3 bps as the pessimistic check — FX spreads are
 much tighter than crypto perps, but NOK/SEK are wider than EUR/JPY.
 
-Windows, fixed in advance: the whole common sample; 1990-2010 vs 2011-2026 (trend following in
+Windows, fixed in advance: the whole common sample; the pre-2011 part vs 2011-2026 (trend following in
 developed markets is widely reported to have decayed after 2010 — our own indices+gold study found
 exactly that); and 2020-2026 to compare with the crypto book on the same years.
 
@@ -48,7 +48,7 @@ from trend import portfolio_returns_directional        # noqa: E402
 OUT = HERE / "fx_trend.json"
 BPS_LOW, BPS_HIGH = 1.0, 3.0
 BOOK_VOL = 0.14
-WINDOWS = {"FULL": (None, None), "1990-2010": ("1990-01-01", "2010-12-31"),
+WINDOWS = {"FULL": (None, None), "2006-2010": ("2006-01-01", "2010-12-31"),
            "2011-2026": ("2011-01-01", "2026-09-12"), "2020-2026": ("2020-01-01", "2026-09-12")}
 
 
@@ -67,7 +67,9 @@ def fx_panel() -> tuple[dict, pd.DataFrame]:
 def window(s: pd.Series, lo, hi) -> pd.Series:
     if lo is None:
         return s
-    return s[(s.index >= pd.Timestamp(lo)) & (s.index <= pd.Timestamp(hi))]
+    tz = s.index.tz
+    a, b = pd.Timestamp(lo, tz=tz), pd.Timestamp(hi, tz=tz)
+    return s[(s.index >= a) & (s.index <= b)]
 
 
 def main():
