@@ -63,7 +63,7 @@ _TREND_STRATEGY_VERSION = "v1-paper"
 # Paper test of the committed trend book (research/trend_following/FINDINGS.md, 2026-09-14):
 # TSMOM ensemble 30/60/90/120 on HL perps, daily rebalance, run at 0.2 of the research size
 # (~30% annual vol) so $1000 of paper capital still clears HL's $10 minimum order per leg.
-_TREND_DEFAULTS = TrendParams(capital_usd=1000.0)
+_TREND_DEFAULTS = TrendParams()
 
 
 def _hl_info_url(settings: Settings) -> str:

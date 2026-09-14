@@ -34,7 +34,10 @@ DEFAULT_COINS: tuple[str, ...] = (
 @dataclass(frozen=True)
 class TrendParams:
     coins: tuple[str, ...] = DEFAULT_COINS
-    capital_usd: float = 1000.0
+    # Targeting a 14%/yr book volatility leaves the book at roughly 0.2x gross, so each of the ~22 legs
+    # is about 1% of capital: below ~$2.5k the small legs fall under HL's $10 minimum order and the book
+    # silently keeps only its biggest (mostly long) positions. Hence $3000 of paper capital.
+    capital_usd: float = 3000.0
     # Signal: sign of the trailing return over each lookback (days), averaged.
     lookbacks: tuple[int, ...] = (30, 60, 90, 120)
     vol_window: int = 30
