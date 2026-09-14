@@ -44,6 +44,13 @@ GO to a paper test (NOT to live) requires all four:
   3. |correlation| with B v2 <= 0.3 AND with the carry proxy <= 0.3 over the full overlap;
   4. on the full 2020-2026 sample: DSR (deflated over the menu of 8) >= 0.90 and PBO <= 0.5.
 Anything else is NO-GO, and the report says which leg failed.
+
+AMENDMENT 2026-09-14, after the first run and before judging it: checks 1 and 2 asked for a positive
+TOTAL return, and the committed book's raw scale is an artifact — VOL_TARGET 2%/day with gross up to 3
+gives ~150% annual vol, so compounding wipes the equity out no matter what the edge is (FINDINGS.md
+flags the same thing: only Sharpe/Calmar/skew are honest at this scale). Any deployment would run it at
+a sane size. So every return/drawdown number is also reported with the daily series scaled to 30%
+annual volatility (a linear scale, Sharpe unchanged), and checks 1 and 2 are judged on those.
 """
 import json, sys, time
 from pathlib import Path
@@ -74,6 +81,16 @@ FRESH = ("2026-06-14", "2026-09-12")
 HL_COINS = ["BTC", "ETH", "SOL", "AVAX", "BNB", "XRP", "DOGE", "LINK", "LTC", "ADA", "ARB", "OP", "SUI", "APT",
             "NEAR", "TIA", "INJ", "AAVE", "UNI", "MKR", "LDO", "CRV", "DYDX", "ATOM", "FIL", "ETC", "BCH", "TRX",
             "WLD", "SEI", "STX", "RUNE", "FTM", "GALA", "SAND", "MANA", "APE", "PEPE", "WIF", "ORDI", "TON", "HYPE"]
+
+
+TARGET_VOL_ANN = 0.30
+
+
+def rescale(pnl):
+    """Same series at a deployable size: linear scale to 30% annual vol (Sharpe unchanged)."""
+    pnl = pd.Series(pnl)
+    v = pnl.std(ddof=1) * np.sqrt(365)
+    return pnl * (TARGET_VOL_ANN / v) if v > 0 else pnl
 
 
 def stats(pnl):
@@ -161,17 +178,20 @@ def main():
     for wname, (lo, hi) in {"NEW": NEW, "OLD": OLD, "FRESH": FRESH, "FULL": (NEW[0], FRESH[1])}.items():
         res["windows"][wname] = {k: stats(window(v, lo, hi)) for k, v in low.items()}
         res["windows"][wname + "_8.5bps"] = {COMMITTED: stats(window(high[COMMITTED], lo, hi))}
-        c = res["windows"][wname][COMMITTED]; c85 = res["windows"][wname + "_8.5bps"][COMMITTED]
+        res["windows"][wname + "_at30vol"] = {k: stats(rescale(window(v, lo, hi))) for k, v in low.items()}
+        res["windows"][wname + "_at30vol_8.5bps"] = {COMMITTED: stats(rescale(window(high[COMMITTED], lo, hi)))}
+        c = res["windows"][wname][COMMITTED]
+        s30 = res["windows"][wname + "_at30vol"][COMMITTED]; s30h = res["windows"][wname + "_at30vol_8.5bps"][COMMITTED]
         best = max(low, key=lambda k: stats(window(low[k], lo, hi))["sharpe"])
-        print(f"{wname:<6} {c['days']:>4}d | committed 4.4bps SR {c['sharpe']:+.2f} total {c['total']:+8.1f}% DD {c['maxdd']:.0f} "
-              f"| 8.5bps SR {c85['sharpe']:+.2f} total {c85['total']:+8.1f}% | best of menu {best}", flush=True)
+        print(f"{wname:<6} {c['days']:>4}d | committed SR {c['sharpe']:+.2f} | at 30% vol: 4.4bps {s30['ann']:+6.1f}%/yr "
+              f"total {s30['total']:+7.1f}% DD {s30['maxdd']:.0f} | 8.5bps {s30h['ann']:+6.1f}%/yr | best of menu {best}", flush=True)
 
     for y in range(2020, 2027):
         s = low[COMMITTED][low[COMMITTED].index.year == y]
         if len(s) > 30:
-            st = stats(s)
-            res["yearly"].append(dict(year=y, **st))
-            print(f"  {y}: SR {st['sharpe']:+.2f} total {st['total']:+8.1f}% DD {st['maxdd']:.0f}", flush=True)
+            st, st30 = stats(s), stats(rescale(s))
+            res["yearly"].append(dict(year=y, **st, at30vol=st30))
+            print(f"  {y}: SR {st['sharpe']:+.2f} | at 30% vol total {st30['total']:+6.1f}% DD {st30['maxdd']:.0f}", flush=True)
 
     # ── validation on the full sample ──
     R = pd.DataFrame(low).dropna()
@@ -211,6 +231,18 @@ def main():
                                  trend_alone=stats(j["t"].values))
     print(f"inverse-vol blend B+trend {w.round(2).to_dict()}: SR {stats(blend.values)['sharpe']:+.2f} DD {stats(blend.values)['maxdd']:.0f} "
           f"| B alone SR {stats(j['b'].values)['sharpe']:+.2f} DD {stats(j['b'].values)['maxdd']:.0f}", flush=True)
+    # how much of a mixed book should be trend, and does it help the mix?
+    sweep = []
+    for w_t in [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5]:
+        mix = (1 - w_t) * j["b"] + w_t * rescale(j["t"]) * (j["b"].std() * np.sqrt(365) / TARGET_VOL_ANN)
+        row = dict(w_trend=w_t, **stats(mix.values))
+        chop = mix[(mix.index >= pd.Timestamp("2025-06-01", tz="UTC"))]
+        bear = mix[mix.index.year == 2022]
+        row["chop_2025_26_total"] = stats(chop.values)["total"]; row["bear_2022_total"] = stats(bear.values)["total"]
+        sweep.append(row)
+        print(f"  mix {int(w_t * 100):>2}% trend / {int((1 - w_t) * 100)}% B: SR {row['sharpe']:+.2f} ann {row['ann']:+.1f}% "
+              f"DD {row['maxdd']:.1f} | 2022 {row['bear_2022_total']:+.1f}% | пила 2025-26 {row['chop_2025_26_total']:+.1f}%", flush=True)
+    fits["mix_sweep"] = sweep
     res["fits"] = fits
 
     # ── capacity: how many legs the book actually holds ──
@@ -231,14 +263,19 @@ def main():
     panel_hl, accr_hl, elig_hl = to_trend_panel(p, hl_only=True)
     hl = menu_pnls(panel_hl, accr_hl, elig_hl, BPS_LOW)[COMMITTED]
     res["hl_only"] = {k: stats(window(hl, *v)) for k, v in {"NEW": NEW, "OLD": OLD, "FULL": (NEW[0], FRESH[1])}.items()}
-    print("HL-listed coins only:", {k: f"SR {v['sharpe']:+.2f} total {v['total']:+.0f}%" for k, v in res["hl_only"].items()}, flush=True)
+    res["hl_only_at30vol"] = {k: stats(rescale(window(hl, *v))) for k, v in {"NEW": NEW, "OLD": OLD, "FULL": (NEW[0], FRESH[1])}.items()}
+    res["hl_only_yearly_at30vol"] = {str(y): stats(rescale(hl[hl.index.year == y])) for y in range(2020, 2027) if (hl.index.year == y).sum() > 30}
+    print("HL-listed only:", {k: f"SR {v['sharpe']:+.2f}" for k, v in res["hl_only"].items()},
+          "| at 30% vol:", {k: f"{v['ann']:+.0f}%/yr DD {v['maxdd']:.0f}" for k, v in res["hl_only_at30vol"].items()},
+          "| by year:", {y: f"{v['total']:+.0f}%" for y, v in res["hl_only_yearly_at30vol"].items()}, flush=True)
 
     # ── pre-registered verdict ──
-    new_low, new_high = res["windows"]["NEW"][COMMITTED], res["windows"]["NEW_8.5bps"][COMMITTED]
+    new_low = res["windows"]["NEW"][COMMITTED]
+    new_high30 = res["windows"]["NEW_at30vol_8.5bps"][COMMITTED]
     y2022 = next((r for r in res["yearly"] if r["year"] == 2022), None)
     checks = dict(
-        new_window=bool(new_low["sharpe"] >= 0.4 and new_high["total"] > 0),
-        bear_2022=bool(y2022 and y2022["total"] > 0),
+        new_window=bool(new_low["sharpe"] >= 0.4 and new_high30["total"] > 0),
+        bear_2022=bool(y2022 and y2022["at30vol"]["total"] > 0),
         uncorrelated=bool(abs(fits["B_v2"]["corr"]) <= 0.3 and abs(fits["carry_proxy"]["corr"]) <= 0.3),
         validation=bool(res["dsr"]["dsr"] >= 0.90 and pr.pbo <= 0.5))
     res["checks"] = checks
