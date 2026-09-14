@@ -3,11 +3,16 @@
 Measurement, not a hypothesis test: no thresholds, no verdict — just the numbers and what they are made of.
 
 Series
-  FRAB   LIVE. Daily return = change in total_equity over the equity at the start of the day. Total
-         equity is the right series: FRAB is delta neutral, so the spot leg and the perp leg offset
-         inside it and what is left is the carry. Days whose equity moves more than 3% are deposits,
-         withdrawals or accounting artifacts (dust, a thin book's mid) rather than P&L, and are dropped:
-         over the live window that is 3 days out of 105.
+  FRAB   LIVE, two readings, because they say different things:
+         FRAB_econ  what the panel calls income: the daily change in (funding + realized perp P&L - fees),
+                    i.e. money that has actually landed. Over the window: +$5.68 on ~$126.
+         FRAB_eq    the daily change in total equity, which also marks the OPEN pairs. Over the window:
+                    -$2.13, because the open pairs currently carry -$4.7 of unrealized basis — spot and
+                    perp do not mark off each other exactly (thin books, dust; see the FRAB equity
+                    artifacts note). That basis converges when a position closes, which is why realized
+                    P&L keeps coming out positive.
+         Both are divided by the equity at the start of the day; days moving more than 3% are deposits
+         or accounting artifacts and are dropped.
   B v2   MODEL. The production CoinBook, cold-wallet config, 4 coins, $1000 each, fresh start at the
          window start (research/strategy_b_v2/limits.py). The paper test itself is one day old.
   TREND  MODEL. The committed trend book on the HL-listed coins of the point-in-time Binance panel,
@@ -43,15 +48,17 @@ OUT = Path(__file__).with_name("matrix.json")
 LONG_START = "2021-01-01"
 
 
-def frab_live(transfer_threshold: float = 0.03) -> pd.Series:
-    """Daily FRAB returns from the prod snapshots, with transfer days dropped."""
+def frab_live(transfer_threshold: float = 0.03) -> tuple[pd.Series, pd.Series]:
+    """Daily FRAB returns: (money that landed, total equity incl. open-pair marks)."""
     df = pd.read_csv(SCRATCH / "frab_live.csv")
     df["t"] = pd.to_datetime(df["ts_ms"], unit="ms", utc=True)
-    eq = df.set_index("t").sort_index()["total_equity"].resample("1D").last().dropna()
-    r = eq.pct_change().dropna()
-    dropped = int((r.abs() > transfer_threshold).sum())
-    print(f"FRAB live: {len(r)} days, {dropped} dropped as transfers/artifacts (|move| > {transfer_threshold:.0%})")
-    return r[r.abs() <= transfer_threshold]
+    d = df.set_index("t").sort_index().resample("1D").last().dropna()
+    base = d["total_equity"].shift(1)
+    econ = ((d["funding_cum"] + d["perp_realized_cum"] - d["fees_cum"]).diff() / base).dropna()
+    eq = (d["total_equity"].diff() / base).dropna()
+    keep = (eq.abs() <= transfer_threshold) & (econ.abs() <= transfer_threshold)
+    print(f"FRAB live: {len(eq)} days, {int((~keep).sum())} dropped as transfers/artifacts")
+    return econ[keep], eq[keep]
 
 
 def b_model(lo: str, hi: str) -> pd.Series:
@@ -120,14 +127,15 @@ def blend(series: dict[str, pd.Series], label: str) -> dict:
 
 def main():
     p = X.build_panel()
-    frab = frab_live()
+    frab_econ, frab_eq = frab_live()
     trend = trend_model(p)
     carry = T.carry_proxy(p)
     b_long = b_model(LONG_START, "2026-09-13")
-    live_lo = str(frab.index.min().date())
+    live_lo = str(frab_eq.index.min().date())
     b_live = b_model(live_lo, "2026-09-13")
 
-    res = {"live": corr_block({"FRAB": frab, "B_v2": b_live, "TREND": trend, "CARRY": carry}, "live window"),
+    res = {"live": corr_block({"FRAB_econ": frab_econ, "FRAB_eq": frab_eq, "B_v2": b_live,
+                               "TREND": trend, "CARRY": carry}, "live window"),
            "long": corr_block({"B_v2": b_long, "TREND": trend, "CARRY": carry}, f"models, {LONG_START} .. 2026-09")}
     res["blend_long"] = blend({"B_v2": b_long, "TREND": trend, "CARRY": carry}, "long window")
     res["blend_long_no_carry"] = blend({"B_v2": b_long, "TREND": trend}, "long window, B + trend only")
