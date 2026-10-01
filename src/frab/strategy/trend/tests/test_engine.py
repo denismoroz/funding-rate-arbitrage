@@ -129,3 +129,31 @@ async def test_a_paused_strategy_does_not_advance(wired):
     out = await make(sf, sid, T0 + DAY_MS + 60_000).tick()
     assert out["hours"] == 0
     assert await TrendRepo(sf).get_book(sid) is None
+
+
+class FlakyClient(FakeClient):
+    """Hyperliquid unreachable for one coin."""
+
+    async def candle_snapshot(self, coin, interval, start_ms, end_ms):
+        if coin == "ETH":
+            raise ConnectionError()
+        return await super().candle_snapshot(coin, interval, start_ms, end_ms)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fetch_defers_the_tick_and_the_next_one_replays_the_hours(wired):
+    sf, sid = wired
+    await make(sf, sid, T0 + DAY_MS + 2 * HOUR_MS + 60_000).tick()        # a sized book
+    before = await TrendRepo(sf).get_book(sid)
+
+    flaky = TrendPaperEngine(session_factory=sf, client=FlakyClient(), strategy_id=sid,
+                             repo=TrendRepo(sf), clock=lambda: T0 + DAY_MS + 5 * HOUR_MS + 60_000)
+    with pytest.raises(RuntimeError, match="ETH"):
+        await flaky.tick()
+    assert (await TrendRepo(sf).get_book(sid)).last_bar_ms == before.last_bar_ms   # nothing advanced
+
+    out = await make(sf, sid, T0 + DAY_MS + 5 * HOUR_MS + 60_000).tick()
+    assert out["hours"] == 3                                                # the deferred hours, replayed
+    async with sf() as s:
+        rows = (await s.execute(TrendEquity.__table__.select())).all()
+    assert all(r.unrealized != 0 for r in rows if r.ts_ms > before.last_bar_ms + HOUR_MS)

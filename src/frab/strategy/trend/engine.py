@@ -2,9 +2,9 @@
 
 Once per hour, shortly after the candle closes: pull closed hourly candles and funding from Hyperliquid's
 public info API for every coin of the book, advance the book through each closed hour it has not seen yet
-(so a restart or a missed hour is caught up, not skipped), and once a day — at the rebalance hour, on the
-daily candles closed by then — resize the whole book to the day's target weights. State, fills and equity
-are persisted atomically per tick.
+(so a restart, a missed hour or a failed fetch is caught up, not skipped), and once a day — at the
+rebalance hour, on the daily candles closed by then — resize the whole book to the day's target weights.
+State, fills and equity are persisted atomically per tick.
 
 PAPER ONLY: the engine is handed a read-only client and never receives a signing key, so it cannot place
 an order even by mistake.
@@ -108,12 +108,14 @@ class TrendPaperEngine:
             return {"status": status, "hours": 0}
         first = max(first, last_closed - MAX_CATCHUP_HOURS * HOUR_MS)
 
+        # all or nothing: a coin without prices would be valued at its entry (unrealized 0) and skipped by
+        # the rebalance, so a failed fetch defers the whole tick; the next one replays these hours
         data = {}
         for coin in params.coins:
             try:
                 data[coin] = await self._fetch(coin, params, first - 2 * HOUR_MS, last_closed)
-            except Exception as exc:  # noqa: BLE001 — one bad coin must not stop the book
-                logger.warning("trend %s: fetch failed (%s); coin skipped this tick", coin, exc)
+            except Exception as exc:
+                raise RuntimeError(f"{coin}: fetch failed ({type(exc).__name__}); tick deferred") from exc
         self.universe = sorted(c for c, d in data.items() if len(d["daily"]) >= params.min_history_days)
 
         if book is None:
