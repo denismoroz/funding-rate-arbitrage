@@ -54,6 +54,12 @@ def simulate(
     neg_stop_bypass_min_hold: bool = True,
     # bleed metric measured at this threshold regardless of negstop
     bleed_threshold: float = -0.10,
+    # Persisted one-way PRE→POST latch (prod since 2026-06-10). False = legacy
+    # per-hour recompute of in_profit.
+    latch_post: bool = False,
+    # Phase-2 giveback gate: exit only once funding handed back from its peak
+    # >= mult × round-trip fees. 0 = off (exit on threshold alone).
+    phase2_giveback_fee_mult: float = 0.0,
 ) -> tuple:
     datas = {}
     for c in coins:
@@ -81,6 +87,7 @@ def simulate(
             "cash": TOTAL_CAPITAL, "equity_prev": TOTAL_CAPITAL, "trades": 0,
             "gross_funding_so_far": 0.0, "total_fees_paid": 0.0,
             "consec_negative": 0, "position_min_hold": 0,
+            "latched": False, "peak_funding": 0.0,
         }
 
     pnl_per_hour = np.zeros(n)
@@ -104,6 +111,8 @@ def simulate(
         s["total_fees_paid"] = 0.0
         s["consec_negative"] = 0
         s["position_min_hold"] = 0
+        s["latched"] = False
+        s["peak_funding"] = 0.0
 
     for i in range(n):
         # 1) Funding accrual
@@ -128,6 +137,10 @@ def simulate(
                 s["consec_negative"] = 0
 
             in_profit = s["gross_funding_so_far"] >= s["total_fees_paid"]
+            if latch_post:
+                s["latched"] = s["latched"] or in_profit
+                in_profit = s["latched"]
+            s["peak_funding"] = max(s["peak_funding"], s["gross_funding_so_far"])
 
             # bleed metric
             if (not in_profit) and rate < bleed_threshold:
@@ -157,7 +170,9 @@ def simulate(
                         if rem / income > phase1_breakeven_cap_hours:
                             should_exit = True
                 else:
-                    if rate < phase2_exit_threshold:
+                    giveback = s["peak_funding"] - s["gross_funding_so_far"]
+                    if (rate < phase2_exit_threshold
+                            and giveback >= phase2_giveback_fee_mult * s["total_fees_paid"]):
                         should_exit = True
 
             if should_exit:
@@ -199,6 +214,8 @@ def simulate(
                 s["gross_funding_so_far"] = 0.0
                 s["total_fees_paid"] = TOTAL_FEES_CYCLE
                 s["consec_negative"] = 0
+                s["latched"] = False
+                s["peak_funding"] = 0.0
                 s["trades"] += 1
                 opens_per_hour[i] += 1
 

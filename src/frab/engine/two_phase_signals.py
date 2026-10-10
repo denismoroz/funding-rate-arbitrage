@@ -108,15 +108,26 @@ def decide_post_breakeven(
     hours_in_position: int,
     position_min_hold_hours: int,
     phase2_exit_threshold: float,
+    funding_giveback: float = 0.0,
+    total_fees_paid: float = 0.0,
+    giveback_fee_mult: float = 0.0,
 ) -> TwoPhaseDecision:
     """POST_BREAKEVEN (Phase 2) exit. Returns NONE / CLOSE_POST_BE.
 
     Keep the min_hold lock for behavior parity with the old in_profit=True path:
       1. hours_in_position < position_min_hold_hours -> NONE
-      2. signal is not None and signal < phase2_exit_threshold -> CLOSE_POST_BE
-      3. else NONE
+      2. funding_giveback < giveback_fee_mult * total_fees_paid -> NONE
+      3. signal is not None and signal < phase2_exit_threshold -> CLOSE_POST_BE
+      4. else NONE
+
+    funding_giveback: funding handed back since the position's funding peak (>= 0).
+    The giveback gate stops a short negative blip from triggering a close that
+    costs a full round trip of fees to undo: an 8h dip at -12% APR bleeds ~0.01%
+    of notional, the round trip costs 0.21%. giveback_fee_mult=0 disables the gate.
     """
     if hours_in_position < position_min_hold_hours:
+        return TwoPhaseDecision.NONE
+    if funding_giveback < giveback_fee_mult * total_fees_paid:
         return TwoPhaseDecision.NONE
     if smoothed_signal_annual is not None and smoothed_signal_annual < phase2_exit_threshold:
         return TwoPhaseDecision.CLOSE_POST_BE

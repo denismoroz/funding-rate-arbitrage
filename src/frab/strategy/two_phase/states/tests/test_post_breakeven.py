@@ -6,7 +6,8 @@ FarbRepo, so no DB fixture is needed — all dependencies are faked.
 Key invariants under test:
   - in_profit=True always (Phase 2 uses phase2_exit_threshold)
   - The latch is one-way: NEVER transitions back to PRE_BREAKEVEN
-  - Close fires when signal < phase2_exit_threshold
+  - Close fires when signal < phase2_exit_threshold AND funding handed back
+    from its peak >= phase2_giveback_fee_mult × total_fees_paid
   - StateConflict is swallowed
 """
 from __future__ import annotations
@@ -89,6 +90,7 @@ async def test_closes_when_signal_below_phase2_threshold(mocker):
     fp = _make_fp(state_data={
         "opened_at_ms": _OPENED_MS,
         "gross_funding_so_far": 50.0,
+        "peak_gross_funding": 60.0,  # handed back 10 = one round trip of fees
         "total_fees_paid": 10.0,
         "consec_negative_hours": 0,
     })
@@ -118,6 +120,81 @@ async def test_no_close_when_signal_above_threshold(mocker):
 
     farb_repo.transition.assert_not_called()
     farb_repo.update_state_data.assert_awaited_once()
+
+
+# ─── Giveback gate ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_no_close_on_short_negative_blip(mocker):
+    """Signal below threshold but funding handed back < round-trip fees → hold.
+    (Live case 2026-10-08: 8 negative hours cost ~7% of the fees the flip did.)"""
+    params = _make_params(phase2_exit_threshold=-0.10, base_min_hold_hours=0)
+    fp = _make_fp(state_data={
+        "opened_at_ms": _OPENED_MS,
+        "gross_funding_so_far": 59.3,
+        "peak_gross_funding": 60.0,
+        "total_fees_paid": 10.0,
+        "consec_negative_hours": 7,
+    })
+    handler, farb_repo, _ = _make_handler(mocker, params=params, signal_value=-0.12)
+
+    await handler.evaluate_one(fp, now_ms=_NOW_MS)
+
+    farb_repo.transition.assert_not_called()
+    farb_repo.update_state_data.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gate_off_closes_on_threshold_alone(mocker):
+    """phase2_giveback_fee_mult=0 restores the threshold-only exit."""
+    params = _make_params(
+        phase2_exit_threshold=-0.10, base_min_hold_hours=0, phase2_giveback_fee_mult=0.0,
+    )
+    fp = _make_fp(state_data={
+        "opened_at_ms": _OPENED_MS,
+        "gross_funding_so_far": 50.0,
+        "total_fees_paid": 10.0,
+        "consec_negative_hours": 0,
+    })
+    handler, farb_repo, _ = _make_handler(mocker, params=params, signal_value=-0.50)
+
+    await handler.evaluate_one(fp, now_ms=_NOW_MS)
+
+    farb_repo.transition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_peak_funding_tracks_high_water_mark(mocker):
+    """peak_gross_funding rises with gross funding and never falls."""
+    handler, farb_repo, _ = _make_handler(mocker, signal_value=0.50)
+
+    rising = _make_fp(state_data={
+        "opened_at_ms": _OPENED_MS, "gross_funding_so_far": 55.0,
+        "peak_gross_funding": 50.0, "total_fees_paid": 10.0,
+    })
+    await handler.evaluate_one(rising, now_ms=_NOW_MS)
+    assert farb_repo.update_state_data.call_args.args[1]["peak_gross_funding"] == 55.0
+
+    falling = _make_fp(state_data={
+        "opened_at_ms": _OPENED_MS, "gross_funding_so_far": 52.0,
+        "peak_gross_funding": 55.0, "total_fees_paid": 10.0,
+    })
+    await handler.evaluate_one(falling, now_ms=_NOW_MS)
+    assert farb_repo.update_state_data.call_args.args[1]["peak_gross_funding"] == 55.0
+
+
+@pytest.mark.asyncio
+async def test_peak_funding_initialised_for_legacy_position(mocker):
+    """A position that latched before the key existed starts its peak at current gross."""
+    fp = _make_fp(state_data={
+        "opened_at_ms": _OPENED_MS, "gross_funding_so_far": 1.64, "total_fees_paid": 0.02,
+    })
+    handler, farb_repo, _ = _make_handler(mocker, signal_value=-0.50)
+
+    await handler.evaluate_one(fp, now_ms=_NOW_MS)
+
+    farb_repo.transition.assert_not_called()
+    assert farb_repo.update_state_data.call_args.args[1]["peak_gross_funding"] == 1.64
 
 
 # ─── One-way latch invariant ──────────────────────────────────────────────────
@@ -152,6 +229,7 @@ async def test_state_conflict_is_swallowed(mocker):
     fp = _make_fp(state_data={
         "opened_at_ms": _OPENED_MS,
         "gross_funding_so_far": 50.0,
+        "peak_gross_funding": 60.0,  # handed back 10 = one round trip of fees
         "total_fees_paid": 10.0,
         "consec_negative_hours": 0,
     })

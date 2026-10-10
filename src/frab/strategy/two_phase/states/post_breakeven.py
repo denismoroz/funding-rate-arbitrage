@@ -21,7 +21,8 @@ class PostBreakevenHandler:
 
     On each evaluation:
     1. Call decide_post_breakeven(). Only CLOSE_POST_BE can fire
-       (signal < phase2_exit_threshold).
+       (signal < phase2_exit_threshold AND funding handed back from its peak
+       >= phase2_giveback_fee_mult × total_fees_paid).
     2. If decision fires → transition POST_BREAKEVEN → CLOSING_SHORT.
     3. If NONE → checkpoint updated counters.
     4. NEVER transitions back to PRE_BREAKEVEN, even if gross_funding dips below
@@ -52,6 +53,11 @@ class PostBreakevenHandler:
 
         pos_min_hold = sd.get("position_min_hold_hours", self._params.base_min_hold_hours)
         consec_neg = sd.get("consec_negative_hours", 0)
+        gross_funding = sd.get("gross_funding_so_far", 0.0)
+        total_fees = sd.get("total_fees_paid", 0.0)
+        # High-water mark of cumulative funding. Positions that latched before
+        # this key existed start their peak at the current value.
+        peak_funding = max(sd.get("peak_gross_funding", gross_funding), gross_funding)
 
         # Update consec_negative counter
         new_consec_neg = update_consec_negative(
@@ -62,6 +68,7 @@ class PostBreakevenHandler:
         updated_sd = {
             **sd,
             "consec_negative_hours": new_consec_neg,
+            "peak_gross_funding": peak_funding,
         }
 
         # ── EXIT EVALUATION (Phase 2 only) ───────────────────────────────────
@@ -71,6 +78,9 @@ class PostBreakevenHandler:
             hours_in_position=int(hours_held),
             position_min_hold_hours=pos_min_hold,
             phase2_exit_threshold=self._params.phase2_exit_threshold,
+            funding_giveback=peak_funding - gross_funding,
+            total_fees_paid=total_fees,
+            giveback_fee_mult=self._params.phase2_giveback_fee_mult,
         )
 
         if decision != TwoPhaseDecision.NONE:

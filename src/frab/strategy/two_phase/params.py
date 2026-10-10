@@ -34,6 +34,9 @@ class TwoPhaseParams:
     # Phase-1 negative hard-stop (bypasses min_hold; see research/two_phase_negstop.py)
     neg_stop_threshold_apr: float = -0.15   # in Phase 1, cut if smoothed signal < this
     neg_stop_patience_hours: int = 6        # ... and consec negative hours >= this
+    # Phase-2 giveback gate (see research/two_phase_post_giveback.py): exit only once
+    # funding handed back from its peak >= this × round-trip fees. 0 = gate off.
+    phase2_giveback_fee_mult: float = 1.0
 
     @classmethod
     def from_dict(cls, d: dict) -> "TwoPhaseParams":

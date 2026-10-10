@@ -517,3 +517,44 @@ def test_post_fires_regardless_of_gross_fees_ratio() -> None:
         phase2_exit_threshold=-0.10,
     )
     assert result == TwoPhaseDecision.CLOSE_POST_BE
+
+
+# ---------------------------------------------------------------------------
+# decide_post_breakeven — giveback gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "giveback, mult, expected",
+    [
+        # gate off → threshold alone decides
+        (0.0, 0.0, TwoPhaseDecision.CLOSE_POST_BE),
+        # handed back less than one round trip of fees → hold
+        (0.002, 1.0, TwoPhaseDecision.NONE),
+        (0.0299, 1.0, TwoPhaseDecision.NONE),
+        # boundary — equality triggers (>=)
+        (0.03, 1.0, TwoPhaseDecision.CLOSE_POST_BE),
+        (0.05, 1.0, TwoPhaseDecision.CLOSE_POST_BE),
+        # mult scales the bar
+        (0.05, 2.0, TwoPhaseDecision.NONE),
+    ],
+)
+def test_post_giveback_gate(giveback: float, mult: float, expected: TwoPhaseDecision) -> None:
+    result = _post(
+        smoothed_signal_annual=-0.50,
+        funding_giveback=giveback,
+        total_fees_paid=0.03,
+        giveback_fee_mult=mult,
+    )
+    assert result == expected
+
+
+def test_post_giveback_alone_does_not_close() -> None:
+    """Funding handed back but the signal has recovered above the threshold → hold."""
+    result = _post(
+        smoothed_signal_annual=-0.05,
+        funding_giveback=1.0,
+        total_fees_paid=0.03,
+        giveback_fee_mult=1.0,
+    )
+    assert result == TwoPhaseDecision.NONE

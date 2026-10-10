@@ -697,6 +697,7 @@ async def test_18_exit_signal_below_threshold_after_min_hold(
             "opened_at_ms": opened_ms,
             "position_min_hold_hours": 24,
             "gross_funding_so_far": 100.0,   # in profit (> total_fees_paid=4.2)
+            "peak_gross_funding": 105.0,     # handed back > one round trip of fees
             "total_fees_paid": 4.2,
             "consec_negative_hours": 0,
         },
@@ -883,6 +884,7 @@ async def test_22_full_lifecycle(session_factory, farb_repo, strategy_id, exchan
         "opened_at_ms": _NOW_MS - 200 * 3_600_000,
         "position_min_hold_hours": 24,
         "gross_funding_so_far": 100.0,
+        "peak_gross_funding": 105.0,
         "total_fees_paid": 4.2,
         "consec_negative_hours": 0,
     }

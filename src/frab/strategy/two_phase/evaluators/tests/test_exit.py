@@ -228,6 +228,7 @@ async def test_evaluate_one_post_closes_when_signal_below_phase2_threshold(mocke
             "opened_at_ms": _OPENED_MS,
             "consec_negative_hours": 0,
             "gross_funding_so_far": 50.0,
+            "peak_gross_funding": 60.0,
             "total_fees_paid": 10.0,
         },
     )
