@@ -74,6 +74,25 @@ class AccountSnapshotAction(HLAction):
             "total_usd": total_usd,
         }
 
+    async def get_spot_balances_by_coin(self) -> dict[str, float]:
+        """{canonical_coin: total_qty} for spot tokens we can price (registry-mapped).
+
+        The quote token and unmapped tokens (airdrops etc.) are left out. Unlike
+        get_perp_unrealized_by_coin this raises on failure: an empty dict would
+        read as "no balances" and silently drop the residual from equity.
+        """
+        if self._address is None:
+            raise RuntimeError("account_address required")
+        state = await self._client.spot_user_state(self._address)
+        inverse = self._symbols.spot_token_inverse
+        out: dict[str, float] = {}
+        for bal in state.balances:
+            canonical = inverse.get(bal.coin)
+            if canonical is None or bal.total <= 0:
+                continue
+            out[canonical] = out.get(canonical, 0.0) + bal.total
+        return out
+
     async def get_perp_unrealized_by_coin(self) -> dict[str, float]:
         """{coin: unrealizedPnl_USDC} from HL assetPositions."""
         if self._address is None:

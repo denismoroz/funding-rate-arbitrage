@@ -143,6 +143,7 @@ def _make_loop(
     mock_exchange.get_wallet = AsyncMock(return_value=1000.0)
     mock_exchange.get_perp_unrealized_by_coin = AsyncMock(return_value={})
     mock_exchange.get_spot_mids_by_coin = AsyncMock(return_value={})
+    mock_exchange.get_spot_balances_by_coin = AsyncMock(return_value={})
 
     mock_ledger = MagicMock()
     mock_ledger.compute_and_save = AsyncMock()

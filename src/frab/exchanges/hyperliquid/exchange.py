@@ -308,6 +308,10 @@ class HLExchange:
         """Return {coin: unrealizedPnl_USDC} from HL assetPositions."""
         return await self._account_snapshot_action.get_perp_unrealized_by_coin()
 
+    async def get_spot_balances_by_coin(self) -> dict[str, float]:
+        """Return {canonical_coin: total_qty} of spot tokens held in the wallet."""
+        return await self._account_snapshot_action.get_spot_balances_by_coin()
+
     async def backfill_fill_fees(self, strategy_id: int) -> int:
         """Update DB fills whose fee == 0 with the real fee from HL userFills."""
         return await self._backfill_fees_action.execute(strategy_id)

@@ -11,6 +11,14 @@ Cash semantics:
     are already captured by spot_value; other stablecoins (BUSD etc.) are
     not relevant to this implementation. Step 7 may broaden this list.
 
+Spot-value semantics:
+    spot_value = SUM of qty × price over OPEN SPOT positions
+               + wallet spot tokens NOT covered by an open position ("residual").
+    The residual is what a close leaves behind: the sell is floored to the lot
+    size, so up to one lot per coin stays in the wallet (~$0.87 for HYPE). It is
+    real money that would otherwise vanish from equity the moment the position
+    goes CLOSED.
+
 Total-equity formula:
     total_equity = cash + spot_value   (see frab.domain.equity.total_equity_usd)
 
@@ -98,6 +106,7 @@ class Ledger:
         *,
         perp_unrealized_by_coin: dict[str, float] | None = None,
         spot_mids_by_coin: dict[str, float] | None = None,
+        spot_balances_by_coin: dict[str, float] | None = None,
     ) -> EquitySnapshot:
         """Compute equity snapshot from DB + quotes.  Read-only — no DB writes.
 
@@ -115,6 +124,10 @@ class Ledger:
             that has an open PERP position in the DB, this value is used
             instead of the local (entry-mark)*qty estimate. Missing coins fall
             back to the local computation.
+        spot_balances_by_coin:
+            Optional {coin: wallet_qty} of spot tokens actually held on the
+            exchange. Whatever exceeds the open SPOT positions' qty for a coin
+            is added to spot_value. None → positions only.
 
         Returns
         -------
@@ -130,6 +143,7 @@ class Ledger:
                 session, strategy_id, quotes,
                 perp_unrealized_by_coin=perp_unrealized_by_coin,
                 spot_mids_by_coin=spot_mids_by_coin,
+                spot_balances_by_coin=spot_balances_by_coin,
                 latest_cash_ts=latest_cash_ts,
             )
             perp_realized_cum = await self._compute_perp_realized(session, strategy_id)
@@ -177,12 +191,14 @@ class Ledger:
         *,
         perp_unrealized_by_coin: dict[str, float] | None = None,
         spot_mids_by_coin: dict[str, float] | None = None,
+        spot_balances_by_coin: dict[str, float] | None = None,
     ) -> EquitySnapshot:
         """Convenience: compute then save.  Returns the snapshot."""
         snapshot = await self.compute_equity(
             strategy_id, quotes,
             perp_unrealized_by_coin=perp_unrealized_by_coin,
             spot_mids_by_coin=spot_mids_by_coin,
+            spot_balances_by_coin=spot_balances_by_coin,
         )
         await self.save_snapshot(snapshot)
         return snapshot
@@ -274,6 +290,7 @@ class Ledger:
         *,
         perp_unrealized_by_coin: dict[str, float] | None = None,
         spot_mids_by_coin: dict[str, float] | None = None,
+        spot_balances_by_coin: dict[str, float] | None = None,
         latest_cash_ts: int | None = None,
     ) -> tuple[float, float]:
         """Return (spot_value, perp_unrealized) for all OPEN positions
@@ -293,6 +310,11 @@ class Ledger:
         delta-neutral open from bumping equity.  When latest_cash_ts is None
         (fresh DB, no cash snapshots yet) all spot positions are counted as
         normal — no regression to zero equity.
+
+        ``spot_balances_by_coin`` adds the wallet residual: per coin, the wallet
+        qty minus the qty of ALL open SPOT positions (gated ones included — their
+        tokens are in the wallet too). Only a positive residual counts, and only
+        when the coin has a price; it never reduces spot_value.
         """
         # Fetch all OPEN, non-COLLATERAL positions linked to this strategy.
         stmt = (
@@ -313,11 +335,14 @@ class Ledger:
         spot_value = 0.0
         perp_unrealized = 0.0
         warned_coins: set[str] = set()
+        open_spot_qty: dict[str, float] = {}
 
         for pos in open_positions:
             coin = pos.coin
             instrument = Instrument(pos.instrument)
             side = Side(pos.side)
+            if instrument == Instrument.SPOT:
+                open_spot_qty[coin] = open_spot_qty.get(coin, 0.0) + pos.qty
 
             if coin not in quotes:
                 if coin not in warned_coins:
@@ -367,6 +392,18 @@ class Ledger:
                 elif side == Side.SHORT:
                     perp_unrealized += (pos.entry_price - mark) * pos.qty
                 # Side.NONE should not appear for PERP, but if it does: skip
+
+        for coin, wallet_qty in (spot_balances_by_coin or {}).items():
+            residual = wallet_qty - open_spot_qty.get(coin, 0.0)
+            if residual <= 0:
+                continue
+            if spot_mids_by_coin is not None and coin in spot_mids_by_coin:
+                price = spot_mids_by_coin[coin]
+            elif coin in quotes:
+                price = quotes[coin].spot if quotes[coin].spot is not None else quotes[coin].mark
+            else:
+                continue
+            spot_value += residual * price
 
         return spot_value, perp_unrealized
 

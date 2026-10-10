@@ -63,6 +63,7 @@ def mock_exchange():
     # exercise feed failure override these with a side_effect that raises.
     exc.get_perp_unrealized_by_coin = AsyncMock(return_value={})
     exc.get_spot_mids_by_coin = AsyncMock(return_value={})
+    exc.get_spot_balances_by_coin = AsyncMock(return_value={})
     return exc
 
 
@@ -455,6 +456,50 @@ async def test_minute_tick_skips_equity_snapshot_when_feed_fails(
     skip_events = [e for e in events if e.kind == "equity_snapshot_skipped"]
     assert len(skip_events) == 1
     assert "spot_mids" in skip_events[0].payload_json["failed_feeds"]
+
+
+@pytest.mark.asyncio
+async def test_minute_tick_skips_equity_snapshot_when_spot_balances_fail(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory, event_bus,
+):
+    """A failed wallet-balance read would drop the residual from equity (phantom
+    dip), so the snapshot is skipped like for any other feed."""
+    mock_exchange.get_spot_balances_by_coin = AsyncMock(side_effect=TimeoutError("504"))
+
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        event_bus=event_bus, coins=["BTC", "ETH"],
+    )
+    loop._exchange_id_cache = 1
+    loop._save_prices = AsyncMock()
+
+    async with event_bus.subscribe() as q:
+        await loop._minute_tick(1_700_000_060_000)
+        events = _drain(q)
+
+    mock_ledger.compute_and_save.assert_not_awaited()
+    skip_events = [e for e in events if e.kind == "equity_snapshot_skipped"]
+    assert len(skip_events) == 1
+    assert "spot_balances" in skip_events[0].payload_json["failed_feeds"]
+
+
+@pytest.mark.asyncio
+async def test_minute_tick_passes_spot_balances_to_ledger(
+    mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+):
+    mock_exchange.get_spot_balances_by_coin = AsyncMock(return_value={"HYPE": 0.00987})
+
+    loop = make_loop(
+        mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
+        coins=["BTC", "ETH"],
+    )
+    loop._exchange_id_cache = 1
+    loop._save_prices = AsyncMock()
+
+    await loop._minute_tick(1_700_000_060_000)
+
+    _, kwargs = mock_ledger.compute_and_save.call_args
+    assert kwargs["spot_balances_by_coin"] == {"HYPE": 0.00987}
 
 
 # ─── 6. asyncio.CancelledError propagates ─────────────────────────────────────

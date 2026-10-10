@@ -303,6 +303,15 @@ class EngineLoop:
                 await self._log_error("spot_mids_fetch_failed", exc)
                 failed_feeds.append("spot_mids")
         _mark("spot_mids")
+        spot_balances_by_coin: dict[str, float] | None = None
+        balances_getter = getattr(self._exchange, "get_spot_balances_by_coin", None)
+        if balances_getter is not None:
+            try:
+                spot_balances_by_coin = await balances_getter()
+            except Exception as exc:  # noqa: BLE001
+                await self._log_error("spot_balances_fetch_failed", exc)
+                failed_feeds.append("spot_balances")
+        _mark("spot_balances")
 
         # Equity snapshot must be all-or-nothing: it is computed from quotes +
         # perp/spot feeds, and a *partial* input set silently prices the missing
@@ -337,6 +346,7 @@ class EngineLoop:
             quote_map,
             perp_unrealized_by_coin=perp_unrealized_by_coin,
             spot_mids_by_coin=spot_mids_by_coin,
+            spot_balances_by_coin=spot_balances_by_coin,
         )
         _mark("ledger")
         # TIMING is a stall diagnostic: keep it quiet (DEBUG) on healthy ticks,

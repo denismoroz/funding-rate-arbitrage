@@ -390,3 +390,46 @@ async def test_get_perp_unrealized_no_duplicate_roundtrips(mock_client, symbols)
     await action.get_perp_unrealized_by_coin()
 
     mock_client.user_state.assert_called_once_with("0xabc")
+
+
+# ---------------------------------------------------------------------------
+# get_spot_balances_by_coin
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_spot_balances_by_coin_maps_and_filters(mock_client, symbols):
+    """Registry-mapped tokens come back under canonical names; the quote token,
+    unmapped tokens and zero balances are dropped."""
+    mock_client.spot_user_state.return_value = HLSpotState(balances=[
+        HLSpotBalance(coin="USDC", total=58.9, hold=0.0),
+        HLSpotBalance(coin="UBTC", total=0.00025, hold=0.0),
+        HLSpotBalance(coin="UETH", total=0.0, hold=0.0),
+        HLSpotBalance(coin="MAX", total=3797.4, hold=0.0),
+    ])
+    symbols = HLSymbols(
+        client=mock_client,
+        spot_token_map={"BTC": "UBTC", "ETH": "UETH"},
+        spot_token_inverse={"UBTC": "BTC", "UETH": "ETH"},
+        spot_quote_token="USDC",
+    )
+    action = make_action(mock_client, symbols)
+
+    assert await action.get_spot_balances_by_coin() == {"BTC": pytest.approx(0.00025)}
+
+
+@pytest.mark.asyncio
+async def test_get_spot_balances_by_coin_propagates_failure(mock_client, symbols):
+    """Unlike get_perp_unrealized_by_coin, a failed read must not look like an empty wallet."""
+    mock_client.spot_user_state.side_effect = TimeoutError("504")
+    action = make_action(mock_client, symbols)
+
+    with pytest.raises(TimeoutError):
+        await action.get_spot_balances_by_coin()
+
+
+@pytest.mark.asyncio
+async def test_get_spot_balances_by_coin_no_address_raises(mock_client, symbols):
+    action = make_action(mock_client, symbols, address=None)
+
+    with pytest.raises(RuntimeError):
+        await action.get_spot_balances_by_coin()

@@ -757,3 +757,102 @@ async def test_perp_unaffected_by_cash_freshness_gate(session_factory, strategy_
     assert snap.perp_unrealized == pytest.approx(-1_000.0)
     # spot_value is 0 (no spot position)
     assert snap.spot_value == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Wallet residual: spot tokens held but not covered by an open position
+# ---------------------------------------------------------------------------
+
+async def test_residual_dust_counted_after_close(session_factory, strategy_id, exchange_id):
+    """Dust left by a floored close sell stays in equity once the position is CLOSED."""
+    await _insert_wallet_snapshot(session_factory, exchange_id, "USDC", balance=100.0)
+    fid = await _insert_farb_position(session_factory, strategy_id, "HYPE", state=FarbState.CLOSED)
+    await _insert_position(
+        session_factory, exchange_id, "HYPE", Instrument.SPOT, Side.LONG,
+        qty=0.19, entry_price=72.9, farb_position_id=fid,
+        status=PositionStatus.CLOSED, closed_at=_NOW_MS,
+    )
+
+    snap = await Ledger(session_factory).compute_equity(
+        strategy_id=strategy_id, quotes={},
+        spot_mids_by_coin={"HYPE": 88.0},
+        spot_balances_by_coin={"HYPE": 0.01},
+    )
+
+    assert snap.spot_value == pytest.approx(0.88)
+    assert snap.total_equity == pytest.approx(100.88)
+
+
+async def test_residual_is_wallet_minus_open_position_qty(session_factory, strategy_id, exchange_id):
+    """Only the part of the wallet balance above the open position's qty is added."""
+    fid = await _insert_farb_position(session_factory, strategy_id, "HYPE")
+    await _insert_position(
+        session_factory, exchange_id, "HYPE", Instrument.SPOT, Side.LONG,
+        qty=0.2, entry_price=83.9, farb_position_id=fid,
+    )
+
+    snap = await Ledger(session_factory).compute_equity(
+        strategy_id=strategy_id,
+        quotes={"HYPE": _quote("HYPE", mark=85.0, spot=85.0)},
+        spot_mids_by_coin={"HYPE": 85.0},
+        spot_balances_by_coin={"HYPE": 0.21},
+    )
+
+    assert snap.spot_value == pytest.approx(0.21 * 85.0)
+
+
+async def test_residual_never_negative(session_factory, strategy_id, exchange_id):
+    """Wallet below the position qty (buy fee taken in token) does not reduce spot_value."""
+    fid = await _insert_farb_position(session_factory, strategy_id, "BTC")
+    await _insert_position(
+        session_factory, exchange_id, "BTC", Instrument.SPOT, Side.LONG,
+        qty=0.00025, entry_price=83_000.0, farb_position_id=fid,
+    )
+
+    snap = await Ledger(session_factory).compute_equity(
+        strategy_id=strategy_id,
+        quotes={"BTC": _quote("BTC", mark=80_000.0, spot=80_000.0)},
+        spot_balances_by_coin={"BTC": 0.000249832},
+    )
+
+    assert snap.spot_value == pytest.approx(0.00025 * 80_000.0)
+
+
+async def test_residual_without_price_is_skipped(session_factory, strategy_id):
+    snap = await Ledger(session_factory).compute_equity(
+        strategy_id=strategy_id, quotes={},
+        spot_mids_by_coin={},
+        spot_balances_by_coin={"SOL": 0.0097},
+    )
+
+    assert snap.spot_value == pytest.approx(0.0)
+
+
+async def test_residual_falls_back_to_quote_price(session_factory, strategy_id):
+    snap = await Ledger(session_factory).compute_equity(
+        strategy_id=strategy_id,
+        quotes={"SOL": _quote("SOL", mark=90.0, spot=None)},
+        spot_balances_by_coin={"SOL": 0.01},
+    )
+
+    assert snap.spot_value == pytest.approx(0.9)
+
+
+async def test_residual_excludes_gated_fresh_position(session_factory, strategy_id, exchange_id):
+    """A just-bought leg is gated while cash is stale; its tokens must not come
+    back in through the residual (that would double-count the USDC spent)."""
+    await _insert_wallet_snapshot(session_factory, exchange_id, "USDC", balance=1000.0, ts_ms=_CASH_TS)
+    fid = await _insert_farb_position(session_factory, strategy_id, "BTC")
+    await _insert_position(
+        session_factory, exchange_id, "BTC", Instrument.SPOT, Side.LONG,
+        qty=1.0, entry_price=50_000.0, farb_position_id=fid,
+        opened_at=_POS_FRESH,
+    )
+
+    snap = await Ledger(session_factory).compute_equity(
+        strategy_id=strategy_id,
+        quotes={"BTC": _quote("BTC", mark=50_000.0, spot=50_000.0)},
+        spot_balances_by_coin={"BTC": 1.0},
+    )
+
+    assert snap.total_equity == pytest.approx(1000.0)
