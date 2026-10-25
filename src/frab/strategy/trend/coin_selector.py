@@ -5,7 +5,7 @@ Two rules, both mirroring q-lab's `qlab.strategies.live.trend` (`_top_k_by_marke
 
 * top-K by MARKET CAP, stablecoins excluded. Market caps come from CoinGecko's keyless
   `/coins/markets` (the live source); q-lab used CoinMarketCap weekly snapshots. The two sources can
-  disagree on ranks and on symbols (KNOWN DIFFERENCE, see deploy/README_trend_retune.md). The ranking is
+  disagree on ranks and on symbols (KNOWN DIFFERENCE, see README.md, «Trend с недельной перенастройкой»). The ranking is
   refreshed once per ISO week, like q-lab's weekly snapshots, and held for the week; the history gate is
   applied every day.
 * top-K by traded VOLUME: trailing 24h USD volume of Hyperliquid's own daily candles, taken from the
