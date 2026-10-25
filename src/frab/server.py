@@ -374,11 +374,19 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
 
         from frab.engine.margin_manager import MarginManager
         from frab.engine.margin_watchdog import MarginWatchdog
+        from frab.strategy.two_phase.close_gate import CloseGate
 
         margin_mgr = MarginManager(
             top_up_trigger=settings.top_up_trigger,
             forced_close_trigger=settings.forced_close_trigger,
             healthy_ratio=settings.healthy_ratio,
+        )
+        # The pre-close check every FRAB exit goes through (hourly exits, the margin
+        # watchdog, the UI/API Close buttons): nothing is closed unless the whole
+        # position can be closed within HL's limits.
+        close_gate = CloseGate(
+            exchange=exchange, farb_repo=farb_repo,
+            session_factory=session_factory, event_bus=bus,
         )
         margin_watchdog = MarginWatchdog(
             strategy_id=strategy_id,
@@ -387,6 +395,7 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
             margin_manager=margin_mgr,
             settings=registry_settings,
             event_bus=bus,
+            close_gate=close_gate,
         )
 
         strategy = TwoPhaseStrategy(
@@ -399,6 +408,7 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
             event_bus=bus,
             margin_watchdog=margin_watchdog,
             registry=registry,
+            close_gate=close_gate,
         )
 
         # ── local_mode: pause ALL strategies before any loop starts ─────────
@@ -570,6 +580,7 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         app.state.farb_repo = farb_repo
         app.state.ledger = ledger
         app.state.strategy = strategy
+        app.state.close_gate = close_gate
         app.state.engine_loop = engine_loop
         app.state.margin_watchdog = margin_watchdog
 

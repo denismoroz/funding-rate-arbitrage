@@ -25,6 +25,7 @@ from frab.repo.farb_repo import FarbRepo, StateConflict
 from frab.settings import Settings
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.params import TwoPhaseParams
+from frab.strategy.two_phase.close_gate import CloseBlocked, CloseGate
 from frab.strategy.two_phase.states._helpers import publish_event
 from frab.strategy.two_phase.state_machine import StateMachine
 from frab.strategy.two_phase.states import STATE_CLASSES, StrategyContext
@@ -70,8 +71,11 @@ class TwoPhaseStrategy:
         event_bus: EventBus | None = None,
         margin_watchdog: MarginWatchdog | None = None,
         registry: CoinRegistry | None = None,
+        close_gate: CloseGate | None = None,
     ) -> None:
         self.strategy_id = strategy_id
+        # The pre-close check every exit goes through; None = unchecked (unit tests).
+        self.close_gate = close_gate
         self.exchange = exchange
         self.farb_repo = farb_repo
         self._sf = session_factory
@@ -112,6 +116,7 @@ class TwoPhaseStrategy:
             params=params,
             signal_computer=signal_computer,
             settings=self._settings,
+            close_gate=self.close_gate,
         )
         self._funding_accrual = FundingAccrual(
             strategy_id=self.strategy_id,
@@ -133,6 +138,7 @@ class TwoPhaseStrategy:
             session_factory=self._sf,
             settings=self._settings,
             event_bus=self._bus,
+            close_gate=self.close_gate,
         )
         self._state_machine = StateMachine({cls.state: cls(ctx) for cls in STATE_CLASSES})
 
@@ -208,6 +214,13 @@ class TwoPhaseStrategy:
                     "state_conflict farb_position_id=%s: %s — skipping tick",
                     current.id,
                     exc,
+                )
+                break
+            except CloseBlocked as exc:
+                # The gate recorded and announced it; the position stays as it was.
+                _pkg.logger.info(
+                    "close blocked farb_position_id=%s state=%s: %s",
+                    current.id, current.state.value, exc,
                 )
                 break
             except Exception as exc:  # noqa: BLE001

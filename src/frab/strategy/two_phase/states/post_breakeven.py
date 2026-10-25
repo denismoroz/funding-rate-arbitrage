@@ -6,6 +6,7 @@ from datetime import datetime
 from frab.domain import FarbPosition, FarbState
 from frab.engine.two_phase_signals import TwoPhaseDecision, decide_post_breakeven, update_consec_negative
 from frab.repo.farb_repo import FarbRepo, StateConflict
+from frab.strategy.two_phase.close_gate import CloseGate
 from frab.settings import Settings
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.params import TwoPhaseParams
@@ -37,7 +38,9 @@ class PostBreakevenHandler:
         params: TwoPhaseParams,
         signal_computer: SignalComputer,
         settings: Settings,
+        close_gate: CloseGate | None = None,
     ) -> None:
+        self._close_gate = close_gate
         self._strategy_id = strategy_id
         self._farb_repo = farb_repo
         self._params = params
@@ -84,13 +87,22 @@ class PostBreakevenHandler:
         )
 
         if decision != TwoPhaseDecision.NONE:
+            exit_sd = updated_sd
+            if self._close_gate is not None:
+                # Close nothing unless the whole position can be closed within HL's limits.
+                admitted = await self._close_gate.admit(
+                    fp, decision=decision.value, state_data=updated_sd, now_ms=now_ms,
+                )
+                if not admitted.ok:
+                    return
+                exit_sd = admitted.state_data
             try:
                 await self._farb_repo.transition(
                     fp.id,
                     from_state=FarbState.POST_BREAKEVEN,
                     to_state=FarbState.CLOSING_SHORT,
                     state_data={
-                        **updated_sd,
+                        **exit_sd,
                         "exit_signal_apr": signal,
                         "exit_decision": decision.value,
                     },
@@ -107,5 +119,10 @@ class PostBreakevenHandler:
                     fp.id,
                 )
         else:
+            if self._close_gate is not None:
+                # No longer needs to exit: lift a close block left by an earlier hour.
+                updated_sd = await self._close_gate.release(
+                    fp, state_data=updated_sd, now_ms=now_ms,
+                )
             # Checkpoint updated counters without changing state
             await self._farb_repo.update_state_data(fp.id, updated_sd)

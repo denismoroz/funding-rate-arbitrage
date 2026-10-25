@@ -47,7 +47,9 @@ class MarginWatchdog:
         margin_manager: MarginManager,
         settings: Settings,
         event_bus: EventBus,
+        close_gate=None,  # CloseGate | None; typed loosely to avoid a cycle
     ) -> None:
+        self._close_gate = close_gate
         self._strategy_id = strategy_id
         self._exchange = exchange
         self._farb_repo = farb_repo
@@ -78,8 +80,20 @@ class MarginWatchdog:
                 )
             else:
                 try:
+                    base_state_data = fp.state_data
+                    if self._close_gate is not None:
+                        # Not pending: the watchdog asks again every hour while the margin
+                        # is bad, and a recovered account must not leave an exit queued.
+                        admitted = await self._close_gate.admit(
+                            fp, decision="watchdog_forced", state_data=fp.state_data,
+                            now_ms=now_ms,
+                        )
+                        if not admitted.ok:
+                            actions.append(f"close_blocked:fp={weakest_fp_id}")
+                            return WatchdogReport(assessment=assessment, actions_taken=actions)
+                        base_state_data = admitted.state_data
                     merged_state_data = {
-                        **fp.state_data,
+                        **base_state_data,
                         "exit_decision": "watchdog_forced",
                         "exit_requested_at_ms": now_ms,
                     }

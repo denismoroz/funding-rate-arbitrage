@@ -14,6 +14,14 @@ from frab.repo.farb_repo import FarbRepo
 from frab.settings import Settings
 from frab.strategy.two_phase.params import TwoPhaseParams
 
+if TYPE_CHECKING:
+    from frab.strategy.two_phase.close_gate import CloseGate
+
+
+class CloseBlocked(Exception):
+    """Raised by a closing state that found the position cannot be closed right now.
+    Nothing was closed; the advance loop stops stepping this position until the next tick."""
+
 
 @dataclass(frozen=True)
 class StrategyContext:
@@ -24,6 +32,7 @@ class StrategyContext:
     session_factory: async_sessionmaker[AsyncSession]
     settings: Settings
     event_bus: EventBus | None = None
+    close_gate: "CloseGate | None" = None
 
 
 class State(ABC):
