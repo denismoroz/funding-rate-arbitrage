@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchFarbPositions, isActiveState, farbStateLabel } from "../lib/api";
+import { closeBlockedLine } from "../lib/closeBlock";
 import { formatRelative } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
@@ -58,14 +59,26 @@ export function ActiveFarbPositions() {
       </h2>
       <div className="space-y-1">
         {inflight.map((p) => (
-          <div key={p.id} className="flex items-center gap-3 text-xs">
-            <span className="font-medium text-gray-800 w-12">{p.coin}</span>
-            <span className={`font-mono font-semibold ${STATE_COLOR[p.state] ?? "text-gray-600"}`}>
-              {farbStateLabel(p.state)}
-            </span>
-            <span className="text-gray-500">
-              {formatRelative(p.opened_at_ms, now)}
-            </span>
+          <div key={p.id}>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="font-medium text-gray-800 w-12">{p.coin}</span>
+              <span className={`font-mono font-semibold ${STATE_COLOR[p.state] ?? "text-gray-600"}`}>
+                {farbStateLabel(p.state)}
+              </span>
+              <span className="text-gray-500">
+                {formatRelative(p.opened_at_ms, now)}
+              </span>
+              {p.close_blocked && (
+                <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">
+                  can't close
+                </span>
+              )}
+            </div>
+            {p.close_blocked && (
+              <div role="alert" className="mt-0.5 rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-700">
+                {closeBlockedLine(p)}
+              </div>
+            )}
           </div>
         ))}
       </div>

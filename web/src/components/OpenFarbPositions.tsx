@@ -24,6 +24,7 @@ import {
   type MarginStatus,
 } from "../lib/api";
 import { formatCurrency, formatCurrencyPrecise, formatQty, formatRelative, formatNumber, formatHoursAsDH } from "../lib/format";
+import { closeBlockedLine } from "../lib/closeBlock";
 import { useNow } from "../lib/useNow";
 import { useActiveStrategyId } from "../lib/useActiveStrategyId";
 import { Skeleton } from "./ui/Skeleton";
@@ -213,7 +214,10 @@ function FarbPositionCard({
 
   const closeMutation = useMutation({
     mutationFn: () => closeFarbPosition(p.id),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      if (result.blocked) {
+        alert(`${p.coin} #${p.id} не закрыта: can't close — ${result.reason ?? "cannot be closed within the venue's limits"}.\nПозиция остаётся захеджированной; закроется сама, как только это станет возможно.`);
+      }
       queryClient.invalidateQueries({ queryKey: ["farb-positions-open", strategyId] });
       queryClient.invalidateQueries({ queryKey: ["farb-positions-active", strategyId] });
       queryClient.invalidateQueries({ queryKey: ["equity-summary"] });
@@ -253,15 +257,25 @@ function FarbPositionCard({
           ? "text-red-500"
           : "text-gray-400";
 
-  const spotValue =
+  // "At entry" = qty x entry price (what the leg was worth when opened).
+  // "Value now" = the backend's value at LIVE prices (spot mid / HL notional at the mark);
+  // null (shown as "—") when a live price is unavailable — never the entry value in disguise.
+  const spotEntryValue =
     p.legs.spot ? p.legs.spot.qty * p.legs.spot.entry_price : null;
-  const perpValue =
+  const perpEntryValue =
     p.legs.perp ? p.legs.perp.qty * p.legs.perp.entry_price : null;
+  const spotValueNow = p.spot_value_usdc;
+  const perpValueNow = p.perp_value_usdc;
   const collateralValue =
     p.legs.collateral ? p.legs.collateral.qty : null;
+  const blockedLine = closeBlockedLine(p);
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+    <div
+      className={`rounded-lg border bg-white shadow-sm ${
+        p.close_blocked ? "border-red-400 ring-1 ring-red-300" : "border-gray-200"
+      }`}
+    >
       {/* ── Header strip — always visible, click to expand ─── */}
       <div
         className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-lg cursor-pointer hover:bg-gray-50"
@@ -275,6 +289,14 @@ function FarbPositionCard({
         {/* coin + state + held + leverage */}
         <span className="font-semibold text-gray-900 text-sm">{p.coin}</span>
         <StateBadge state={p.state} />
+        {p.close_blocked && (
+          <span
+            className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white"
+            title={blockedLine ?? undefined}
+          >
+            can't close
+          </span>
+        )}
         <span className="text-xs text-gray-500">
           {p.hours_held != null ? `${formatNumber(p.hours_held, 1)}h` : "—"}
           <span className="ml-1 text-gray-400 text-[10px]">
@@ -345,6 +367,22 @@ function FarbPositionCard({
         )}
       </div>
 
+      {/* ── Close blocked — visible without expanding ───────────── */}
+      {blockedLine && (
+        <div
+          role="alert"
+          className="border-t border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700"
+        >
+          {blockedLine}
+          {p.close_blocked_since_ms != null && (
+            <span className="ml-2 font-normal text-red-500">
+              (since {formatRelative(p.close_blocked_since_ms, now)}; the position stays hedged
+              and closes by itself once it can)
+            </span>
+          )}
+        </div>
+      )}
+
       {/* ── Expanded: APR sub-line + leg table ───────────────── */}
       {expanded && (
         <div className="border-t border-gray-100 px-3 py-2">
@@ -401,7 +439,8 @@ function FarbPositionCard({
                 <th className="pb-1 pr-3 font-medium">Leg</th>
                 <th className="pb-1 pr-3 text-right font-medium">Qty</th>
                 <th className="pb-1 pr-3 text-right font-medium">Entry</th>
-                <th className="pb-1 pr-3 text-right font-medium">Value</th>
+                <th className="pb-1 pr-3 text-right font-medium" title="qty x entry price">At entry</th>
+                <th className="pb-1 pr-3 text-right font-medium" title="at live prices: spot mid / exchange notional at the mark">Value now</th>
                 <th className="pb-1 pr-3 text-right font-medium">PnL</th>
                 <th className="pb-1 font-medium">Notes</th>
               </tr>
@@ -419,8 +458,11 @@ function FarbPositionCard({
                 <td className="py-0.5 pr-3 text-right text-gray-500">
                   {p.legs.spot ? formatCurrency(p.legs.spot.entry_price) : "—"}
                 </td>
+                <td className="py-0.5 pr-3 text-right text-gray-400">
+                  {spotEntryValue != null ? formatCurrency(spotEntryValue) : "—"}
+                </td>
                 <td className="py-0.5 pr-3 text-right text-gray-700">
-                  {spotValue != null ? formatCurrency(spotValue) : "—"}
+                  {spotValueNow != null ? formatCurrency(spotValueNow) : "—"}
                 </td>
                 <td className="py-0.5 pr-3 text-right font-mono">
                   {p.spot_unrealized_pnl_usdc != null ? (
@@ -446,8 +488,11 @@ function FarbPositionCard({
                 <td className="py-0.5 pr-3 text-right text-gray-500">
                   {p.legs.perp ? formatCurrency(p.legs.perp.entry_price) : "—"}
                 </td>
+                <td className="py-0.5 pr-3 text-right text-gray-400">
+                  {perpEntryValue != null ? formatCurrency(perpEntryValue) : "—"}
+                </td>
                 <td className="py-0.5 pr-3 text-right text-gray-700">
-                  {perpValue != null ? formatCurrency(perpValue) : "—"}
+                  {perpValueNow != null ? formatCurrency(perpValueNow) : "—"}
                 </td>
                 <td className="py-0.5 pr-3 text-right font-mono">
                   {p.perp_unrealized_pnl_usdc != null ? (
@@ -463,7 +508,9 @@ function FarbPositionCard({
                     <span className="mr-2">leverage {leverage}×</span>
                   )}
                   {p.locked_margin_usdc > 0 && (
-                    <span>locked {formatCurrency(p.locked_margin_usdc)}</span>
+                    <span title="margin the exchange currently holds for this perp">
+                      locked (exchange margin used) {formatCurrency(p.locked_margin_usdc)}
+                    </span>
                   )}
                 </td>
               </tr>
@@ -478,11 +525,17 @@ function FarbPositionCard({
                   {p.legs.collateral ? formatCurrency(p.legs.collateral.qty) : "—"}
                 </td>
                 <td className="py-0.5 pr-3 text-right text-gray-400">$1.00</td>
+                <td className="py-0.5 pr-3 text-right text-gray-400">
+                  {collateralValue != null ? formatCurrency(collateralValue) : "—"}
+                </td>
                 <td className="py-0.5 pr-3 text-right text-gray-700">
                   {collateralValue != null ? formatCurrency(collateralValue) : "—"}
                 </td>
                 <td className="py-0.5 pr-3 text-right text-gray-400">—</td>
-                <td className="py-0.5 text-gray-400 text-[11px]">reserved buffer</td>
+                <td className="py-0.5 text-gray-400 text-[11px]">
+                  reserved buffer: the amount set aside for this position
+                  (the exchange's live margin used is "locked" on the perp row)
+                </td>
               </tr>
             </tbody>
           </table>
@@ -534,6 +587,10 @@ export function OpenFarbPositions() {
       if (result.failed.length > 0) {
         const lines = result.failed.map((f) => `${f.coin} #${f.id}: ${f.reason}`).join("\n");
         alert(`Не удалось закрыть:\n${lines}`);
+      }
+      if (result.blocked && result.blocked.length > 0) {
+        const lines = result.blocked.map((b) => `${b.coin} #${b.id}: can't close — ${b.reason}`).join("\n");
+        alert(`Не закрыты (остаются захеджированными, закроются сами, когда станет возможно):\n${lines}`);
       }
     },
   });

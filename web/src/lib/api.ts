@@ -167,6 +167,25 @@ export type FarbPosition = {
   locked_margin_usdc: number;
   leverage: number | null;
   capital_usdc: number;
+  /** CURRENT leg values at live prices; null when a live price is unavailable. */
+  spot_value_usdc: number | null;
+  perp_value_usdc: number | null;
+  /** The position needs to exit but cannot be closed within HL's limits (nothing was closed). */
+  close_blocked: boolean;
+  close_blocked_wanted: string | null;
+  close_blocked_reason: string | null;
+  close_blocked_since_ms: number | null;
+  close_blocked_check: CloseBlockedCheck | null;
+};
+
+export type CloseBlockedCheck = {
+  spot_qty: number;
+  spot_price: number;
+  spot_notional_usdc: number;
+  spot_min_notional_usdc: number;
+  wallet_qty: number;
+  reserved_qty: number;
+  lot: number;
 };
 
 export type FundingRate = {
@@ -190,7 +209,7 @@ export type Event = {
 };
 
 export type Alert = {
-  type: "failed_position" | "event";
+  type: "failed_position" | "event" | "close_blocked";
   severity: "WARNING" | "ERROR";
   ts: string;
   coin: string | null;
@@ -354,7 +373,15 @@ export function resumeStrategy(id: number): Promise<StrategyStatusResponse> {
   return apiPost<StrategyStatusResponse>(`/strategies/${id}/resume`);
 }
 
-export type CloseFpResponse = { id: number; coin: string; new_state: string; ts_ms: number };
+export type CloseFpResponse = {
+  id: number;
+  coin: string;
+  new_state: string;
+  ts_ms: number;
+  /** true: nothing was closed, the position cannot be closed within HL's limits (see reason). */
+  blocked?: boolean;
+  reason?: string;
+};
 export function closeFarbPosition(id: number): Promise<CloseFpResponse> {
   return apiPost<CloseFpResponse>(`/farb-positions/${id}/close`);
 }
@@ -362,6 +389,7 @@ export function closeFarbPosition(id: number): Promise<CloseFpResponse> {
 export type CloseAllResponse = {
   closed_ids: number[];
   failed: { id: number; coin: string; reason: string }[];
+  blocked: { id: number; coin: string; reason: string }[];
   ts_ms: number;
 };
 export function closeAllFarbPositions(strategyId: number): Promise<CloseAllResponse> {
