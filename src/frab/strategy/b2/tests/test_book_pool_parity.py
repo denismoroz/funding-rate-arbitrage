@@ -16,7 +16,14 @@ import pytest
 
 from frab.strategy.b2.book import CoinBook
 from frab.strategy.b2.params import B2Params
-from frab.strategy.b2.tests._replay import FIXTURES, VARIANTS, load_history, replay, variant_params
+from frab.strategy.b2.tests._replay import (
+    FIXTURES,
+    VARIANTS,
+    load_history,
+    replay,
+    replay_retune,
+    variant_params,
+)
 
 GOLDEN = json.loads((FIXTURES / "golden_book_digests.json").read_text())
 SHAPES = json.loads((FIXTURES / "golden_shapes.json").read_text())
@@ -48,6 +55,15 @@ def test_new_params_stated_at_their_defaults_change_nothing(key):
     params = B2Params(coins=(coin,), capital_usd=64.25, shared_margin=False, topup_delay_hours=0,
                       **VARIANTS[name])
     assert replay(coin, params, load_history(coin)) == GOLDEN[key]
+
+
+def test_the_retuned_book_replays_to_the_digest_recorded_before_the_change():
+    """`b2_retune` runs two candidates of the plain book and switches monthly; recorded from the
+    main checkout before this branch existed: 10 refits, 13 switch fills, 60 hedge cycles."""
+    golden = json.loads((FIXTURES / "golden_retune_digest.json").read_text())
+    got = replay_retune()
+    assert got == golden
+    assert got["kinds"]["retune"] == 10 and got["kinds"]["retune_switch"] == 13
 
 
 def test_the_replays_cover_what_the_parity_claims_to_cover():

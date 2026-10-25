@@ -84,3 +84,34 @@ VARIANTS: dict[str, dict] = {
 
 def variant_params(coin: str, name: str) -> B2Params:
     return B2Params(coins=(coin,), capital_usd=64.25, **VARIANTS[name])
+
+
+def replay_retune(coins: tuple[str, ...] = ("BTC", "SOL", "DOGE"), n_bars: int = 8000) -> dict:
+    """The monthly re-tuned book (`b2_retune`, retune.advance) over the stored histories: every bar's
+    published fills, equity rows and per-coin views, and the final state, reduced to one digest."""
+    from frab.strategy.b2.retune import RetuneState, advance
+    from frab.strategy.b2.retune_history import CoinSeries
+    from frab.strategy.b2.retune_params import B2RetuneParams, iso_to_ms, ms_to_iso
+
+    origin = iso_to_ms("2023-06-01T00:00:00Z")
+    series = {}
+    for coin in coins:
+        closes, highs, rates = load_history(coin)
+        series[coin] = CoinSeries(coin, origin, closes[:n_bars], highs[:n_bars], rates[:n_bars])
+    started = ms_to_iso(origin + (HISTORY_BARS + WARMUP_BARS) * HOUR_MS)
+    params = B2RetuneParams(
+        base=B2Params(coins=coins, capital_usd=257.0, carry_enabled=False),
+        history_start=ms_to_iso(origin), coin_starts={c: started for c in coins})
+    params.validate()
+    state = RetuneState.new(params)
+    digest = hashlib.sha256()
+    kinds: Counter = Counter()
+    for k in range(n_bars):
+        out = advance(state, params, series, origin + k * HOUR_MS)
+        for e in out.events:
+            kinds[e["kind"]] += 1
+        digest.update(json.dumps(
+            [out.bar_ms, out.events, out.equity_rows, {c: v.to_state() for c, v in out.views.items()}],
+            sort_keys=True, default=str).encode())
+    digest.update(json.dumps(state.to_dict(), sort_keys=True, default=str).encode())
+    return {"digest": digest.hexdigest(), "kinds": dict(sorted(kinds.items())), "bars": n_bars}

@@ -1,0 +1,12 @@
+{
+ "bars": 8000,
+ "digest": "ce1791eeac84eaf893101f17334e287fd63525d37b6e0e0cba58f7585c027c96",
+ "kinds": {
+  "hedge_close": 60,
+  "hedge_open": 60,
+  "ratchet_sell": 9,
+  "refill_buy": 1,
+  "retune": 10,
+  "retune_switch": 13
+ }
+}
