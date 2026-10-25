@@ -799,7 +799,7 @@ export type TrendEvent = {
 
 // Trend books: the original paper `trend` (default) and the weekly re-tuned
 // `trend_retune_*` books, selected with ?variant= (frab.api.routes.trend).
-export const TREND_VARIANTS = ["trend", "trend_retune_3k", "trend_retune_10k"] as const;
+export const TREND_VARIANTS = ["trend", "trend_retune_3k", "trend_retune_10k"] as const;  // "trend": the old hand-picked book, API only
 export type TrendVariant = (typeof TREND_VARIANTS)[number];
 
 function variantQuery(variant: TrendVariant, sep: "?" | "&"): string {

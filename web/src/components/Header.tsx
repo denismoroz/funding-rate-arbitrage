@@ -22,7 +22,8 @@ export type Route =
   | "xsmom-settings"
   | "b2"
   | "b2-cold"
-  | "trend";
+  | "trend"
+  | "trend-10k";
 
 type Section = "frab" | "xsmom" | "b2" | "trend";
 
@@ -33,7 +34,7 @@ const WS_DOT: Record<WsStatus, string> = {
 };
 
 function sectionOf(route: Route): Section {
-  if (route === "trend") return "trend";
+  if (route === "trend" || route === "trend-10k") return "trend";
   if (route === "b2" || route === "b2-cold") return "b2";
   return route.startsWith("xsmom") ? "xsmom" : "frab";
 }
@@ -58,7 +59,11 @@ const B2_TABS: SubTab[] = [
   { label: "Cold wallet: spot + hedge", href: "#/b2/cold", match: "b2-cold" },
 ];
 
-const TREND_TABS: SubTab[] = [{ label: "Book", href: "#/trend", match: "trend" }];
+// The weekly re-tuned trend books (coins chosen by code), the same book at two sizes.
+const TREND_TABS: SubTab[] = [
+  { label: "$3k: coins chosen weekly", href: "#/trend", match: "trend" },
+  { label: "$10k: coins chosen weekly", href: "#/trend/10k", match: "trend-10k" },
+];
 
 // ── presentational on/off switch ──────────────────────────────────────────────
 
@@ -243,7 +248,7 @@ export function Header({ wsStatus, route }: { wsStatus: WsStatus; route: Route }
         <span className="ml-auto">
           {section === "xsmom" ? (
             <XsmomToggle />
-          ) : section === "b2" ? (
+          ) : section === "b2" || section === "trend" ? (
             <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">PAPER</span>
           ) : (
             <FrabToggle />

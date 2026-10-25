@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Header } from "../components/Header";
@@ -8,7 +8,6 @@ import {
   fetchTrendSummary,
   type TrendPosition,
   type TrendSummary,
-  TREND_VARIANTS,
   type TrendVariant,
 } from "../lib/api";
 import { formatCurrency } from "../lib/format";
@@ -176,14 +175,7 @@ function PositionRow({ p, equity }: { p: TrendPosition; equity: number }) {
   );
 }
 
-const VARIANT_LABEL: Record<TrendVariant, string> = {
-  trend: "Trend (hand-picked coins)",
-  trend_retune_3k: "Retune · $3k",
-  trend_retune_10k: "Retune · $10k",
-};
-
-export default function Trend() {
-  const [variant, setVariant] = useState<TrendVariant>("trend");
+export default function Trend({ variant, route }: { variant: TrendVariant; route: "trend" | "trend-10k" }) {
   const summary = useQuery({ queryKey: ["trend-summary", variant], queryFn: () => fetchTrendSummary(variant), refetchInterval: 60_000 });
   const equity = useQuery({ queryKey: ["trend-equity", variant], queryFn: () => fetchTrendEquity(variant), refetchInterval: 60_000 });
   const events = useQuery({ queryKey: ["trend-events", variant], queryFn: () => fetchTrendEvents(200, variant), refetchInterval: 60_000 });
@@ -201,22 +193,8 @@ export default function Trend() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header wsStatus="closed" route="trend" />
+      <Header wsStatus="closed" route={route} />
       <main className="mx-auto max-w-6xl space-y-4 p-4">
-        <div className="flex flex-wrap gap-2">
-          {TREND_VARIANTS.map((v) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => setVariant(v)}
-              className={`rounded-md border px-3 py-1 text-sm ${
-                v === variant ? "border-blue-600 bg-blue-600 text-white" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-              }`}
-            >
-              {VARIANT_LABEL[v]}
-            </button>
-          ))}
-        </div>
         {retune && (
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
             Weekly re-tune: chosen <b>{String(retune.chosen ?? "—")}</b>
@@ -229,14 +207,17 @@ export default function Trend() {
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-lg font-semibold text-gray-900">Trend · paper test</h1>
+              <h1 className="text-lg font-semibold text-gray-900">
+                Trend · paper test · {variant === "trend_retune_10k" ? "$10k" : "$3k"} book
+              </h1>
               <p className="text-sm text-gray-500">
-                Long the coins that are trending up, short the ones trending down, on HL perps. Paper only — no orders.
+                Long the coins that are trending up, short the ones trending down, on HL perps. Every week the code
+                picks the coin list (25 largest by market cap or by volume) and the lookbacks from the past only.
+                Paper only — no orders.
               </p>
               <p className="mt-1 text-xs text-gray-400">
-                Backtest 2020–2026 on HL-listed coins, sized to a 14%/yr book volatility: about +15%/yr with a 13%
-                worst drawdown; uncorrelated with FRAB and with B v2 (research/trend_following/FINDINGS.md,
-                risk_shaping.py).
+                q-lab stand (trend-retune-weekly): +5.3%/yr, Sharpe 0.69 over 503 days of forward test, needs ~$8k so
+                every adjustment clears the $10 minimum order — the $3k book shows what the smaller size costs.
               </p>
             </div>
             <div className="text-right text-xs text-gray-400">
