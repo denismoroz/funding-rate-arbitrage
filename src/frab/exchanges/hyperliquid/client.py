@@ -204,19 +204,21 @@ class HLClient:
 
         return HLSpotMeta(tokens=token_by_idx, pairs=pairs)
 
-    async def funding_history(self, coin: str, since_ms: int) -> list[HLFundingRecord]:
-        """Fetch paginated funding history for coin since since_ms.
+    async def funding_history(self, coin: str, since_ms: int, *, end_ms: int | None = None,
+                              page_pause_s: float = 0.0) -> list[HLFundingRecord]:
+        """Fetch paginated funding history for coin since since_ms (up to end_ms when given).
 
-        Paginates until batch size < 500, sorts by ts_ms before returning.
+        Paginates until batch size < 500, sorts by ts_ms before returning. A long history is many pages
+        (a year of hourly records is 18): `page_pause_s` sleeps between them so a backfill stays polite,
+        `end_ms` stops it at the last record it needs.
         """
         records: list[HLFundingRecord] = []
         start = since_ms
         while True:
-            batch: list[dict] = await self._post({
-                "type": "fundingHistory",
-                "coin": coin,
-                "startTime": start,
-            })
+            body = {"type": "fundingHistory", "coin": coin, "startTime": start}
+            if end_ms is not None:
+                body["endTime"] = end_ms
+            batch: list[dict] = await self._post(body)
             for rec in batch:
                 records.append(HLFundingRecord(
                     coin=coin,
@@ -227,6 +229,8 @@ class HLClient:
             if len(batch) < 500:
                 break
             start = int(batch[-1]["time"]) + 1
+            if page_pause_s:
+                await asyncio.sleep(page_pause_s)
         records.sort(key=lambda r: r.ts_ms)
         return records
 

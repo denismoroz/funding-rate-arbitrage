@@ -1,0 +1,65 @@
+{
+  "capital_usd": 3000.0,
+  "vol_window": 30,
+  "vol_target_daily": 0.02,
+  "leverage_cap": 3.0,
+  "risk_scale": 0.2,
+  "book_vol_target_ann": 0.14,
+  "book_vol_window_days": 60,
+  "book_vol_min_days": 20,
+  "book_vol_scale_min": 0.25,
+  "book_vol_scale_max": 2.0,
+  "book_vol_prior_ann": 0.3,
+  "min_history_days": 151,
+  "slippage": 0.0005,
+  "min_order_usd": 10.0,
+  "rebalance_hour_utc": 0,
+  "maint_margin_rate": {
+    "BTC": 0.0125,
+    "ETH": 0.02,
+    "SOL": 0.025
+  },
+  "default_maint_margin_rate": 0.05,
+  "mode": "paper",
+  "top_k_by_market_cap": 25,
+  "top_k_by_volume": 25,
+  "top_k_requires_history": true,
+  "lookback_sets": {
+    "ens": [
+      30,
+      60,
+      90,
+      120
+    ],
+    "l30": [
+      30
+    ],
+    "l60": [
+      60
+    ],
+    "l90": [
+      90
+    ],
+    "l120": [
+      120
+    ]
+  },
+  "universe_rules": [
+    "cap",
+    "volume"
+  ],
+  "score_taker_fee_bps": 3.5,
+  "score_slippage_bps": 0.9,
+  "objective": "sharpe_net",
+  "market_cap_rank_limit": 200,
+  "selection_max_age_hours": 12.0,
+  "coingecko_base_url": "https://api.coingecko.com/api/v3",
+  "daily_fetch_pause_s": 0.6,
+  "backfill": true,
+  "backfill_start": "2025-01-01",
+  "cap_history_path": "deploy/trend_retune_cap_history.json",
+  "backfill_cache_dir": "data/trend_retune_cache",
+  "backfill_candle_pause_s": 2.0,
+  "backfill_funding_page_pause_s": 2.7,
+  "cap_history_max_age_days": 21.0
+}

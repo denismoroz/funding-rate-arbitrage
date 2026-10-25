@@ -1,6 +1,8 @@
 """Unit tests for HLClient (transport + typed wire layer)."""
 from __future__ import annotations
 
+import json
+
 import pytest
 import httpx
 import respx
@@ -313,6 +315,39 @@ async def test_funding_history_paginates(mocker, make_client):
     assert len(records) == 700
     assert records == sorted(records, key=lambda r: r.ts_ms)
     assert isinstance(records[0], HLFundingRecord)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_funding_history_sleeps_between_pages_only_when_asked(mocker, make_client):
+    mocker.patch.object(hl_client_mod, "_WAIT", wait_none())
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    mocker.patch.object(hl_client_mod.asyncio, "sleep", fake_sleep)
+    client = make_client()
+    pages = [[{"coin": "BTC", "time": i + 500 * p, "fundingRate": "0.0001", "premium": "0"} for i in range(500)]
+             for p in range(2)] + [[{"coin": "BTC", "time": 1000, "fundingRate": "0.0001", "premium": "0"}]]
+    bodies: list[dict] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=pages.pop(0))
+
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").mock(side_effect=respond)
+        records = await client.funding_history("BTC", since_ms=0, end_ms=5_000, page_pause_s=2.7)
+    assert len(records) == 1001 and sleeps == [2.7, 2.7]            # between pages, not after the last
+    assert [b["endTime"] for b in bodies] == [5_000] * 3            # every page stops at the last record needed
+
+    pages[:] = [[{"coin": "BTC", "time": 5, "fundingRate": "0.0001", "premium": "0"}]]
+    sleeps.clear()
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").mock(side_effect=respond)
+        await client.funding_history("BTC", since_ms=0)
+    assert sleeps == [] and "endTime" not in bodies[-1]
     await client.aclose()
 
 

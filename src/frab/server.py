@@ -9,6 +9,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -33,10 +34,13 @@ from frab.repo.b2_repo import B2Repo
 from frab.strategy.b2.engine import B2PaperEngine
 from frab.strategy.b2.params import B2Params
 from frab.repo.trend_repo import TrendRepo
+from frab.strategy.trend.cap_history import REPO_ROOT as _REPO_ROOT
+from frab.strategy.trend.cap_history import CapHistory
 from frab.strategy.trend.engine import TrendPaperEngine
 from frab.strategy.trend.params import TrendParams
 from frab.strategy.trend.retune_book import RetuneBook
 from frab.strategy.trend.retune_engine import TrendRetuneEngine
+from frab.strategy.trend.retune_history import HistoryStore
 from frab.strategy.trend.retune_params import RetuneParams
 from frab.strategy.xsmom.strategy import XsmomStrategy
 from frab.strategy.xsmom.protection.margin_watchdog import XsmomMarginWatchdog
@@ -68,7 +72,9 @@ _TREND_STRATEGY_VERSION = "v1-paper"
 # (~30% annual vol) so $1000 of paper capital still clears HL's $10 minimum order per leg.
 _TREND_DEFAULTS = TrendParams()
 # Weekly re-tuned trend (coins chosen by code, validated in q-lab as trend-retune-weekly). Paper only and
-# OPT-IN: the engine starts only when a strategy row with this name exists (see README.md, «Trend с недельной перенастройкой»);
+# OPT-IN: one engine starts for every strategy row whose name STARTS with this (`trend_retune`,
+# `trend_retune_3k`, `trend_retune_10k`, ...), each with its own params (capital), state and events
+# (see README.md, «Trend с недельной перенастройкой»);
 # the server never creates it.
 _TREND_RETUNE_STRATEGY_NAME = "trend_retune"
 
@@ -224,15 +230,30 @@ async def _get_or_create_trend_strategy(session_factory, defaults: TrendParams |
         return row.id
 
 
-async def _find_trend_retune_strategy(session_factory) -> int | None:
-    """Id of the `trend_retune` strategy row, or None when the variant has not been enabled."""
+async def _find_trend_retune_strategies(session_factory) -> list[tuple[str, int, RetuneParams]]:
+    """[(name, id, params)] of every `trend_retune*` strategy row, oldest first; empty when none was added."""
     async with session_scope(session_factory) as s:
-        row = (await s.execute(select(StrategyRow).where(StrategyRow.name == _TREND_RETUNE_STRATEGY_NAME))
-               ).scalar_one_or_none()
-        if row is None:
-            return None
-        RetuneParams.from_dict(dict(row.params_json))   # fail loud on bad params
-        return row.id
+        rows = (await s.execute(select(StrategyRow).order_by(StrategyRow.id))).scalars().all()
+        # bad params fail loud, naming the row
+        found = []
+        for row in rows:
+            if not row.name.startswith(_TREND_RETUNE_STRATEGY_NAME):
+                continue
+            try:
+                found.append((row.name, row.id, RetuneParams.from_dict(dict(row.params_json))))
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"strategy {row.name!r}: invalid trend_retune params: {exc}") from exc
+        return found
+
+
+def _load_cap_history(params: RetuneParams) -> CapHistory | None:
+    """The market-cap history file for the backfill, loaded once and shared by the engines; None when the
+    file is missing (a backfilling engine then reports it on every tick instead of starting empty)."""
+    try:
+        return CapHistory.load(params.cap_history_path)
+    except (OSError, ValueError) as exc:
+        logger.warning("trend_retune: market-cap history %s not loaded (%s)", params.cap_history_path, exc)
+        return None
 
 
 def build_app(*, dry_run: bool = False) -> FastAPI:
@@ -487,18 +508,27 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         app.state.trend_engine = trend_engine
         logger.info("trend paper engine started (strategy_id=%s)", trend_sid)
 
-        retune_sid = await _find_trend_retune_strategy(session_factory)
-        if retune_sid is not None:
-            retune_engine = TrendRetuneEngine(session_factory=session_factory, client=b2_client,
-                                              strategy_id=retune_sid,
-                                              repo=TrendRepo(session_factory, RetuneBook),
-                                              event_bus=bus, tick_delay_s=255.0)
-            await retune_engine.start()
-            app.state.trend_retune_strategy_id = retune_sid
-            app.state.trend_retune_engine = retune_engine
-            logger.info("trend_retune paper engine started (strategy_id=%s)", retune_sid)
+        retune_rows = await _find_trend_retune_strategies(session_factory)
+        app.state.trend_retune_variants = {}
+        if retune_rows:
+            wanted = [p for _, _, p in retune_rows if p.backfill]
+            cap_history = _load_cap_history(wanted[0]) if wanted else None
+            history_store = None
+            if wanted:
+                cache = Path(wanted[0].backfill_cache_dir)
+                history_store = HistoryStore(cache if cache.is_absolute() else _REPO_ROOT / cache,
+                                             candle_pause_s=wanted[0].backfill_candle_pause_s,
+                                             funding_page_pause_s=wanted[0].backfill_funding_page_pause_s)
+            for i, (name, rsid, _) in enumerate(retune_rows):
+                retune_engine = TrendRetuneEngine(
+                    session_factory=session_factory, client=b2_client, strategy_id=rsid,
+                    repo=TrendRepo(session_factory, RetuneBook), event_bus=bus,
+                    tick_delay_s=255.0 + 30.0 * i, cap_history=cap_history, history_store=history_store)
+                await retune_engine.start()
+                app.state.trend_retune_variants[name] = {"strategy_id": rsid, "engine": retune_engine}
+                logger.info("trend_retune paper engine started (variant=%s strategy_id=%s)", name, rsid)
         else:
-            logger.info("trend_retune strategy row not found; the re-tuned trend variant is off")
+            logger.info("no trend_retune* strategy row found; the re-tuned trend variants are off")
 
         # ── Stash on app.state ────────────────────────────────────────────
         app.state.exchange = exchange
@@ -515,8 +545,8 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
                 await b2_engine_state.stop()
             if getattr(app.state, "trend_engine", None) is not None:
                 await app.state.trend_engine.stop()
-            if getattr(app.state, "trend_retune_engine", None) is not None:
-                await app.state.trend_retune_engine.stop()
+            for variant in getattr(app.state, "trend_retune_variants", {}).values():
+                await variant["engine"].stop()
             if getattr(app.state, "b2_client", None) is not None:
                 await app.state.b2_client.aclose()
             # Stop xsmom engine first (if it was built)

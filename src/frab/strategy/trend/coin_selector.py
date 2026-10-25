@@ -7,7 +7,8 @@ Two rules, both mirroring q-lab's `qlab.strategies.live.trend` (`_top_k_by_marke
   `/coins/markets` (the live source); q-lab used CoinMarketCap weekly snapshots. The two sources can
   disagree on ranks and on symbols (KNOWN DIFFERENCE, see README.md, «Trend с недельной перенастройкой»). The ranking is
   refreshed once per ISO week, like q-lab's weekly snapshots, and held for the week; the history gate is
-  applied every day.
+  applied every day. The PAST weeks (the backfill, `cap_history.py`) use q-lab's CoinMarketCap snapshots
+  instead; the first live bar switches to CoinGecko and each week's source is recorded.
 * top-K by traded VOLUME: trailing 24h USD volume of Hyperliquid's own daily candles, taken from the
   candle BEFORE the last closed one (q-lab: `rolling(1 bar).sum().shift(1)`, "strictly before the bar").
   Fully point-in-time: it is a pure function of candles that already existed.
@@ -135,7 +136,9 @@ def build_cap_snapshot(markets: list[dict], stable_ids: set[str], hl_names: set[
             excluded.append(hl)
             continue
         ranked.append([hl, float(m["market_cap"]), m.get("market_cap_rank")])
-    return {"source": "coingecko", "taken_ms": taken_ms, "week": week, "rank_limit": rank_limit,
+    taken = datetime.fromtimestamp(taken_ms / 1000, tz=timezone.utc).date().isoformat()
+    return {"source": "coingecko", "taken_ms": taken_ms, "snapshot_date": taken, "week": week,
+            "rank_limit": rank_limit,
             "ranked": ranked[:SNAPSHOT_KEEP], "unmapped": unmapped, "excluded_stable": excluded}
 
 

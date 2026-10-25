@@ -73,6 +73,12 @@ class RetuneState:
     chosen_score: float | None = None
     cap_snapshot: dict | None = None
     candidates: dict[str, CandidateState] = field(default_factory=dict)
+    # Paper-period bookkeeping (T52b). `first_choice_ms` is when the live book first followed a chosen
+    # candidate: the paper period is counted from it (owner, 2026-10-25: «отсчёт от первого выбора»).
+    first_choice_ms: int | None = None
+    cap_sources: dict[str, str] = field(default_factory=dict)       # ISO week -> where its ranking came from
+    last_retune: dict | None = None                                 # the latest re-tune event, for the API
+    backfill: dict | None = None                                    # how the candidates' past was rebuilt
 
     @classmethod
     def new(cls, params: RetuneParams) -> "RetuneState":
@@ -85,6 +91,8 @@ class RetuneState:
         return dict(version=1, last_bar_ms=self.last_bar_ms, last_week=self.last_week,
                     last_refit_ms=self.last_refit_ms, refits=self.refits, chosen=self.chosen,
                     chosen_score=self.chosen_score, cap_snapshot=self.cap_snapshot,
+                    first_choice_ms=self.first_choice_ms, cap_sources=dict(self.cap_sources),
+                    last_retune=self.last_retune, backfill=self.backfill,
                     candidates={k: c.to_dict() for k, c in self.candidates.items()})
 
     @classmethod
@@ -94,7 +102,9 @@ class RetuneState:
         st = cls(last_bar_ms=d.get("last_bar_ms"), last_week=d.get("last_week"),
                  last_refit_ms=d.get("last_refit_ms"), refits=int(d.get("refits", 0)),
                  chosen=d.get("chosen"), chosen_score=d.get("chosen_score"),
-                 cap_snapshot=d.get("cap_snapshot"))
+                 cap_snapshot=d.get("cap_snapshot"), first_choice_ms=d.get("first_choice_ms"),
+                 cap_sources=dict(d.get("cap_sources") or {}), last_retune=d.get("last_retune"),
+                 backfill=d.get("backfill"))
         saved = d.get("candidates") or {}
         for name, universe, lookbacks in params.candidates():
             st.candidates[name] = (CandidateState.from_dict(saved[name]) if name in saved
@@ -193,11 +203,16 @@ class BarOutcome:
 
 
 def advance_day(state: RetuneState, day: DayData, params: RetuneParams,
-                universes: dict[str, list[str]]) -> BarOutcome:
+                universes: dict[str, list[str]], *, phase: str = "live") -> BarOutcome:
     """Process one daily rebalance bar: complete the candidates' previous rows, decide their new weights,
-    re-tune on the first bar of a week, return the weights the paper book should hold from this bar."""
+    re-tune on the first bar of a week, return the weights the paper book should hold from this bar.
+
+    `phase` only labels the events: "history" for a bar replayed by the backfill, "live" otherwise."""
     bar = day.decision_ms
     week = week_key(bar)
+    cap_source = (state.cap_snapshot or {}).get("source")
+    if cap_source:
+        state.cap_sources[week] = cap_source
     refit = state.last_week is not None and week != state.last_week
     previous_refit = state.last_refit_ms
     coins = tuple(sorted(day.closes))
@@ -254,7 +269,10 @@ def advance_day(state: RetuneState, day: DayData, params: RetuneParams,
             choice=winner, previous_choice=state.chosen, score=score, scores=scores, week=week,
             observations={n: len([1 for t, _ in c.returns if c.first_active_ms is not None
                                   and c.first_active_ms <= t < bar]) for n, c in state.candidates.items()},
-            previous_refit_ms=previous_refit))
+            previous_refit_ms=previous_refit, phase=phase, first_choice=False,
+            cap_source=cap_source, cap_asof=(state.cap_snapshot or {}).get("snapshot_date")))
+        state.last_retune = {k: v for k, v in events[-1].items() if k not in ("kind", "coin", "qty", "price",
+                                                                              "notional", "fee")}
         state.chosen, state.chosen_score = winner, score
         state.refits += 1
         state.last_refit_ms = bar
@@ -272,7 +290,8 @@ def advance_day(state: RetuneState, day: DayData, params: RetuneParams,
         candidate_returns=day_returns, scales={n: c.scale for n, c in state.candidates.items()},
         gross={n: sum(abs(w) for w in c.weights.values()) for n, c in state.candidates.items()},
         funding_missing=sorted(funding_missing), coins_with_history=len(coins),
-        cap_snapshot_ms=(state.cap_snapshot or {}).get("taken_ms")))
+        cap_snapshot_ms=(state.cap_snapshot or {}).get("taken_ms"), cap_source=cap_source,
+        cap_asof=(state.cap_snapshot or {}).get("snapshot_date"), phase=phase))
     state.last_bar_ms = bar
     state.last_week = week
     return BarOutcome(weights=weights, signals=signals, size_scale=chosen.scale if chosen else 1.0,
