@@ -50,7 +50,7 @@ class FetchStats:
 class HistoryStore:
     def __init__(self, cache_dir: str | Path | None = None, *, candle_pause_s: float = 2.0,
                  funding_page_pause_s: float = 2.7,
-                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep, purge_old: bool = True) -> None:
         self.dir = Path(cache_dir) if cache_dir else None
         self.candle_pause_s = candle_pause_s
         self.funding_page_pause_s = funding_page_pause_s
@@ -58,7 +58,7 @@ class HistoryStore:
         self._mem: dict[tuple[str, str], dict] = {}
         self.lock = asyncio.Lock()               # one backfill fetches at a time; the next finds it cached
         self.stats = FetchStats()
-        if self.dir:
+        if self.dir and purge_old:
             self._purge_old()
 
     def release(self) -> None:
