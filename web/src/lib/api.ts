@@ -680,6 +680,30 @@ export type B2Coin = {
   carry_blocked_hours?: number;
 };
 
+export type B2RetuneScore = { eligible: boolean; score: number | null; n: number; first_active_ms: number | null };
+
+// Only the re-tuned book (`test=b2_retune`) carries this block.
+export type B2RetuneBlock = {
+  chosen: string | null;
+  chosen_score: number | null;
+  refits: number;
+  choice_changes: number;
+  last_refit_ms: number | null;      // open time of the first hour of the month that was last decided
+  last_decision_ms: number | null;   // the close of that hour: when the choice was made
+  next_refit_ms: number | null;
+  first_choice_ms: number | null;
+  launch_ms: number | null;          // rows up to here are backfilled history; later ones are live paper
+  last_retune: {
+    choice: string | null;
+    previous_choice: string | null;
+    scores: Record<string, B2RetuneScore>;
+  } | null;
+  candidates: { name: string; first_active_ms: number | null; hours: number; sharpe: number | null }[];
+  live_hours: number;
+  live_pnl: number | null;
+  live_pnl_pct: number | null;
+};
+
 export type B2Summary = {
   test: string;
   mode: string;
@@ -703,6 +727,7 @@ export type B2Summary = {
   engine_last_tick_ms: number | null;
   engine_last_error: string | null;
   coins: B2Coin[];
+  retune?: B2RetuneBlock | null;
 };
 
 export type B2EquityPoint = { ts_ms: number; equity: number };
@@ -719,7 +744,7 @@ export type B2Event = {
   details: Record<string, unknown> | null;
 };
 
-export type B2Test = "b2" | "b2_cold";
+export type B2Test = "b2" | "b2_cold" | "b2_retune";
 
 export function fetchB2Summary(test: B2Test = "b2"): Promise<B2Summary> {
   return apiFetch<B2Summary>(`/b2/summary?test=${test}`);

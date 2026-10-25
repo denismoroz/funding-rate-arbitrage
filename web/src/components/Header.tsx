@@ -22,6 +22,7 @@ export type Route =
   | "xsmom-settings"
   | "b2"
   | "b2-cold"
+  | "b2-retune"
   | "trend"
   | "trend-10k";
 
@@ -35,7 +36,7 @@ const WS_DOT: Record<WsStatus, string> = {
 
 function sectionOf(route: Route): Section {
   if (route === "trend" || route === "trend-10k") return "trend";
-  if (route === "b2" || route === "b2-cold") return "b2";
+  if (route === "b2" || route === "b2-cold" || route === "b2-retune") return "b2";
   return route.startsWith("xsmom") ? "xsmom" : "frab";
 }
 
@@ -57,6 +58,7 @@ const XSMOM_TABS: SubTab[] = [
 const B2_TABS: SubTab[] = [
   { label: "Main: spot + hedge", href: "#/b2", match: "b2" },
   { label: "Cold wallet: spot + hedge", href: "#/b2/cold", match: "b2-cold" },
+  { label: "Re-tuned monthly: main or cold", href: "#/b2/retune", match: "b2-retune" },
 ];
 
 // The weekly re-tuned trend books (coins chosen by code), the same book at two sizes.

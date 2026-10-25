@@ -20,6 +20,7 @@ function readHash(): Route {
   if (hash === "#/xsmom") return "xsmom";
   if (hash === "#/b2") return "b2";
   if (hash === "#/b2/cold") return "b2-cold";
+  if (hash === "#/b2/retune") return "b2-retune";
   if (hash === "#/trend") return "trend";
   if (hash === "#/trend/10k") return "trend-10k";
   return "dashboard";
@@ -45,6 +46,7 @@ export default function App() {
   if (route === "xsmom") return <Xsmom />;
   if (route === "b2") return <B2 test="b2" />;
   if (route === "b2-cold") return <B2 key="b2_cold" test="b2_cold" />;
+  if (route === "b2-retune") return <B2 key="b2_retune" test="b2_retune" />;
   if (route === "trend") return <Trend variant="trend_retune_3k" route="trend" />;
   if (route === "trend-10k") return <Trend key="trend_retune_10k" variant="trend_retune_10k" route="trend-10k" />;
   return <Dashboard />;

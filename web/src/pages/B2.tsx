@@ -2,7 +2,9 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Header } from "../components/Header";
-import { fetchB2Events, fetchB2Equity, fetchB2Summary, type B2Coin, type B2Summary, type B2Test } from "../lib/api";
+import {
+  fetchB2Events, fetchB2Equity, fetchB2Summary, type B2Coin, type B2Event, type B2RetuneBlock, type B2Summary, type B2Test,
+} from "../lib/api";
 import { formatCurrency } from "../lib/format";
 
 const TEST_META: Record<B2Test, { title: string; backtest: string }> = {
@@ -13,6 +15,10 @@ const TEST_META: Record<B2Test, { title: string; backtest: string }> = {
   b2_cold: {
     title: "Cold wallet test — spot (could sit off-exchange) + trend hedge on HL (spot ≈ 53% of capital)",
     backtest: "rising market +39%/yr, falling market +3%/yr, Jun–Sep 2026 +18%/yr",
+  },
+  b2_retune: {
+    title: "Re-tuned monthly — the code picks the main (headroom 1.0) or the cold-wallet (1.5) setting from the past",
+    backtest: "q-lab stand (bv2-research-headroom-retune), forward 2026-06-01…10-24: +22.3%/yr, Sharpe 1.48, max drawdown −5.2%",
   },
 };
 
@@ -27,7 +33,55 @@ const KIND_LABEL: Record<string, string> = {
   carry_reduce: "carry cut: margin for hedge",
   margin_rebalance: "margin top-up: sell spot + cut short",
   liquidation: "LIQUIDATION",
+  retune: "monthly re-tune",
+  retune_switch: "re-tune: trade to the new choice",
+  backfill: "history replayed at launch",
 };
+
+const CANDIDATE_LABEL: Record<string, string> = { b2: "main (1.0)", b2_cold: "cold wallet (1.5)" };
+
+function fmtDay(ms: number | null | undefined): string {
+  if (!ms) return "—";
+  return new Date(ms).toLocaleDateString("en-GB", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" });
+}
+
+function candidateName(name: string | null | undefined): string {
+  return name == null ? "cash (nobody eligible)" : CANDIDATE_LABEL[name] ?? name;
+}
+
+function actionLabel(e: B2Event): string {
+  if (e.kind === "retune") {
+    const d = e.details as { choice?: string | null } | null;
+    return `monthly re-tune → ${candidateName(d?.choice)}`;
+  }
+  return KIND_LABEL[e.kind] ?? e.kind;
+}
+
+// The re-tuned book only: who is chosen, when it was decided, when it will be decided next.
+function RetuneBanner({ r }: { r: B2RetuneBlock }) {
+  const last = r.last_retune;
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+      Now following <b>{candidateName(r.chosen)}</b>
+      {typeof r.chosen_score === "number" && <> (past Sharpe {r.chosen_score.toFixed(3)} per hour)</>}
+      {" · "}last re-tuning <b>{fmtDay(r.last_refit_ms)}</b>
+      {last?.previous_choice !== undefined && last?.previous_choice !== last?.choice && (
+        <> (switched from {candidateName(last?.previous_choice)})</>
+      )}
+      {" · "}next re-tuning <b>{fmtDay(r.next_refit_ms)}</b>
+      {" · "}{r.refits} re-tunings so far, the choice changed {r.choice_changes}×
+      <div className="mt-1 text-xs text-blue-800">
+        Both settings run all the time; on the 1st of every month the one with the better Sharpe over its whole past is
+        followed (a candidate needs one full month of life first; none eligible → cash). Equity starts at the first
+        choice, {fmtDay(r.first_choice_ms)}; everything up to {fmtTs(r.launch_ms)} MSK was replayed from history at launch,
+        only later hours are live paper.
+        {r.candidates.map((c) => (
+          <span key={c.name}> · {candidateName(c.name)}: {c.sharpe != null ? c.sharpe.toFixed(3) : "—"} per hour over {c.hours}h</span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function lev(x: number | null | undefined): string {
   return x == null ? "—" : `${Number(x.toFixed(2))}×`;
@@ -121,9 +175,15 @@ function ResultPanel({ s }: { s: B2Summary }) {
         {aprReady && s.hours < 168 && <span className="text-xs text-amber-600"> · first week is noise</span>}
       </div>
       <div className="mt-2 text-xs text-gray-400">
-        running {s.hours}h since {fmtTs(s.started_ms)} MSK
+        {s.retune ? "counted from the first choice, " : "running "}{s.hours}h since {fmtTs(s.started_ms)} MSK
         {s.status !== "active" && <span className="text-amber-600"> · {s.status}</span>}
       </div>
+      {s.retune && (
+        <div className="mt-1 text-xs text-gray-500" title="the part after launch only; the rest is replayed history">
+          live paper since {fmtTs(s.retune.launch_ms)} MSK: {s.retune.live_hours}h,{" "}
+          {s.retune.live_pnl != null ? `${signed(s.retune.live_pnl)} (${(s.retune.live_pnl_pct ?? 0).toFixed(2)}%)` : "—"}
+        </div>
+      )}
       {s.engine_last_error && <div className="mt-1 text-xs text-red-500">engine error: {s.engine_last_error}</div>}
     </Panel>
   );
@@ -206,6 +266,7 @@ export default function B2({ test }: { test: B2Test }) {
   const events = useQuery({ queryKey: ["b2-events", test], queryFn: () => fetchB2Events(200, test), refetchInterval: 60_000 });
   const meta = TEST_META[test];
   const s = summary.data;
+  const launchMs = s?.retune?.launch_ms ?? null;
 
   const points = useMemo(
     () => (equity.data ?? []).map((p) => ({ t: p.ts_ms, label: fmtTs(p.ts_ms), equity: p.equity })),
@@ -214,13 +275,14 @@ export default function B2({ test }: { test: B2Test }) {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header wsStatus="open" route={test === "b2_cold" ? "b2-cold" : "b2"} />
+      <Header wsStatus="open" route={test === "b2_retune" ? "b2-retune" : test === "b2_cold" ? "b2-cold" : "b2"} />
       <main className="mx-auto max-w-7xl space-y-4 p-4">
         <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
           <div className="font-semibold">{meta.title}</div>
           <b>PAPER MODE</b> — live Hyperliquid prices and funding, simulated fills, no real orders. Same config in backtest:{" "}
           {meta.backtest}.
         </div>
+        {s?.retune && <RetuneBanner r={s.retune} />}
 
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           {summary.isError && <div className="text-red-500">B2 engine unavailable: {String(summary.error)}</div>}
@@ -239,6 +301,10 @@ export default function B2({ test }: { test: B2Test }) {
                   <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11 }} width={60} tickFormatter={(v) => `$${Number(v).toFixed(2)}`} />
                   <Tooltip formatter={(v: number) => formatCurrency(v)} />
                   {s && <ReferenceLine y={s.capital} stroke="#9ca3af" strokeDasharray="4 4" />}
+                  {launchMs != null && points.some((p) => p.t === launchMs) && (
+                    <ReferenceLine x={points.find((p) => p.t === launchMs)?.label} stroke="#2563eb" strokeDasharray="2 4"
+                                   label={{ value: "launch: history | live", fontSize: 10, fill: "#2563eb", position: "insideTopLeft" }} />
+                  )}
                   <Line type="monotone" dataKey="equity" stroke="#2563eb" dot={false} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
@@ -278,7 +344,10 @@ export default function B2({ test }: { test: B2Test }) {
                   <tr key={i} className="border-t border-gray-100">
                     <td className="py-1.5 text-gray-500">{fmtTs(e.ts_ms)}</td>
                     <td className="font-semibold">{e.coin}</td>
-                    <td>{KIND_LABEL[e.kind] ?? e.kind}</td>
+                    <td>
+                      {actionLabel(e)}
+                      {e.details?.phase === "backfill" && <span className="ml-1 rounded bg-gray-100 px-1 text-xs text-gray-500">history</span>}
+                    </td>
                     <td className="font-mono">{formatCurrency(e.notional)}</td>
                     <td className="font-mono">{formatCurrency(e.price)}</td>
                     <td className="font-mono text-gray-500">{formatCurrency(e.fee)}</td>
