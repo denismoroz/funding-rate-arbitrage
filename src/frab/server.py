@@ -35,6 +35,9 @@ from frab.strategy.b2.params import B2Params
 from frab.repo.trend_repo import TrendRepo
 from frab.strategy.trend.engine import TrendPaperEngine
 from frab.strategy.trend.params import TrendParams
+from frab.strategy.trend.retune_book import RetuneBook
+from frab.strategy.trend.retune_engine import TrendRetuneEngine
+from frab.strategy.trend.retune_params import RetuneParams
 from frab.strategy.xsmom.strategy import XsmomStrategy
 from frab.strategy.xsmom.protection.margin_watchdog import XsmomMarginWatchdog
 
@@ -64,6 +67,10 @@ _TREND_STRATEGY_VERSION = "v1-paper"
 # TSMOM ensemble 30/60/90/120 on HL perps, daily rebalance, run at 0.2 of the research size
 # (~30% annual vol) so $1000 of paper capital still clears HL's $10 minimum order per leg.
 _TREND_DEFAULTS = TrendParams()
+# Weekly re-tuned trend (coins chosen by code, validated in q-lab as trend-retune-weekly). Paper only and
+# OPT-IN: the engine starts only when a strategy row with this name exists (see README.md, «Trend с недельной перенастройкой»);
+# the server never creates it.
+_TREND_RETUNE_STRATEGY_NAME = "trend_retune"
 
 
 def _hl_info_url(settings: Settings) -> str:
@@ -214,6 +221,17 @@ async def _get_or_create_trend_strategy(session_factory, defaults: TrendParams |
             logger.info("Created %s strategy row id=%s (paper, active)", _TREND_STRATEGY_NAME, row.id)
         else:
             TrendParams.from_dict(dict(row.params_json))   # fail loud on bad params
+        return row.id
+
+
+async def _find_trend_retune_strategy(session_factory) -> int | None:
+    """Id of the `trend_retune` strategy row, or None when the variant has not been enabled."""
+    async with session_scope(session_factory) as s:
+        row = (await s.execute(select(StrategyRow).where(StrategyRow.name == _TREND_RETUNE_STRATEGY_NAME))
+               ).scalar_one_or_none()
+        if row is None:
+            return None
+        RetuneParams.from_dict(dict(row.params_json))   # fail loud on bad params
         return row.id
 
 
@@ -469,6 +487,19 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
         app.state.trend_engine = trend_engine
         logger.info("trend paper engine started (strategy_id=%s)", trend_sid)
 
+        retune_sid = await _find_trend_retune_strategy(session_factory)
+        if retune_sid is not None:
+            retune_engine = TrendRetuneEngine(session_factory=session_factory, client=b2_client,
+                                              strategy_id=retune_sid,
+                                              repo=TrendRepo(session_factory, RetuneBook),
+                                              event_bus=bus, tick_delay_s=255.0)
+            await retune_engine.start()
+            app.state.trend_retune_strategy_id = retune_sid
+            app.state.trend_retune_engine = retune_engine
+            logger.info("trend_retune paper engine started (strategy_id=%s)", retune_sid)
+        else:
+            logger.info("trend_retune strategy row not found; the re-tuned trend variant is off")
+
         # ── Stash on app.state ────────────────────────────────────────────
         app.state.exchange = exchange
         app.state.farb_repo = farb_repo
@@ -484,6 +515,8 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
                 await b2_engine_state.stop()
             if getattr(app.state, "trend_engine", None) is not None:
                 await app.state.trend_engine.stop()
+            if getattr(app.state, "trend_retune_engine", None) is not None:
+                await app.state.trend_retune_engine.stop()
             if getattr(app.state, "b2_client", None) is not None:
                 await app.state.b2_client.aclose()
             # Stop xsmom engine first (if it was built)

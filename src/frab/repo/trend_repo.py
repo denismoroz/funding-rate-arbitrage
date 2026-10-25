@@ -14,15 +14,16 @@ HOUR_MS = 3_600_000
 
 
 class TrendRepo:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], book_cls: type[TrendBook] = TrendBook) -> None:
         self._sf = session_factory
+        self._book_cls = book_cls          # the re-tuned variant stores a TrendBook subclass in the same row
 
     async def get_book(self, strategy_id: int) -> TrendBook | None:
         async with self._sf() as s:
             row = (await s.execute(
                 select(TrendBookRow).where(TrendBookRow.strategy_id == strategy_id)
             )).scalar_one_or_none()
-        return TrendBook.from_state(dict(row.state_json)) if row else None
+        return self._book_cls.from_state(dict(row.state_json)) if row else None
 
     async def save_progress(self, strategy_id: int, book: TrendBook, events: list[dict],
                             equity_rows: list[dict]) -> None:
@@ -65,11 +66,14 @@ class TrendRepo:
             )).all()
         return [(int(ts), float(eq)) for ts, eq in rows]
 
-    async def events(self, strategy_id: int, limit: int = 200) -> list[TrendEvent]:
+    async def events(self, strategy_id: int, limit: int = 200, kinds: tuple[str, ...] | None = None
+                     ) -> list[TrendEvent]:
+        q = select(TrendEvent).where(TrendEvent.strategy_id == strategy_id)
+        if kinds:
+            q = q.where(TrendEvent.kind.in_(kinds))
         async with self._sf() as s:
             rows = (await s.execute(
-                select(TrendEvent).where(TrendEvent.strategy_id == strategy_id)
-                .order_by(TrendEvent.ts_ms.desc(), TrendEvent.id.desc()).limit(limit)
+                q.order_by(TrendEvent.ts_ms.desc(), TrendEvent.id.desc()).limit(limit)
             )).scalars().all()
         return list(rows)
 

@@ -262,6 +262,7 @@ class HLClient:
                     close_ms=int(raw["T"]),
                     close=float(raw["c"]),
                     high=float(raw["h"]) if raw.get("h") is not None else None,
+                    volume=float(raw["v"]) if raw.get("v") is not None else None,
                 ))
             except (KeyError, TypeError, ValueError):
                 continue

@@ -129,6 +129,7 @@ class HLCandle:
     close_ms: int   # candle close time (T)
     close: float    # parsed from c
     high: float | None = None   # parsed from h
+    volume: float | None = None  # base-asset volume, parsed from v (None when the response has none)
 
 
 @dataclass(frozen=True)
