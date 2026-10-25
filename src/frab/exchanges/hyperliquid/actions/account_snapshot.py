@@ -103,3 +103,15 @@ class AccountSnapshotAction(HLAction):
             logger.warning("get_perp_unrealized_by_coin: user_state failed: %s", exc)
             return {}
         return {ap.coin: ap.unrealized_pnl for ap in state.asset_positions if ap.coin}
+
+    async def get_perp_funding_received_by_coin(self) -> dict[str, float]:
+        """{coin: funding received since the perp position opened}, HL's own
+        running total (cumFunding.sinceOpen, negated: HL reports it as paid)."""
+        if self._address is None:
+            raise RuntimeError("account_address required")
+        try:
+            state = await self._client.user_state(self._address)
+        except Exception as exc:
+            logger.warning("get_perp_funding_received_by_coin: user_state failed: %s", exc)
+            return {}
+        return {ap.coin: -ap.cum_funding_since_open for ap in state.asset_positions if ap.coin}

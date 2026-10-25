@@ -308,6 +308,10 @@ class HLExchange:
         """Return {coin: unrealizedPnl_USDC} from HL assetPositions."""
         return await self._account_snapshot_action.get_perp_unrealized_by_coin()
 
+    async def get_perp_funding_received_by_coin(self) -> dict[str, float]:
+        """Return {coin: funding received since open} from HL's cumFunding."""
+        return await self._account_snapshot_action.get_perp_funding_received_by_coin()
+
     async def get_spot_balances_by_coin(self) -> dict[str, float]:
         """Return {canonical_coin: total_qty} of spot tokens held in the wallet."""
         return await self._account_snapshot_action.get_spot_balances_by_coin()

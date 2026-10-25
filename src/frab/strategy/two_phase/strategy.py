@@ -119,6 +119,7 @@ class TwoPhaseStrategy:
             farb_repo=self.farb_repo,
             session_factory=self._sf,
             signal_computer=signal_computer,
+            event_bus=self._bus,
         )
         self._rollback_action = RollbackAction(
             exchange=self.exchange,

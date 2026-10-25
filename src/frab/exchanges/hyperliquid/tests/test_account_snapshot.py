@@ -433,3 +433,26 @@ async def test_get_spot_balances_by_coin_no_address_raises(mock_client, symbols)
 
     with pytest.raises(RuntimeError):
         await action.get_spot_balances_by_coin()
+
+
+# ---------------------------------------------------------------------------
+# get_perp_funding_received_by_coin: HL's cumFunding.sinceOpen, as received
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_funding_received_negates_cum_funding(mock_client, symbols):
+    mock_client.user_state.return_value = HLPerpState(
+        account_value=100.0,
+        asset_positions=[
+            HLPerpAssetPosition(coin="ETH", szi=-0.0078, unrealized_pnl=0.0, cum_funding_since_open=-0.551556),
+            HLPerpAssetPosition(coin="BTC", szi=0.01, unrealized_pnl=0.0, cum_funding_since_open=0.02),
+        ],
+    )
+    out = await make_action(mock_client, symbols).get_perp_funding_received_by_coin()
+    assert out == {"ETH": pytest.approx(0.551556), "BTC": pytest.approx(-0.02)}
+
+
+@pytest.mark.asyncio
+async def test_funding_received_empty_when_hl_fails(mock_client, symbols):
+    mock_client.user_state.side_effect = RuntimeError("down")
+    assert await make_action(mock_client, symbols).get_perp_funding_received_by_coin() == {}

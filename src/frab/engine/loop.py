@@ -560,7 +560,9 @@ class EngineLoop:
         self, kind: str, exc: Exception, extra: dict | None = None
     ) -> None:
         tb = traceback.format_exc()
-        payload: dict = {"error": str(exc), "traceback": tb}
+        # httpx timeouts carry no message; the feed showed them as blank rows
+        message = str(exc) or type(exc).__name__
+        payload: dict = {"error": message, "traceback": tb}
         if extra:
             payload.update(extra)
         logger.error("engine_loop %s: %s", kind, exc, exc_info=True)
@@ -571,7 +573,7 @@ class EngineLoop:
                 level="ERROR",
                 source="engine_loop",
                 kind=kind,
-                message=str(exc),
+                message=message,
                 payload_json=payload,
             )
             await self._bus.publish(event)

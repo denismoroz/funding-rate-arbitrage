@@ -3,15 +3,23 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
+from frab.events.bus import EventBus
 from frab.exchanges.protocol import Exchange
 from frab.repo.farb_repo import FarbRepo
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.evaluators.signal import SignalComputer
-from frab.strategy.two_phase.states._helpers import load_funding_peak, load_position
+from frab.strategy.two_phase.states._helpers import load_funding_peak, load_position, publish_event
 
 # Full sweep from pos.opened_at is done on first call and once every 24 h to
 # repair any gaps or corrections; all other calls are incremental.
 _FULL_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
+
+# Daily reconciliation of the stored sum against HL's own running total
+# (cumFunding.sinceOpen). The two calls are seconds apart, so a settlement
+# between them puts them at most one hourly payment apart: about $0.0025 on a
+# $25 slot at 0.01%/h. $0.01 allows a few such payments and is far below the
+# HL daily-summary doubling this check exists to catch ($0.51 on ETH #19).
+_RECONCILE_TOLERANCE_USDC = 0.01
 
 
 class FundingAccrual:
@@ -25,8 +33,10 @@ class FundingAccrual:
         farb_repo: FarbRepo,
         session_factory: async_sessionmaker[AsyncSession],
         signal_computer: SignalComputer,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._strategy_id = strategy_id
+        self._bus = event_bus
         self._exchange = exchange
         self._farb_repo = farb_repo
         self._sf = session_factory
@@ -50,6 +60,7 @@ class FundingAccrual:
         )
 
         open_fps = await self._farb_repo.list_active(self._strategy_id)
+        stored: dict[int, tuple[str, float]] = {}
         for fp in open_fps:
             if fp.perp_position_id is None:
                 continue
@@ -65,6 +76,7 @@ class FundingAccrual:
 
             sd = dict(fp.state_data)
             sd["gross_funding_so_far"] = float(gross)
+            stored[fp.id] = (fp.coin, float(gross))
             # POST_BREAKEVEN reads its giveback as peak - gross; the peak is
             # re-derived from the same rows so both move together.
             sd["peak_gross_funding"] = await load_funding_peak(self._sf, perp_pos.id)
@@ -80,3 +92,39 @@ class FundingAccrual:
 
         if full:
             self._last_full_sweep_ms = now_ms
+            await self._reconcile(stored)
+
+    async def _reconcile(self, stored: dict[int, tuple[str, float]]) -> None:
+        """Compare each position's stored funding with HL's cumFunding.sinceOpen
+        and raise a WARNING event when they part. The stored sum is built from
+        userFunding records; nothing else checked it, which is how doubled
+        daily summaries stood for months (two_phase gross was ~2x HL's)."""
+        read = getattr(self._exchange, "get_perp_funding_received_by_coin", None)
+        if read is None or not stored:
+            return
+        received = await read()
+        if not received:
+            return  # HL unreachable: logged by the adapter, next sweep retries
+        for fp_id, (coin, gross) in stored.items():
+            if coin not in received:
+                continue
+            diff = gross - received[coin]
+            if abs(diff) <= _RECONCILE_TOLERANCE_USDC:
+                _pkg.logger.info(
+                    "funding reconciled fp=%s coin=%s db=%.6f hl=%.6f",
+                    fp_id, coin, gross, received[coin],
+                )
+                continue
+            _pkg.logger.warning(
+                "funding mismatch fp=%s coin=%s db=%.6f hl_cum_funding=%.6f diff=%.6f",
+                fp_id, coin, gross, received[coin], diff,
+            )
+            await publish_event(
+                self._bus,
+                level="WARNING",
+                kind="funding.mismatch",
+                message=(f"{coin}: funding in DB ${gross:.4f} vs HL cumFunding "
+                         f"${received[coin]:.4f} (diff ${diff:+.4f})"),
+                payload={"farb_position_id": fp_id, "coin": coin, "db": gross,
+                         "hl_cum_funding_since_open": received[coin], "diff": diff},
+            )

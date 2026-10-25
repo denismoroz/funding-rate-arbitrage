@@ -241,3 +241,75 @@ async def test_peak_is_rederived_with_gross(mocker, _peak):
     assert sd["gross_funding_so_far"] == pytest.approx(0.8824)
     assert sd["peak_gross_funding"] == pytest.approx(0.8824)
     _peak.assert_awaited_once_with(accrual._sf, 42)
+
+
+# ─── Daily reconciliation against HL cumFunding.sinceOpen ────────────────────
+
+def _reconcile_setup(mocker, *, gross, hl):
+    fp = _make_fp(id=19, coin="ETH", perp_position_id=21)
+    accrual, exchange, farb_repo, _ = _make_accrual(mocker, open_fps=[fp], accrued_funding=gross)
+    exchange.get_perp_funding_received_by_coin.return_value = hl
+    mocker.patch("frab.strategy.two_phase.actions.funding_accrual.load_position",
+                 return_value=mocker.MagicMock(id=21))
+    bus = mocker.AsyncMock()
+    accrual._bus = bus
+    return accrual, exchange, bus
+
+
+@pytest.mark.asyncio
+async def test_reconcile_warns_when_db_parts_from_hl(mocker):
+    # the doubled ETH #19 before the fix: $1.066 stored, $0.552 paid by HL
+    accrual, _, bus = _reconcile_setup(mocker, gross=1.066264, hl={"ETH": 0.551556})
+
+    await accrual.accrue(now_ms=_NOW_MS)
+
+    bus.publish.assert_awaited_once()
+    event = bus.publish.call_args.args[0]
+    assert event.level == "WARNING"
+    assert event.kind == "funding.mismatch"
+    assert event.payload_json["diff"] == pytest.approx(0.514708)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_quiet_within_tolerance(mocker):
+    accrual, _, bus = _reconcile_setup(mocker, gross=0.551556, hl={"ETH": 0.5535})
+
+    await accrual.accrue(now_ms=_NOW_MS)
+
+    bus.publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_only_on_full_sweep(mocker):
+    accrual, exchange, bus = _reconcile_setup(mocker, gross=1.0, hl={"ETH": 0.5})
+    await accrual.accrue(now_ms=_NOW_MS)            # full: checks
+    await accrual.accrue(now_ms=_NOW_MS + 3_600_000)  # incremental: does not
+
+    assert exchange.get_perp_funding_received_by_coin.await_count == 1
+    assert bus.publish.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_skips_when_hl_unreachable(mocker):
+    accrual, _, bus = _reconcile_setup(mocker, gross=1.0, hl={})
+
+    await accrual.accrue(now_ms=_NOW_MS)
+
+    bus.publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_skipped_for_exchange_without_cum_funding(mocker):
+    fp = _make_fp(id=19, coin="ETH", perp_position_id=21)
+    accrual, exchange, farb_repo, _ = _make_accrual(mocker, open_fps=[fp], accrued_funding=1.0)
+    class _PaperExchange:  # no cumFunding read
+        async def get_accrued_funding(self, pos, *, full=False):
+            return 1.0
+
+    accrual._exchange = _PaperExchange()
+    mocker.patch("frab.strategy.two_phase.actions.funding_accrual.load_position",
+                 return_value=mocker.MagicMock(id=21))
+
+    await accrual.accrue(now_ms=_NOW_MS)
+
+    farb_repo.update_state_data.assert_awaited_once()
