@@ -114,6 +114,7 @@ def _fp_to_dict(
     leverage_by_coin: dict[str, int] | None = None,
     spot_mids: dict[str, float] | None = None,
     unrealized_pnl_by_coin: dict[str, float] | None = None,
+    perp_value_by_coin: dict[str, float] | None = None,
 ) -> dict:
     """Serialize a FarbPositionRow to the response shape."""
     sd = fp.state_data or {}
@@ -184,6 +185,16 @@ def _fp_to_dict(
         # Fallback path: exchange=None, use legacy combined PnL from DB prices
         total_pnl = unrealized_pnl
 
+    # CURRENT value of each leg at live prices (not qty x entry price): spot at the live
+    # spot mid, perp at HL's own notional at the mark. None when a live price is missing,
+    # never the entry value standing in for it.
+    spot_value: float | None = None
+    perp_value: float | None = None
+    if is_open and spot_leg and spot_mids is not None and spot_mids.get(fp.coin) is not None:
+        spot_value = float(spot_leg["qty"]) * float(spot_mids[fp.coin])
+    if is_open and perp_value_by_coin is not None:
+        perp_value = perp_value_by_coin.get(fp.coin)
+
     return {
         "id": fp.id,
         "strategy_id": fp.strategy_id,
@@ -207,6 +218,15 @@ def _fp_to_dict(
         "locked_margin_usdc": locked_margin,
         "leverage": leverage,
         "capital_usdc": capital_usdc,
+        "spot_value_usdc": spot_value,
+        "perp_value_usdc": perp_value,
+        # The position needs to exit but the pre-close check says it cannot be closed
+        # within HL's limits (nothing was closed; it stays hedged). See close_gate.py.
+        "close_blocked": bool(sd.get("close_blocked")),
+        "close_blocked_wanted": sd.get("close_blocked_wanted"),
+        "close_blocked_reason": sd.get("close_blocked_reason"),
+        "close_blocked_since_ms": sd.get("close_blocked_since_ms"),
+        "close_blocked_check": sd.get("close_blocked_check"),
     }
 
 
@@ -217,6 +237,7 @@ async def _enrich(
     leverage_by_coin: dict[str, int] | None = None,
     spot_mids: dict[str, float] | None = None,
     unrealized_pnl_by_coin: dict[str, float] | None = None,
+    perp_value_by_coin: dict[str, float] | None = None,
 ) -> dict:
     """Load legs + compute hours_held + compute unrealized PnL for a single FarbPositionRow."""
     collateral = await _load_leg(session, fp.margin_position_id)
@@ -238,7 +259,7 @@ async def _enrich(
     return _fp_to_dict(
         fp, legs, hours_held, unrealized_pnl,
         margin_used_by_coin, leverage_by_coin,
-        spot_mids, unrealized_pnl_by_coin,
+        spot_mids, unrealized_pnl_by_coin, perp_value_by_coin,
     )
 
 
@@ -247,6 +268,7 @@ async def _fetch_hl_enrichment(request: Request) -> tuple[
     dict[str, int],            # leverage_by_coin
     dict[str, float] | None,   # unrealized_pnl_by_coin
     dict[str, float] | None,   # spot_mids
+    dict[str, float],          # perp_value_by_coin (HL notional at the mark)
 ]:
     """Best-effort fetch of HL account snapshot + spot mids for enrichment.
 
@@ -255,11 +277,12 @@ async def _fetch_hl_enrichment(request: Request) -> tuple[
     """
     exchange = getattr(request.app.state, "exchange", None)
     if exchange is None:
-        return {}, {}, None, None
+        return {}, {}, None, None, {}
 
     margin_used_by_coin: dict[str, float] = {}
     leverage_by_coin: dict[str, int] = {}
     unrealized_pnl_by_coin: dict[str, float] = {}
+    perp_value_by_coin: dict[str, float] = {}
     spot_mids: dict[str, float] = {}
     try:
         (perp_state, _spot_state), spot_mids = await asyncio.gather(
@@ -278,8 +301,10 @@ async def _fetch_hl_enrichment(request: Request) -> tuple[
         if ap.leverage_value is not None:
             leverage_by_coin[coin] = ap.leverage_value
         unrealized_pnl_by_coin[coin] = ap.unrealized_pnl
+        if ap.position_value and ap.position_value > 0:
+            perp_value_by_coin[coin] = abs(ap.position_value)
 
-    return margin_used_by_coin, leverage_by_coin, unrealized_pnl_by_coin, spot_mids
+    return margin_used_by_coin, leverage_by_coin, unrealized_pnl_by_coin, spot_mids, perp_value_by_coin
 
 
 @router.get("")
@@ -322,12 +347,16 @@ async def list_farb_positions(
     result = await session.execute(stmt)
     rows = result.scalars().all()
 
-    margin_used_by_coin, leverage_by_coin, unrealized_pnl_by_coin, spot_mids = (
-        await _fetch_hl_enrichment(request)
-    )
+    (
+        margin_used_by_coin, leverage_by_coin, unrealized_pnl_by_coin, spot_mids,
+        perp_value_by_coin,
+    ) = await _fetch_hl_enrichment(request)
 
     return [
-        await _enrich(session, fp, margin_used_by_coin, leverage_by_coin, spot_mids, unrealized_pnl_by_coin)
+        await _enrich(
+            session, fp, margin_used_by_coin, leverage_by_coin, spot_mids,
+            unrealized_pnl_by_coin, perp_value_by_coin,
+        )
         for fp in rows
     ]
 
@@ -343,7 +372,11 @@ async def close_all_farb_positions(
     Transitions each OPEN FP to CLOSING_SHORT (with exit_decision="forced").
     The engine's advance_all_pending will drive them the rest of the way to CLOSED.
 
-    Returns 200 always with lists of successes and failures.
+    A position whose spot cannot be sold within HL's limits is NOT closed (the pre-close
+    check, close_gate.py): it is listed in `blocked`, stays hedged, and is closed by the
+    hourly evaluator as soon as the check passes.
+
+    Returns 200 always with lists of successes, failures and blocked positions.
     """
     farb_repo = getattr(request.app.state, "farb_repo", None)
     if farb_repo is None:
@@ -352,12 +385,24 @@ async def close_all_farb_positions(
     event_bus = getattr(request.app.state, "event_bus", None)
     now_ms = _now_ms()
 
+    close_gate = getattr(request.app.state, "close_gate", None)
+
     active_fps = await farb_repo.list_active(strategy_id)
     closed_ids: list[dict] = []
     failed: list[dict] = []
+    blocked: list[dict] = []
 
     for fp in active_fps:
-        new_state_data = {**(fp.state_data or {}), "exit_decision": "forced", "exit_requested_at_ms": now_ms}
+        base_state_data = fp.state_data or {}
+        if close_gate is not None:
+            admitted = await close_gate.admit(
+                fp, decision="forced", state_data=base_state_data, now_ms=now_ms, forced=True,
+            )
+            if not admitted.ok:
+                blocked.append({"id": fp.id, "coin": fp.coin, "reason": admitted.reason})
+                continue
+            base_state_data = admitted.state_data
+        new_state_data = {**base_state_data, "exit_decision": "forced", "exit_requested_at_ms": now_ms}
         try:
             await farb_repo.transition(
                 fp.id,
@@ -383,7 +428,7 @@ async def close_all_farb_positions(
                 message=f"{fp.coin} FP#{fp.id} force-close requested",
             ))
 
-    return {"closed_ids": closed_ids, "failed": failed, "ts_ms": now_ms}
+    return {"closed_ids": closed_ids, "failed": failed, "blocked": blocked, "ts_ms": now_ms}
 
 
 @router.post("/{farb_position_id}/close")
@@ -397,6 +442,9 @@ async def close_farb_position(
     Only works on OPEN positions (returns 409 for any other state).
     Transitions OPEN → CLOSING_SHORT with exit_decision="forced".
     The engine's advance_all_pending will drive it the rest of the way to CLOSED.
+
+    If the pre-close check says the position cannot be closed within HL's limits, nothing
+    is closed: returns 200 {"blocked": true, "reason": ..., "new_state": <unchanged>}.
     """
     farb_repo = getattr(request.app.state, "farb_repo", None)
     if farb_repo is None:
@@ -413,7 +461,21 @@ async def close_farb_position(
         )
 
     now_ms = _now_ms()
-    new_state_data = {**(fp.state_data or {}), "exit_decision": "forced", "exit_requested_at_ms": now_ms}
+    base_state_data = fp.state_data or {}
+    close_gate = getattr(request.app.state, "close_gate", None)
+    if close_gate is not None:
+        admitted = await close_gate.admit(
+            fp, decision="forced", state_data=base_state_data, now_ms=now_ms, forced=True,
+        )
+        if not admitted.ok:
+            # Nothing is closed. The request stays on the position (pending_forced_exit):
+            # the hourly evaluator closes it as soon as the check passes.
+            return {
+                "id": fp.id, "coin": fp.coin, "new_state": fp.state.value.upper(),
+                "blocked": True, "reason": admitted.reason, "ts_ms": now_ms,
+            }
+        base_state_data = admitted.state_data
+    new_state_data = {**base_state_data, "exit_decision": "forced", "exit_requested_at_ms": now_ms}
 
     try:
         await farb_repo.transition(
@@ -491,8 +553,12 @@ async def get_farb_position(
     if fp is None:
         raise HTTPException(status_code=404, detail="FarbPosition not found")
 
-    margin_used_by_coin, leverage_by_coin, unrealized_pnl_by_coin, spot_mids = (
-        await _fetch_hl_enrichment(request)
-    )
+    (
+        margin_used_by_coin, leverage_by_coin, unrealized_pnl_by_coin, spot_mids,
+        perp_value_by_coin,
+    ) = await _fetch_hl_enrichment(request)
 
-    return await _enrich(session, fp, margin_used_by_coin, leverage_by_coin, spot_mids, unrealized_pnl_by_coin)
+    return await _enrich(
+        session, fp, margin_used_by_coin, leverage_by_coin, spot_mids,
+        unrealized_pnl_by_coin, perp_value_by_coin,
+    )
