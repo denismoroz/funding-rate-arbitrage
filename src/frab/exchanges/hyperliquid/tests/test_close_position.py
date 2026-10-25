@@ -59,7 +59,9 @@ def symbols(mock_client):
         spot_token_map={"BTC": "UBTC", "ETH": "UETH", "SOL": "USOL"},
         spot_quote_token="USDC",
     )
-    sym._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2}
+    sym._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2, "HYPE": 2}
+    # the spot token's own lot: USOL trades in 0.001 while the SOL perp trades in 0.01
+    sym._spot_sz_decimals_cache = {"UBTC": 5, "UETH": 4, "USOL": 3, "HYPE": 2}
     return sym
 
 
@@ -531,6 +533,7 @@ async def test_spot_balance_rounds_to_zero_breaks_loop(session_factory, mock_cli
         side=Side.LONG, qty=0.001, entry_price=60000.0,
     )
     symbols._sz_decimals_cache["BTC"] = 4
+    symbols._spot_sz_decimals_cache["UBTC"] = 4
     mock_client.spot_user_state.side_effect = [
         _spot_state("UBTC", 0.001),    # 1st: $60 ≥ $11
         _spot_state("UBTC", 0.00001),  # 2nd: rounds to 0 → break
@@ -688,29 +691,28 @@ async def test_spot_writes_slippage_bps_from_final_slippage(session_factory, moc
 # Dust-sweep / balance-anchoring tests
 # ---------------------------------------------------------------------------
 
-async def test_close_spot_sells_actual_wallet_balance_when_larger_than_pos_qty(
+async def test_close_spot_sells_dust_beyond_pos_qty_up_to_one_lot(
     session_factory, mock_client, symbols
 ):
-    # balance=0.00025 BTC at $60k → $15 ≥ $11. pos.qty=0.0002 (dust extra from prior close).
-    # New design: first iteration orders the actual wallet balance (0.00025), not pos.qty.
+    # pos.qty=0.0002 BTC, wallet 0.000205: 0.000005 is the sub-lot remainder of an earlier close.
+    # The sale takes the whole wallet down to the lot (BTC lot 0.00001): 0.0002.
     pos = await _seed_open_position(
         session_factory, coin="BTC", instrument=Instrument.SPOT,
         side=Side.LONG, qty=0.0002, entry_price=60000.0,
     )
     mock_client.spot_user_state.side_effect = [
-        _spot_state("UBTC", 0.00025),  # 1st: $15 ≥ $11 → order
-        _spot_state("UBTC", 0.0),      # 2nd: $0 → break
+        _spot_state("UBTC", 0.000205),  # 1st: $12.3 >= $11 -> order
+        _spot_state("UBTC", 0.000005),  # 2nd: nothing sellable -> break
     ]
-    mock_client.market_open.return_value = _filled_response(0.00025, 60000.0, fee_usdc=0.01)
+    mock_client.market_open.return_value = _filled_response(0.0002, 60000.0, fee_usdc=0.01)
     action = make_action(session_factory, mock_client, symbols)
 
     await action.execute(pos)
 
-    # market_open uses the actual rounded balance, not pos.qty
-    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.00025)
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.0002)
     async with session_factory() as s:
         fill = (await s.execute(select(DBFill))).scalar_one()
-    assert fill.qty == pytest.approx(0.00025)
+    assert fill.qty == pytest.approx(0.0002)
 
 
 async def test_close_spot_balance_below_min_notional_raises(session_factory, mock_client, symbols):
@@ -777,3 +779,219 @@ async def test_close_spot_address_none_zero_fill_raises(session_factory, mock_cl
 
     with pytest.raises(RuntimeError, match="drained 0"):
         await action.execute(pos)
+
+
+# ---------------------------------------------------------------------------
+# Dust: the sale is floored at the SPOT lot and sells only this position's coins
+# ---------------------------------------------------------------------------
+
+async def test_close_spot_floors_at_the_spot_lot_not_the_perp_lot(session_factory, mock_client, symbols):
+    # SOL #26 on 2026-06-08: recorded 0.22, wallet 0.22974466. Flooring at the perp lot (0.01)
+    # sold 0.22 and stranded 0.00974466 USOL. The spot lot is 0.001: sell 0.229, strand 0.00074466.
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.22, entry_price=80.052,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("USOL", 0.22974466),
+        _spot_state("USOL", 0.00074466),  # what is left: below the spot lot
+    ]
+    mock_client.market_open.return_value = _filled_response(0.229, 65.795, fee_usdc=0.0097)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    mock_client.market_open.assert_called_once()
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.229)
+
+
+async def test_close_spot_hype_strands_only_what_its_lot_makes_unavoidable(session_factory, mock_client, symbols):
+    # HYPE #31 as recorded (0.2) with the wallet 0.20973794: the lot is 0.01 for spot and perp
+    # alike, so 0.2 is sold and 0.00973794 (< one lot, ~$0.75) cannot be sold by anyone.
+    pos = await _seed_open_position(
+        session_factory, coin="HYPE", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=83.908,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("HYPE", 0.20973794),
+        _spot_state("HYPE", 0.00973794),
+    ]
+    mock_client.market_open.return_value = _filled_response(0.2, 88.0, fee_usdc=0.0123)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.2)
+    assert mock_client.market_open.call_count == 1
+
+
+async def test_close_spot_never_sells_the_coins_of_another_open_position(session_factory, mock_client, symbols):
+    # two open SOL spot legs of 0.2 each; the wallet holds both (0.4). Closing the first
+    # sells 0.2, never the second leg's coins.
+    first = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=100.0, farb_position_id=None,
+    )
+    await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=100.0, farb_position_id=None,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("USOL", 0.4),
+        _spot_state("USOL", 0.2),  # the other leg's coins, untouched
+    ]
+    mock_client.market_open.return_value = _filled_response(0.2, 100.0, fee_usdc=0.014)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(first)
+
+    mock_client.market_open.assert_called_once()
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.2)
+
+
+async def test_close_spot_other_legs_reserve_counts_only_open_positions_of_the_same_coin(
+    session_factory, mock_client, symbols
+):
+    # a CLOSED SOL leg and an OPEN ETH leg are not reserved: only the 0.2 SOL we close exist
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=100.0,
+    )
+    closed = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.3, entry_price=100.0,
+    )
+    async with session_factory() as s:
+        row = await s.get(DBPosition, closed.id)
+        row.status = PositionStatus.CLOSED.value
+        await s.commit()
+    await _seed_open_position(
+        session_factory, coin="ETH", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.5, entry_price=2000.0,
+    )
+    await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.PERP,
+        side=Side.SHORT, qty=0.2, entry_price=100.0,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("USOL", 0.2),
+        _spot_state("USOL", 0.0),
+    ]
+    mock_client.market_open.return_value = _filled_response(0.2, 100.0, fee_usdc=0.014)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.2)
+
+
+async def test_close_spot_other_leg_reserve_is_taken_off_before_flooring(session_factory, mock_client, symbols):
+    # wallet 0.45 = this leg's 0.2 + the other leg's 0.25: only 0.2 is ours to sell
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=100.0,
+    )
+    await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.25, entry_price=100.0,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("USOL", 0.45),
+        _spot_state("USOL", 0.25),
+    ]
+    mock_client.market_open.return_value = _filled_response(0.2, 100.0, fee_usdc=0.014)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.2)
+
+
+async def test_close_spot_does_not_sell_coins_nobody_here_owns(session_factory, mock_client, symbols):
+    # the wallet holds 5 SOL (a manual purchase, say) against a 0.2 leg: sell the leg plus
+    # at most one lot of remainder (0.21), never the 5
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=100.0,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("USOL", 5.0),
+        _spot_state("USOL", 4.79),
+    ]
+    mock_client.market_open.return_value = _filled_response(0.21, 100.0, fee_usdc=0.014)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    assert mock_client.market_open.call_args.args[2] == pytest.approx(0.21)
+    mock_client.market_open.assert_called_once()
+
+
+async def test_close_spot_partial_fill_retry_stays_within_the_budget(session_factory, mock_client, symbols):
+    # the first order fills only 0.1 of the 0.209 asked; the wallet still shows 5 SOL.
+    # The retry may sell what is left of this leg's budget (0.21 - 0.1), not the wallet.
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=100.0,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("USOL", 5.0),
+        _spot_state("USOL", 4.9),
+        _spot_state("USOL", 4.79),
+    ]
+    mock_client.market_open.side_effect = [
+        _filled_response(0.1, 100.0, fee_usdc=0.007),
+        _filled_response(0.11, 100.0, fee_usdc=0.007),
+    ]
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    calls = mock_client.market_open.call_args_list
+    assert calls[0].args[2] == pytest.approx(0.21)
+    assert calls[1].args[2] == pytest.approx(0.11)
+    async with session_factory() as s:
+        fill = (await s.execute(select(DBFill))).scalar_one()
+    assert fill.qty == pytest.approx(0.21)
+
+
+async def test_close_spot_logs_what_the_wallet_keeps(session_factory, mock_client, symbols, caplog):
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.22, entry_price=80.052,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("USOL", 0.22974466),
+        _spot_state("USOL", 0.00074466),
+    ]
+    mock_client.market_open.return_value = _filled_response(0.229, 65.795, fee_usdc=0.0097)
+    action = make_action(session_factory, mock_client, symbols)
+
+    import logging
+    with caplog.at_level(logging.INFO):
+        await action.execute(pos)
+
+    kept = [r for r in caplog.records if "wallet keeps" in r.getMessage()]
+    assert len(kept) == 1
+    assert "wallet keeps 0.00074466" in kept[0].getMessage()
+
+
+async def test_close_spot_nothing_sellable_after_reserve_raises_without_an_order(
+    session_factory, mock_client, symbols
+):
+    # the other leg's recorded qty (0.4) is the whole wallet: nothing here is ours to sell
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=100.0,
+    )
+    await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.4, entry_price=100.0,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("USOL", 0.4)
+    action = make_action(session_factory, mock_client, symbols)
+
+    with pytest.raises(RuntimeError, match="drained 0"):
+        await action.execute(pos)
+
+    mock_client.market_open.assert_not_called()

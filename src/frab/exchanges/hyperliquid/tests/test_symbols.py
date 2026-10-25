@@ -438,3 +438,87 @@ async def test_spot_mids_by_coin_all_mids_raises_returns_empty(mocker, caplog):
         result = await sym.spot_mids_by_coin()
     assert result == {}
     assert "allMids failed" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Spot lots: a spot token's szDecimals can differ from its perp's
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def sol_client(mocker):
+    client = mocker.MagicMock(spec=HLClient)
+    client.perp_meta = AsyncMock(return_value=[
+        HLPerpMarketSpec(name="SOL", sz_decimals=2),
+        HLPerpMarketSpec(name="BTC", sz_decimals=5),
+    ])
+    client.spot_meta = AsyncMock(return_value=HLSpotMeta(
+        tokens={254: "USOL", 197: "UBTC"},
+        pairs=[],
+        sz_decimals={"USOL": 3, "UBTC": 5},
+    ))
+    return client
+
+
+@pytest.mark.asyncio
+async def test_spot_sz_decimals_comes_from_the_spot_token_not_the_perp(sol_client):
+    sym = HLSymbols(client=sol_client, spot_token_map={"SOL": "USOL", "BTC": "UBTC"})
+    assert await sym.spot_sz_decimals("SOL") == 3      # perp SOL has 2
+    assert await sym.spot_sz_decimals("BTC") == 5
+    assert sol_client.spot_meta.call_count == 1         # cached
+
+
+@pytest.mark.asyncio
+async def test_round_spot_qty_floors_at_the_spot_lot(sol_client):
+    # SOL #26's wallet: 0.22974466. The perp lot (0.01) sells 0.22 and strands 0.00974466;
+    # the spot lot (0.001) sells 0.229 and strands 0.00074466.
+    sym = HLSymbols(client=sol_client, spot_token_map={"SOL": "USOL"})
+    assert await sym.round_qty("SOL", 0.22974466) == pytest.approx(0.22)
+    assert await sym.round_spot_qty("SOL", 0.22974466) == pytest.approx(0.229)
+
+
+@pytest.mark.asyncio
+async def test_round_spot_qty_takes_decimal_without_float_noise(sol_client):
+    from decimal import Decimal
+    sym = HLSymbols(client=sol_client, spot_token_map={"SOL": "USOL"})
+    noisy = Decimal("0.22974466") - Decimal("0.0007")     # 0.22904466 exactly
+    assert await sym.round_spot_qty("SOL", noisy) == pytest.approx(0.229)
+    assert await sym.round_spot_qty("SOL", 0.229) == 0.229   # an exact lot multiple is kept whole
+
+
+@pytest.mark.asyncio
+async def test_spot_sz_decimals_falls_back_to_perp_when_spot_meta_fails(sol_client, caplog):
+    sol_client.spot_meta = AsyncMock(side_effect=RuntimeError("network"))
+    sym = HLSymbols(client=sol_client, spot_token_map={"SOL": "USOL"})
+    with caplog.at_level(logging.WARNING):
+        assert await sym.spot_sz_decimals("SOL") == 2
+    assert "spotMeta failed" in caplog.text
+    # a failure is not cached: the next call asks again
+    sol_client.spot_meta = AsyncMock(return_value=HLSpotMeta(tokens={}, pairs=[], sz_decimals={"USOL": 3}))
+    assert await sym.spot_sz_decimals("SOL") == 3
+
+
+@pytest.mark.asyncio
+async def test_spot_sz_decimals_falls_back_to_perp_for_a_token_spot_meta_lacks(sol_client, caplog):
+    sym = HLSymbols(client=sol_client, spot_token_map={"SOL": "USOL"})
+    sol_client.spot_meta = AsyncMock(return_value=HLSpotMeta(tokens={}, pairs=[]))
+    with caplog.at_level(logging.WARNING):
+        assert await sym.spot_sz_decimals("SOL") == 2
+    assert "no spot szDecimals" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_lot_size_is_the_coarser_of_perp_and_spot_lots(sol_client):
+    sym = HLSymbols(client=sol_client, spot_token_map={"SOL": "USOL", "BTC": "UBTC"})
+    assert await sym.lot_size("SOL") == pytest.approx(0.01)       # perp 2 vs spot 3
+    assert await sym.lot_size("BTC") == pytest.approx(0.00001)    # 5 and 5
+
+
+@pytest.mark.asyncio
+async def test_exchange_get_lot_size_delegates_to_symbols(mocker):
+    import httpx
+    from frab.exchanges.hyperliquid.exchange import HLExchange
+
+    ex = HLExchange(client=httpx.AsyncClient(), spot_token_map={"SOL": "USOL"})
+    ex._symbols.lot_size = AsyncMock(return_value=0.01)
+    assert await ex.get_lot_size("SOL") == 0.01
+    ex._symbols.lot_size.assert_awaited_once_with("SOL")

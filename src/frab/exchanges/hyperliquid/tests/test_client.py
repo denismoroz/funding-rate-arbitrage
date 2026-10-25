@@ -257,6 +257,28 @@ async def test_spot_meta_resolves_pair_names(make_client):
     await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_spot_meta_reads_token_sz_decimals(make_client):
+    """A spot token carries its own szDecimals (USOL 3 while perp SOL has 2)."""
+    client = make_client()
+    payload = {
+        "tokens": [
+            {"index": 0, "name": "USDC", "szDecimals": 8},
+            {"index": 254, "name": "USOL", "szDecimals": 3},
+            {"index": 9, "name": "NOSZ"},
+        ],
+        "universe": [
+            {"index": 156, "name": "@156", "tokens": [254, 0]},
+        ],
+    }
+    async with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/info").respond(200, json=payload)
+        meta = await client.spot_meta()
+
+    assert meta.sz_decimals == {"USDC": 8, "USOL": 3}
+    await client.aclose()
+
+
 # ---------------------------------------------------------------------------
 # 9. test_spot_meta_keeps_explicit_pair_name
 # ---------------------------------------------------------------------------

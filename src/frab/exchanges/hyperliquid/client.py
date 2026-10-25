@@ -178,11 +178,15 @@ class HLClient:
         """
         data = await self._post({"type": "spotMeta"})
         token_by_idx: dict[int, str] = {}
+        sz_by_name: dict[str, int] = {}
         for t in data.get("tokens", []):
             tidx = t.get("index")
             tname = t.get("name", "")
             if isinstance(tidx, int) and tname:
                 token_by_idx[tidx] = tname
+                tsz = t.get("szDecimals")
+                if isinstance(tsz, int):
+                    sz_by_name[tname] = tsz
 
         pairs: list[HLSpotPair] = []
         for entry in data.get("universe", []):
@@ -202,7 +206,7 @@ class HLClient:
                     continue
             pairs.append(HLSpotPair(index=idx, name=raw_name))
 
-        return HLSpotMeta(tokens=token_by_idx, pairs=pairs)
+        return HLSpotMeta(tokens=token_by_idx, pairs=pairs, sz_decimals=sz_by_name)
 
     async def funding_history(self, coin: str, since_ms: int, *, end_ms: int | None = None,
                               page_pause_s: float = 0.0) -> list[HLFundingRecord]:

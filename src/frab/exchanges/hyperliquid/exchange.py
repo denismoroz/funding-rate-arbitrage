@@ -346,6 +346,11 @@ class HLExchange:
     # Additional read helpers (non-Protocol, for CLI/internal use)
     # ------------------------------------------------------------------
 
+    async def get_lot_size(self, coin: str) -> float:
+        """The coarser of the coin's perp and spot lots (not in the Protocol: callers
+        look it up with getattr, as for the other optional reads)."""
+        return await self._symbols.lot_size(coin)
+
     async def fetch_funding_history(self, coin: str, since_ms: int) -> list[FundingTick]:
         records = await self._hl_client.funding_history(coin, since_ms)
         return [

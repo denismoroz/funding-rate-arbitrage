@@ -5,7 +5,7 @@ conventions, filtering, and normalization on top of these raw shapes.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -113,6 +113,9 @@ class HLSpotPair:
 class HLSpotMeta:
     tokens: dict[int, str]     # token_index → token name
     pairs: list[HLSpotPair]
+    # token name → the token's own szDecimals. A spot token's lot can be finer than
+    # its perp's (USOL 3 vs SOL 2), so a spot order may use more decimals than the hedge.
+    sz_decimals: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

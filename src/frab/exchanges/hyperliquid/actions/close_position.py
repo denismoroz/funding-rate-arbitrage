@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from decimal import Decimal
+
+from sqlalchemy import func, select
 
 from frab.constants import PERP_TAKER, SPOT_TAKER
 from frab.db.models import Fill as DBFill, Position as DBPosition
@@ -14,6 +17,8 @@ from frab.exchanges.hyperliquid.wire import HLOrderStatus
 
 logger = logging.getLogger(__name__)
 
+# HL rejects spot orders below $10; the retry loop does not place one below $11 so a price
+# move between the check and the fill cannot turn a sellable remainder into a rejected order.
 MIN_SPOT_RESIDUE_NOTIONAL_USDC = 11.0
 MAX_CLOSE_RETRIES = 3
 CLOSE_RETRY_SLIPPAGE_MULTIPLIER = 2.0
@@ -77,15 +82,32 @@ class ClosePositionAction(HLAction):
         last_price = pos.entry_price  # initial estimate for residue threshold
         attempts = 0
         final_balance = 0.0
+        balance_after = 0.0  # wallet balance of the coin as of the last look, net of our last sale
+
+        # What this close may sell. The wallet holds the coin of every open position of
+        # the same coin plus the sub-lot remainders of earlier closes, and may hold coins
+        # nobody here owns. This position's share is its recorded qty plus at most one lot
+        # of such remainder (the next position absorbs remainders by design; they are always
+        # below one lot). Everything else stays: it belongs to another open leg or to the owner.
+        reserved = await self._other_open_spot_qty(pos)
+        lot = await self._symbols.lot_size(pos.coin)
+        budget = Decimal(str(pos.qty)) + Decimal(str(lot))
 
         for attempt in range(MAX_CLOSE_RETRIES):
             attempts = attempt + 1
             state = await self._client.spot_user_state(self._address)
             match = next((b for b in state.balances if b.coin == hl_coin), None)
             raw_balance = float(match.total) if match is not None else 0.0
-            rounded = await self._symbols.round_qty(pos.coin, raw_balance)
+            balance_after = raw_balance
+            sellable = min(
+                Decimal(str(raw_balance)) - Decimal(str(reserved)),
+                budget - Decimal(str(qty_filled_total)),
+            )
+            # Floor at the SPOT token's lot, not the perp's: a sale is the only chance
+            # to take the coins out, and what the floor leaves can never be sold.
+            rounded = await self._symbols.round_spot_qty(pos.coin, max(sellable, Decimal(0)))
             residue_notional = rounded * last_price
-            final_balance = raw_balance
+            final_balance = float(max(sellable, Decimal(0)))
 
             if rounded <= 0 or residue_notional < MIN_SPOT_RESIDUE_NOTIONAL_USDC:
                 break
@@ -96,6 +118,7 @@ class ClosePositionAction(HLAction):
                 status0, taker=SPOT_TAKER, now_ms=now_ms,
             )
             qty_filled_total += qty_filled_i
+            balance_after = raw_balance - qty_filled_i
             fee_total += fee_i
             fill_parts.append((qty_filled_i, fill_price_i))
             last_price = fill_price_i
@@ -103,6 +126,12 @@ class ClosePositionAction(HLAction):
 
         if qty_filled_total <= 0:
             raise RuntimeError(f"close_position drained 0 of {pos.qty} {pos.coin}")
+
+        logger.info(
+            "close_position %s: sold %s, wallet keeps %s (reserved for other open legs: %s; "
+            "one lot: %s)",
+            pos.coin, qty_filled_total, balance_after, reserved, lot,
+        )
 
         if final_balance * last_price >= MIN_SPOT_RESIDUE_NOTIONAL_USDC:
             logger.warning(
@@ -118,6 +147,20 @@ class ClosePositionAction(HLAction):
             qty=qty_filled_total, price=vwap_price, fee=fee_total,
             side=closing_side, slippage=current_slippage,
         )
+
+    async def _other_open_spot_qty(self, pos: Position) -> float:
+        """Recorded qty of the OTHER open spot positions of the same coin: tokens that sit
+        in the same wallet balance but belong to a leg that is still open."""
+        async with session_scope(self._sf) as s:
+            total = (await s.execute(
+                select(func.coalesce(func.sum(DBPosition.qty), 0.0)).where(
+                    DBPosition.coin == pos.coin,
+                    DBPosition.instrument == Instrument.SPOT.value,
+                    DBPosition.status == PositionStatus.OPEN.value,
+                    DBPosition.id != pos.id,
+                )
+            )).scalar_one()
+        return float(total)
 
     async def _close_perp(self, pos: Position, now_ms: int) -> Position:
         order_resp = await self._client.market_close(pos.coin, self._slippage)

@@ -32,6 +32,7 @@ class HLSymbols:
         )
         self._spot_quote_token = spot_quote_token
         self._sz_decimals_cache: dict[str, int] | None = None
+        self._spot_sz_decimals_cache: dict[str, int] | None = None
         self._spot_idx_to_name: dict[int, str] | None = None
 
     # --- Synchronous (no I/O) ---
@@ -89,6 +90,43 @@ class HLSymbols:
         sz_dec = await self.sz_decimals(coin)
         quant = Decimal(10) ** -sz_dec
         return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_HALF_UP))
+
+    async def spot_sz_decimals(self, coin: str) -> int:
+        """szDecimals of the coin's SPOT token (USOL=3 while perp SOL=2).
+
+        The spot lot can be finer than the perp's, so a spot SALE must be floored at
+        the spot token's own lot: flooring at the perp's lot strands up to 10x more
+        coins in the wallet (the 0.00974 USOL left by SOL #26). Falls back to the perp
+        szDecimals, which is always a valid (if coarser) lot, when spotMeta is
+        unreachable or does not list the token; a failed fetch is not cached.
+        """
+        token = self._spot_token_map.get(coin, coin)
+        if self._spot_sz_decimals_cache is None:
+            try:
+                meta = await self._client.spot_meta()
+                loaded = {k: v for k, v in meta.sz_decimals.items() if isinstance(v, int)}
+            except Exception as exc:  # noqa: BLE001 - rounding must not depend on one fetch
+                logger.warning("spot_sz_decimals: spotMeta failed (%s); using perp szDecimals", exc)
+                return await self.sz_decimals(coin)
+            self._spot_sz_decimals_cache = loaded
+        sz_dec = self._spot_sz_decimals_cache.get(token)
+        if sz_dec is None:
+            logger.warning("spot_sz_decimals: no spot szDecimals for %s; using perp szDecimals", token)
+            return await self.sz_decimals(coin)
+        return sz_dec
+
+    async def round_spot_qty(self, coin: str, qty: float | Decimal) -> float:
+        """Floor qty to the SPOT token's szDecimals (for selling the wallet balance)."""
+        sz_dec = await self.spot_sz_decimals(coin)
+        quant = Decimal(10) ** -sz_dec
+        return float(Decimal(str(qty)).quantize(quant, rounding=ROUND_DOWN))
+
+    async def lot_size(self, coin: str) -> float:
+        """The coarser of the coin's perp and spot lots: the smallest amount of the
+        coin that cannot be traded away or hedged in a unit of its own."""
+        perp = await self.sz_decimals(coin)
+        spot = await self.spot_sz_decimals(coin)
+        return float(Decimal(10) ** -min(perp, spot))
 
     async def spot_mids_by_coin(self) -> dict[str, float]:
         """Return {canonical_coin: spot_mid_USDC} for spot pairs we support."""
