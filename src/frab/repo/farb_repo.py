@@ -10,9 +10,10 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from frab.domain import FarbPosition, FarbState, Instrument
+from frab.domain import FarbPosition, FarbState, Instrument, PositionStatus
 from frab.domain import ACTIVE_STATES
 from frab.db.models import FarbPosition as FarbPositionRow
+from frab.db.models import Position as DBPosition
 from frab.db.session import session_scope
 
 
@@ -366,4 +367,26 @@ class FarbRepo:
             updated_row = result.scalar_one_or_none()
             if updated_row is None:
                 raise StateConflict(farb_position_id, "non-terminal", FarbState(current.state))
+
+            # Release the COLLATERAL bookkeeping row, as XsmomRepo.mark_failed does. FAILED
+            # is terminal and never reaches RELEASING_MARGIN, the only other place that
+            # closes it, so the row stayed OPEN forever (3 PURR entries rejected below HL's
+            # $10 minimum on 2026-06-01/02 left $28.50 of phantom margin). Kept open while
+            # the perp leg is still live: there the margin is genuinely in use.
+            if updated_row.margin_position_id is not None:
+                coll = await session.get(DBPosition, updated_row.margin_position_id)
+                perp = (
+                    await session.get(DBPosition, updated_row.perp_position_id)
+                    if updated_row.perp_position_id is not None
+                    else None
+                )
+                perp_live = perp is not None and perp.status == PositionStatus.OPEN.value
+                if (
+                    coll is not None
+                    and coll.status == PositionStatus.OPEN.value
+                    and not perp_live
+                ):
+                    coll.status = PositionStatus.CLOSED.value
+                    coll.closed_at = now_ms
+
             return _to_domain(updated_row)

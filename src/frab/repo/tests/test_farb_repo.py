@@ -486,3 +486,63 @@ async def test_state_conflict_error_message(session_factory, strategy_id):
     assert str(fp.id) in msg
     assert "pre_breakeven" in msg
     assert "check_margin" in msg
+
+
+# ---------------------------------------------------------------------------
+# mark_failed releases the COLLATERAL row (FAILED never reaches RELEASING_MARGIN)
+# ---------------------------------------------------------------------------
+
+async def _make_position(session_factory, *, instrument, qty=9.17):
+    """Insert a standalone OPEN Position row and return its id."""
+    from frab.db.models import Exchange, Position
+    from frab.db.session import session_scope
+    from frab.domain import PositionStatus, Side
+    async with session_scope(session_factory) as s:
+        exc = Exchange(name=f"HL-{instrument.value}-{qty}", funding_interval_h=1,
+                       spot_taker_bps=7.0, perp_taker_bps=3.5)
+        s.add(exc)
+        await s.flush()
+        pos = Position(
+            exchange_id=exc.id, coin="USDC", instrument=instrument, side=Side.NONE,
+            qty=qty, entry_price=1.0, opened_at=1_700_000_000_000, closed_at=None,
+            status=PositionStatus.OPEN, farb_position_id=None,
+        )
+        s.add(pos)
+        await s.flush()
+        return pos.id
+
+
+async def _position_status(session_factory, pid):
+    from frab.db.models import Position
+    from frab.db.session import session_scope
+    async with session_scope(session_factory) as s:
+        return (await s.get(Position, pid)).status
+
+
+async def test_mark_failed_releases_collateral_when_no_perp(session_factory, strategy_id):
+    """An entry rejected after its collateral row was written (prod, PURR 2026-06-01: spot order
+    below HL's $10 minimum) must not leave that row OPEN forever."""
+    from frab.domain import PositionStatus
+    coll_id = await _make_position(session_factory, instrument=Instrument.COLLATERAL)
+    repo = _repo(session_factory)
+    fp = await repo.create(strategy_id=strategy_id, coin="PURR", initial_state=FarbState.OPENING_LONG)
+    await repo.set_leg(fp.id, instrument=Instrument.COLLATERAL, position_id=coll_id)
+
+    await repo.mark_failed(fp.id, reason="HL order error: 'Order must have minimum value of 10 USDC.'")
+
+    assert await _position_status(session_factory, coll_id) == PositionStatus.CLOSED
+
+
+async def test_mark_failed_keeps_collateral_while_perp_is_live(session_factory, strategy_id):
+    """If the perp leg is still OPEN the margin is genuinely used -- keep the row."""
+    from frab.domain import PositionStatus
+    coll_id = await _make_position(session_factory, instrument=Instrument.COLLATERAL)
+    perp_id = await _make_position(session_factory, instrument=Instrument.PERP, qty=1.0)
+    repo = _repo(session_factory)
+    fp = await repo.create(strategy_id=strategy_id, coin="PURR", initial_state=FarbState.CLOSING_SHORT)
+    await repo.set_leg(fp.id, instrument=Instrument.COLLATERAL, position_id=coll_id)
+    await repo.set_leg(fp.id, instrument=Instrument.PERP, position_id=perp_id)
+
+    await repo.mark_failed(fp.id, reason="close failed")
+
+    assert await _position_status(session_factory, coll_id) == PositionStatus.OPEN
