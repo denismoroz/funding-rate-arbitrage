@@ -11,6 +11,9 @@ from frab.db.session import session_scope
 from frab.strategy.b2.book import CoinBook
 
 HOUR_MS = 3_600_000
+# The `b2_retune` book keeps its simulation state in a b2_books row of this reserved coin name; it is not a coin
+# book and every reader below skips it.
+RETUNE_STATE_COIN = "__retune__"
 
 
 class B2Repo:
@@ -20,7 +23,8 @@ class B2Repo:
     async def get_book(self, strategy_id: int, coin: str) -> CoinBook | None:
         async with self._sf() as s:
             row = (await s.execute(
-                select(B2Book).where(B2Book.strategy_id == strategy_id, B2Book.coin == coin)
+                select(B2Book).where(B2Book.strategy_id == strategy_id, B2Book.coin == coin,
+                                     B2Book.coin != RETUNE_STATE_COIN)
             )).scalar_one_or_none()
         return CoinBook.from_state(dict(row.state_json)) if row else None
 
@@ -51,7 +55,8 @@ class B2Repo:
 
     async def books(self, strategy_id: int) -> list[CoinBook]:
         async with self._sf() as s:
-            rows = (await s.execute(select(B2Book).where(B2Book.strategy_id == strategy_id))).scalars().all()
+            rows = (await s.execute(select(B2Book).where(
+                B2Book.strategy_id == strategy_id, B2Book.coin != RETUNE_STATE_COIN))).scalars().all()
         return [CoinBook.from_state(dict(r.state_json)) for r in rows]
 
     async def latest_equity(self, strategy_id: int) -> list[B2Equity]:
@@ -74,11 +79,14 @@ class B2Repo:
             )).all()
         return [(int(ts), float(total)) for ts, total, n in rows if n == n_coins]
 
-    async def events(self, strategy_id: int, limit: int = 200) -> list[B2Event]:
+    async def events(self, strategy_id: int, limit: int = 200, kinds: tuple[str, ...] | None = None
+                     ) -> list[B2Event]:
+        query = select(B2Event).where(B2Event.strategy_id == strategy_id)
+        if kinds:
+            query = query.where(B2Event.kind.in_(kinds))
         async with self._sf() as s:
             rows = (await s.execute(
-                select(B2Event).where(B2Event.strategy_id == strategy_id)
-                .order_by(B2Event.ts_ms.desc(), B2Event.id.desc()).limit(limit)
+                query.order_by(B2Event.ts_ms.desc(), B2Event.id.desc()).limit(limit)
             )).scalars().all()
         return list(rows)
 

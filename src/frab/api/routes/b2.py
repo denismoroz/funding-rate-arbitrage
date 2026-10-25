@@ -6,7 +6,9 @@ from sqlalchemy import select
 
 from frab.db.models import Strategy
 from frab.repo.b2_repo import B2Repo
+from frab.repo.b2_retune_repo import B2RetuneRepo
 from frab.strategy.b2.params import B2Params
+from frab.strategy.b2.retune import next_refit_ms, sharpe
 
 router = APIRouter()
 
@@ -29,6 +31,42 @@ def _engine(request: Request, sid: int):
     if engines is not None:
         return engines.get(sid)
     return getattr(request.app.state, "b2_engine", None)
+
+
+def _is_retune(request: Request, sid: int) -> bool:
+    return getattr(request.app.state, "b2_retune_strategy_id", None) == sid
+
+
+def _nan_to_none(x: float) -> float | None:
+    return None if x != x else x
+
+
+async def _retune_block(request: Request, sid: int, series: list[tuple[int, float]]) -> dict | None:
+    """The monthly re-tuning of `b2_retune` for the dashboard: who is chosen, when it was last and will next be
+    decided, how each candidate has done, and the live part of the record (the backfilled part is history)."""
+    state = await B2RetuneRepo(request.app.state.session_factory).get_state(sid)
+    if state is None:
+        return None
+    launch = state.get("launch_ms")
+    live = [(ts, eq) for ts, eq in series if launch is not None and ts > launch]
+    at_launch = next((eq for ts, eq in reversed(series) if launch is not None and ts <= launch), None)
+    live_pnl = None if not live or at_launch is None else live[-1][1] - at_launch
+    last_bar = state.get("last_bar_ms")
+    return {
+        "chosen": state["chosen"], "chosen_score": state["chosen_score"], "refits": state["refits"],
+        "choice_changes": state["changes"],
+        # a refit decided at the close of the first hour of the month: `last_refit_ms` is that hour's open
+        "last_refit_ms": state["last_refit_ms"],
+        "last_decision_ms": None if state["last_refit_ms"] is None else state["last_refit_ms"] + 3_600_000,
+        "next_refit_ms": None if last_bar is None else next_refit_ms(last_bar),
+        "first_choice_ms": state["first_choice_ms"], "launch_ms": launch, "last_retune": state["last_retune"],
+        "candidates": [{"name": name, "first_active_ms": c["first_active_ms"], "hours": c["n"],
+                        "sharpe": _nan_to_none(sharpe(c["n"], c["mean"], c["m2"]))}
+                       for name, c in state["candidates"].items()],
+        "backfill": state.get("backfill"),
+        "live_hours": len(live), "live_pnl": live_pnl,
+        "live_pnl_pct": None if live_pnl is None or not at_launch else live_pnl / at_launch * 100,
+    }
 
 
 @router.get("/summary")
@@ -83,6 +121,7 @@ async def get_summary(request: Request, test: str = "b2") -> dict:
 
     short_notional = sum(c["hedge_notional"] + c["carry_notional"] for c in started)
     hl_av = total("hl_account_value")
+    retune = await _retune_block(request, sid, series) if _is_retune(request, sid) else None
     return {
         "test": test, "mode": params.mode, "status": row.status, "params": params.to_dict(),
         "capital": capital, "equity": equity,
@@ -98,6 +137,7 @@ async def get_summary(request: Request, test: str = "b2") -> dict:
         "started_ms": series[0][0] if series else None, "last_bar_ms": series[-1][0] if series else None,
         "hours": hours, "engine_last_tick_ms": getattr(engine, "last_tick_ms", None),
         "engine_last_error": getattr(engine, "last_error", None), "coins": coins,
+        **({"retune": retune} if _is_retune(request, sid) else {}),
     }
 
 
@@ -116,3 +156,11 @@ async def get_events(request: Request, limit: int = 200, test: str = "b2") -> li
     return [{"ts_ms": e.ts_ms, "coin": e.coin, "kind": e.kind, "qty": e.qty, "price": e.price,
              "notional": e.notional, "fee": e.fee, "is_paper": e.is_paper, "details": e.details_json}
             for e in await repo.events(sid, limit=min(limit, 1000))]
+
+
+@router.get("/retunes")
+async def get_retunes(request: Request, limit: int = 200, test: str = "b2_retune") -> list[dict]:
+    """Every monthly re-tuning of a re-tuned book, newest first: the choice and each candidate's score."""
+    sid, repo = _state(request, test)
+    rows = await repo.events(sid, limit=min(limit, 1000), kinds=("retune",))
+    return [{"ts_ms": e.ts_ms, "details": e.details_json} for e in rows]

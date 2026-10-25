@@ -1,0 +1,58 @@
+{
+  "coins": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "AVAX"
+  ],
+  "capital_usd": 257.0,
+  "spot_share": 0.5,
+  "hedge_threshold": 0.0,
+  "sticky_exit_hours": 12,
+  "ratchet_threshold": 0.5,
+  "carry_enabled": false,
+  "carry_fraction": 0.6,
+  "carry_entry_apr": 0.1,
+  "carry_exit_hours": 24,
+  "slippage": 0.0005,
+  "min_order_usd": 10.0,
+  "margin_enabled": true,
+  "short_leverage": {
+    "BTC": 3.0,
+    "ETH": 2.0,
+    "SOL": 1.5,
+    "AVAX": 1.5
+  },
+  "default_leverage": 1.0,
+  "maint_margin_rate": {
+    "BTC": 0.0125,
+    "ETH": 0.02,
+    "SOL": 0.025,
+    "AVAX": 0.05
+  },
+  "default_maint_margin_rate": 0.05,
+  "margin_buffer": 0.1,
+  "hedge_margin_headroom": 1.0,
+  "rebalance_at_im_share": 0.5,
+  "mode": "paper",
+  "retune_candidates": {
+    "b2": {
+      "hedge_margin_headroom": 1.0
+    },
+    "b2_cold": {
+      "hedge_margin_headroom": 1.5
+    }
+  },
+  "retune_history_start": "2026-03-08T02:00:00Z",
+  "retune_coin_starts": {
+    "BTC": "2026-04-09T22:00:00Z",
+    "ETH": "2026-04-09T22:00:00Z",
+    "SOL": "2026-04-09T22:00:00Z",
+    "AVAX": "2026-05-06T14:00:00Z"
+  },
+  "retune_refit_every": "M",
+  "retune_history_seed_path": "deploy/b2_retune_history_seed.json",
+  "retune_history_cache_dir": "data/b2_retune_cache",
+  "retune_candle_pause_s": 2.0,
+  "retune_funding_page_pause_s": 2.7
+}

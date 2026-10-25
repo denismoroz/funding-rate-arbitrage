@@ -31,8 +31,11 @@ from frab.strategy.two_phase import TwoPhaseParams, TwoPhaseStrategy
 from frab.strategy.xsmom.params import XsmomParams
 from frab.exchanges.hyperliquid.client import HLClient
 from frab.repo.b2_repo import B2Repo
+from frab.repo.b2_retune_repo import B2RetuneRepo
 from frab.strategy.b2.engine import B2PaperEngine
 from frab.strategy.b2.params import B2Params
+from frab.strategy.b2.retune_engine import B2RetuneEngine
+from frab.strategy.b2.retune_params import B2RetuneParams
 from frab.repo.trend_repo import TrendRepo
 from frab.strategy.trend.cap_history import REPO_ROOT as _REPO_ROOT
 from frab.strategy.trend.cap_history import CapHistory
@@ -64,6 +67,10 @@ _B2_TESTS = (
     # (it needs spot on HL); the pool covers a hedge on spot grown to the 1.5x ratchet line.
     ("b2_cold", "v2-paper-cold", B2Params(capital_usd=257.0, carry_enabled=False, hedge_margin_headroom=1.5)),
 )
+# Monthly re-tuned Bv2 (headroom 1.0 or 1.5 chosen by code, q-lab spec bv2-research-headroom-retune). Paper only and
+# OPT-IN: the engine starts only if a strategy row with exactly this name exists (see README.md, «Bv2 с месячной
+# перенастройкой»); the server never creates it.
+_B2_RETUNE_STRATEGY_NAME = "b2_retune"
 _XSMOM_STRATEGY_VERSION = "v1"
 _TREND_STRATEGY_NAME = "trend"
 _TREND_STRATEGY_VERSION = "v1-paper"
@@ -244,6 +251,20 @@ async def _find_trend_retune_strategies(session_factory) -> list[tuple[str, int,
             except (ValueError, TypeError) as exc:
                 raise ValueError(f"strategy {row.name!r}: invalid trend_retune params: {exc}") from exc
         return found
+
+
+async def _find_b2_retune_strategy(session_factory) -> tuple[int, B2RetuneParams] | None:
+    """(id, params) of the `b2_retune` strategy row, or None when it was not added (the book is then off)."""
+    async with session_scope(session_factory) as s:
+        row = (await s.execute(
+            select(StrategyRow).where(StrategyRow.name == _B2_RETUNE_STRATEGY_NAME).order_by(StrategyRow.id)
+        )).scalars().first()
+        if row is None:
+            return None
+        try:
+            return row.id, B2RetuneParams.from_dict(dict(row.params_json))
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"strategy {row.name!r}: invalid b2_retune params: {exc}") from exc
 
 
 def _load_cap_history(params: RetuneParams) -> CapHistory | None:
@@ -498,6 +519,20 @@ def build_app(*, dry_run: bool = False) -> FastAPI:
             logger.info("b2 paper engine started (test=%s strategy_id=%s)", b2_name, sid)
         app.state.b2_strategy_id = app.state.b2_tests[_B2_STRATEGY_NAME]
         app.state.b2_engine = app.state.b2_engines[app.state.b2_strategy_id]
+
+        b2_retune_row = await _find_b2_retune_strategy(session_factory)
+        if b2_retune_row is not None:
+            rt_id, _ = b2_retune_row
+            rt_engine = B2RetuneEngine(session_factory=session_factory, client=b2_client, strategy_id=rt_id,
+                                       repo=B2RetuneRepo(session_factory), event_bus=bus,
+                                       tick_delay_s=315.0)
+            await rt_engine.start()
+            app.state.b2_tests[_B2_RETUNE_STRATEGY_NAME] = rt_id
+            app.state.b2_engines[rt_id] = rt_engine
+            app.state.b2_retune_strategy_id = rt_id
+            logger.info("b2_retune paper engine started (strategy_id=%s)", rt_id)
+        else:
+            logger.info("no b2_retune strategy row found; the re-tuned Bv2 book is off")
 
         trend_sid = await _get_or_create_trend_strategy(session_factory, _TREND_DEFAULTS)
         trend_engine = TrendPaperEngine(session_factory=session_factory, client=b2_client,
