@@ -14,6 +14,12 @@ coin book is one HL cross-margin pool holding USDC only (spot is not collateral,
 spot may live in a cold wallet). The shorts need initial margin to open, a pump drains the
 pool, the book tops up by selling spot and cutting the short by the same units, and HL
 liquidates the shorts if the bar's high takes the pool below maintenance margin.
+
+Two research mechanisms sit behind params that default to today's behaviour (no production book sets
+them; tests/test_book_pool_parity.py replays stored histories and compares every bar with a digest
+recorded before they existed): `shared_margin` makes the coin books one HL cross account (`MarginPool`:
+free margin, top-up trigger and liquidation are asked of the sum), and `topup_delay_hours` makes a top-up
+take effect that many hours after it fell due, with the shorts exposed meanwhile.
 """
 from __future__ import annotations
 
@@ -23,6 +29,7 @@ from frab.constants import PERP_TAKER, SPOT_TAKER
 from frab.strategy.b2.params import B2Params
 
 HOURS_PER_YEAR = 8760
+HOUR_MS = 3_600_000
 H14, H30, CARRY_WINDOW = 14 * 24, 30 * 24, 8
 
 
@@ -72,6 +79,8 @@ class CoinBook:
     hedge_limited: int = 0
     carry_blocked_hours: int = 0
     last_price: float = 0.0
+    # open ms of the bar at which a delayed top-up takes effect (params.topup_delay_hours > 0)
+    topup_due_ms: int | None = None
 
     @classmethod
     def new(cls, coin: str, params: B2Params) -> "CoinBook":
@@ -84,7 +93,12 @@ class CoinBook:
         return cls(**state)
 
     def to_state(self) -> dict:
-        return asdict(self)
+        state = asdict(self)
+        if state["topup_due_ms"] is None:
+            # Written only while a delayed top-up is pending: a book that never uses the delay
+            # stores exactly the state it stored before the field existed.
+            del state["topup_due_ms"]
+        return state
 
     # ── valuation ────────────────────────────────────────────────────────
     def short_pnl(self, price: float) -> float:
@@ -149,6 +163,7 @@ def _liquidate_if_breached(book: CoinBook, high: float, price: float, spot_cost:
         book.carry_fees += fee
         book.carry_units, book.carry_entry, book.carry_on, book.carry_below = 0.0, 0.0, False, 0
     book.cash -= penalty
+    book.topup_due_ms = None                      # nothing left to top up
     loss = penalty + (qh + qc) * max(liq - price, 0.0)
     book.liquidations += 1
     book.liquidation_loss += loss
@@ -156,9 +171,12 @@ def _liquidate_if_breached(book: CoinBook, high: float, price: float, spot_cost:
                    hedge_units=qh, carry_units=qc, loss=loss)]
 
 
-def _hedge_room(book: CoinBook, price: float, perp_cost: float) -> float:
-    """Short units the pool's free margin can open, fee included."""
-    return max(book.free_margin(price), 0.0) / (price * (1.0 / book.leverage + perp_cost))
+def _hedge_room(book: CoinBook, price: float, perp_cost: float, pool: "MarginPool | None" = None) -> float:
+    """Short units the pool's free margin can open, fee included.
+
+    With a shared pool the free margin is the whole pool's, not this book's own."""
+    free = book.free_margin(price) if pool is None else pool.free_margin()
+    return max(free, 0.0) / (price * (1.0 / book.leverage + perp_cost))
 
 
 def _shrink_carry_for_hedge(book: CoinBook, price: float, hedge_units: float, spot_cost: float,
@@ -214,6 +232,125 @@ def _top_up(book: CoinBook, price: float, cost: float, bar_ms: int) -> list[dict
     return ev
 
 
+# ── one margin pool for several coin books (params.shared_margin) ─────────────────────────
+#
+# On Hyperliquid the margin of a cross account is shared: every short is backed by all the
+# USDC on the account. The books keep their own ledgers (cash, spot, equity), but the margin
+# questions -- may another short open, is a top-up due, is the account liquidated -- are asked
+# of the SUM over the books. The caller (an engine or the q-lab stand) owns the pool:
+#
+#   1. set `pool.marks[coin]` to this bar's close for every book that has a price;
+#   2. `pool_liquidate_if_breached` on the bar's highs;
+#   3. `step(book, ..., pool=pool)` for each book that has data this bar;
+#   4. `pool_top_up` once.
+#
+# Not modelled in a pool: the carry sleeve (B2Params refuses carry_enabled with shared_margin).
+
+@dataclass
+class MarginPool:
+    books: dict[str, CoinBook] = field(default_factory=dict)
+    marks: dict[str, float] = field(default_factory=dict)
+    topup_due_ms: int | None = None
+
+    def add(self, book: CoinBook, price: float) -> None:
+        self.books[book.coin] = book
+        self.marks[book.coin] = price
+
+    def remove(self, coin: str) -> None:
+        self.books.pop(coin, None)
+        self.marks.pop(coin, None)
+
+    def account_value(self) -> float:
+        return sum(b.account_value(self.marks[c]) for c, b in self.books.items())
+
+    def initial_margin(self) -> float:
+        return sum(b.initial_margin(self.marks[c]) for c, b in self.books.items())
+
+    def free_margin(self) -> float:
+        return self.account_value() - self.initial_margin()
+
+
+def pool_liquidate_if_breached(pool: MarginPool, *, highs: dict[str, float], bar_ms: int) -> list[dict]:
+    """The pool is liquidated when the shorts' losses take its account value down to the sum of
+    their maintenance margins; every short of the pool is then closed.
+
+    `highs[coin]` is the bar's high for each coin with a short (the close of a book without data
+    this bar). The bar's path is unknown, so all the highs are taken at once -- the worst case
+    the bar's data allows, and exact for a pool of one coin. Each price moves from the book's
+    last close to its high in proportion; the liquidation happens where account value meets
+    maintenance margin, which is linear in that proportion. A pool already below maintenance at
+    the last closes is liquidated at those closes.
+    """
+    hedged = [(c, b) for c, b in pool.books.items() if b.in_pos]
+    if not hedged:
+        return []
+    usdc = sum(b.hl_usdc() for b in pool.books.values())
+    base = slope = 0.0                      # account value - maintenance margin = base + slope * t
+    refs: dict[str, float] = {}
+    for coin, b in hedged:
+        ref = b.last_price if b.last_price > 0 else b.entry_price
+        move = max(highs[coin], ref) - ref
+        refs[coin] = ref
+        q = b.short_size
+        base += q * (b.entry_price - ref) - q * b.mmr * ref
+        slope -= q * move * (1.0 + b.mmr)
+    base += usdc
+    if base + slope > 0.0:
+        return []
+    t = 0.0 if base <= 0.0 or slope == 0.0 else base / -slope
+    ev: list[dict] = []
+    for coin, b in hedged:
+        ref = refs[coin]
+        liq = ref + t * (max(highs[coin], ref) - ref)
+        q = b.short_size
+        realized = q * (b.entry_price - liq)
+        penalty = q * liq * b.mmr
+        b.cash += realized
+        b.short_realized += realized
+        b.short_size, b.entry_price, b.in_pos = 0.0, 0.0, False
+        if b.units_spot * pool.marks[coin] < b.position_size:
+            b.refill_pending = True
+        b.cash -= penalty
+        b.topup_due_ms = None
+        loss = penalty + q * max(liq - pool.marks[coin], 0.0)
+        b.liquidations += 1
+        b.liquidation_loss += loss
+        ev.append(_event("liquidation", q, liq, q * liq, penalty, bar_ms=bar_ms, hedge_units=q,
+                         carry_units=0.0, loss=loss, coin=coin, pool=True))
+    pool.topup_due_ms = None
+    return ev
+
+
+def pool_top_up(pool: MarginPool, *, bar_ms: int, params: B2Params) -> list[dict]:
+    """Step 6 of `step`, asked of the pool: top up once the shorts' losses have eaten into the
+    pool's initial margin. Every losing short is topped up as for a single book (spot sold for
+    its loss, the short cut by the same units); with `params.topup_delay_hours` the top-up takes
+    effect that many hours after it fell due, whether or not it is still needed then."""
+    if not any(b.in_pos for b in pool.books.values()):
+        pool.topup_due_ms = None
+        return []
+    delay_ms = params.topup_delay_hours * HOUR_MS
+    if delay_ms and pool.topup_due_ms is not None and bar_ms >= pool.topup_due_ms:
+        pool.topup_due_ms = None
+        return _pool_apply_top_up(pool, params, bar_ms)
+    if pool.account_value() < params.rebalance_at_im_share * pool.initial_margin():
+        if not delay_ms:
+            return _pool_apply_top_up(pool, params, bar_ms)
+        if pool.topup_due_ms is None:
+            pool.topup_due_ms = bar_ms + delay_ms
+    return []
+
+
+def _pool_apply_top_up(pool: MarginPool, params: B2Params, bar_ms: int) -> list[dict]:
+    cost = SPOT_TAKER + params.slippage + PERP_TAKER + params.slippage
+    ev: list[dict] = []
+    for coin, b in pool.books.items():
+        if b.in_pos:
+            for e in _top_up(b, pool.marks[coin], cost, bar_ms):
+                ev.append({**e, "coin": coin})
+    return ev
+
+
 def signals_at(closes: list[float], funding: list[float], params: B2Params) -> tuple[bool, bool, float | None]:
     """Raw hedge wish, refill trend confirmation and carry APR at the LAST element.
 
@@ -265,11 +402,16 @@ def start_book(book: CoinBook, *, bar_ms: int, price: float, params: B2Params) -
 
 
 def step(book: CoinBook, *, bar_ms: int, price: float, funding_rate: float, closes: list[float],
-         funding_hist: list[float], params: B2Params, high: float | None = None) -> list[dict]:
+         funding_hist: list[float], params: B2Params, high: float | None = None,
+         pool: MarginPool | None = None) -> list[dict]:
     """Advance one closed hourly bar. Returns the paper fills generated in this bar.
 
     `closes` / `funding_hist` must END at this bar (they feed the signals for the NEXT bar).
     `high` is the bar's high, used for the liquidation check (defaults to the close).
+    `pool` is the shared margin pool this book belongs to (params.shared_margin): its liquidation
+    (step 0) and top-up (step 6) are then the caller's (`pool_liquidate_if_breached`,
+    `pool_top_up`), and a hedge may use the whole pool's free margin. Without it -- every
+    production book -- the book is its own pool, as ever.
     """
     P = float(price)
     rate = float(funding_rate)
@@ -280,7 +422,7 @@ def step(book: CoinBook, *, bar_ms: int, price: float, funding_rate: float, clos
     ev: list[dict] = []
 
     # 0) liquidation on the shorts carried into this bar
-    if margin:
+    if margin and pool is None:
         ev += _liquidate_if_breached(book, max(P, float(high if high is not None else P)), P, spot_cost, bar_ms)
 
     # 1) funding on an open hedge (short receives positive funding)
@@ -295,10 +437,10 @@ def step(book: CoinBook, *, bar_ms: int, price: float, funding_rate: float, clos
     if not book.in_pos and want_hedge:
         units = book.units_spot
         limited = False
-        if margin and _hedge_room(book, P, perp_cost) < units:
+        if margin and _hedge_room(book, P, perp_cost, pool) < units:
             ev += _top_up(book, P, spot_cost + perp_cost, bar_ms)      # realise a pumped carry's loss
             ev += _shrink_carry_for_hedge(book, P, units, spot_cost, perp_cost, bar_ms)
-            room = _hedge_room(book, P, perp_cost)
+            room = _hedge_room(book, P, perp_cost, pool)
             if room < units:
                 units, limited = room, True
         notional = units * P
@@ -325,6 +467,7 @@ def step(book: CoinBook, *, bar_ms: int, price: float, funding_rate: float, clos
         book.short_size = 0.0
         book.entry_price = 0.0
         book.in_pos = False
+        book.topup_due_ms = None                  # no short left to top up
         if book.units_spot * P < book.position_size:
             book.refill_pending = True
 
@@ -390,9 +533,21 @@ def step(book: CoinBook, *, bar_ms: int, price: float, funding_rate: float, clos
             book.carry_funding += earned
 
     # 6) margin top-up once the shorts' losses have eaten into initial margin
-    if margin and (book.in_pos or book.carry_units):
-        if book.account_value(P) < params.rebalance_at_im_share * book.initial_margin(P):
-            ev += _top_up(book, P, spot_cost + perp_cost, bar_ms)
+    #    (a shared pool does this once for all its books: `pool_top_up`)
+    if margin and pool is None:
+        if book.in_pos or book.carry_units:
+            delay_ms = params.topup_delay_hours * HOUR_MS
+            if delay_ms and book.topup_due_ms is not None and bar_ms >= book.topup_due_ms:
+                # a delayed top-up arrives: sized to the losses as they stand now
+                book.topup_due_ms = None
+                ev += _top_up(book, P, spot_cost + perp_cost, bar_ms)
+            elif book.account_value(P) < params.rebalance_at_im_share * book.initial_margin(P):
+                if not delay_ms:
+                    ev += _top_up(book, P, spot_cost + perp_cost, bar_ms)
+                elif book.topup_due_ms is None:
+                    book.topup_due_ms = bar_ms + delay_ms
+        else:
+            book.topup_due_ms = None
 
     # 7) signals of THIS bar, used at the next bar
     advance_signals(book, closes, funding_hist, params)

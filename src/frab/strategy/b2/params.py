@@ -9,6 +9,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 
 
+# Params added later, with the value that means "the behaviour that existed before them".
+OPTIONAL_PARAMS: dict[str, object] = {"shared_margin": False, "topup_delay_hours": 0}
+
+
 @dataclass(frozen=True)
 class B2Params:
     coins: tuple[str, ...] = ("BTC", "ETH", "SOL", "AVAX")
@@ -53,6 +57,15 @@ class B2Params:
     rebalance_at_im_share: float = 0.5
     # "paper" is the only mode implemented: no signing key is ever used.
     mode: str = "paper"
+    # One HL cross-margin account for ALL coin books instead of one per book: the shorts are
+    # backed by the sum of the books' USDC, free margin and the liquidation test are the pool's
+    # (`book.MarginPool`). Needs margin_enabled; the carry sleeve is not modelled in a pool.
+    # Default False: every book is its own pool, as the production books run.
+    shared_margin: bool = False
+    # Hours between the moment a top-up is due (account value below `rebalance_at_im_share` of
+    # initial margin) and the moment it takes effect -- the coins' trip from a cold wallet to HL.
+    # The shorts keep losing meanwhile and can be liquidated. 0 = at once, as the books run today.
+    topup_delay_hours: int = 0
 
     @property
     def book_capital(self) -> float:
@@ -98,9 +111,22 @@ class B2Params:
             raise ValueError("B2 needs at least one coin")
         if any(p.leverage(c) <= 0 for c in p.coins):
             raise ValueError("B2 short leverage must be positive")
+        if p.topup_delay_hours < 0 or int(p.topup_delay_hours) != p.topup_delay_hours:
+            raise ValueError("B2 topup_delay_hours must be a whole number of hours, 0 or more")
+        if p.topup_delay_hours and not p.margin_enabled:
+            raise ValueError("B2 topup_delay_hours needs margin_enabled: without margin there is no top-up")
+        if p.shared_margin and not p.margin_enabled:
+            raise ValueError("B2 shared_margin needs margin_enabled")
+        if p.shared_margin and p.carry_enabled:
+            raise ValueError("B2 shared_margin does not model the carry sleeve: set carry_enabled false")
         return p
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["coins"] = list(self.coins)
+        # Params added after the production books were created are written only when they are
+        # set, so a book on the defaults stores exactly the params it stored before they existed.
+        for key, default in OPTIONAL_PARAMS.items():
+            if d[key] == default:
+                del d[key]
         return d

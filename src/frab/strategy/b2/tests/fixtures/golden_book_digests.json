@@ -1,0 +1,223 @@
+{
+ "BTC/carry_margin": {
+  "bars": 7212,
+  "digest": "ff420a0d493ef297090351fd40226c3dbfc750452b2dafd91fdb7383b8604e64",
+  "equity": 77.76624179017624,
+  "kinds": {
+   "carry_close": 2,
+   "carry_open": 3,
+   "carry_reduce": 5,
+   "hedge_close": 30,
+   "hedge_open": 31,
+   "init_spot_buy": 1,
+   "margin_rebalance": 6,
+   "ratchet_sell": 2
+  }
+ },
+ "BTC/cold_b2": {
+  "bars": 7212,
+  "digest": "0aa5cc58c2cc599f559c798753cd72511203c5a78baebef2845f1148a39edc33",
+  "equity": 83.44008400122394,
+  "kinds": {
+   "hedge_close": 30,
+   "hedge_open": 31,
+   "init_spot_buy": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "BTC/prod_b2": {
+  "bars": 7212,
+  "digest": "0a44648c7263a58e7e18add7e0fc621f3a87e7b4511302c20fc5c82f9c249ed2",
+  "equity": 88.40961745454096,
+  "kinds": {
+   "hedge_close": 30,
+   "hedge_open": 31,
+   "init_spot_buy": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "BTC/research": {
+  "bars": 7212,
+  "digest": "8f729148fbc4ad3f8f6188fd3e52a0363068ae5368ec47ef2a47ecdf9e4c6619",
+  "equity": 79.30483057453439,
+  "kinds": {
+   "carry_close": 2,
+   "carry_open": 3,
+   "hedge_close": 30,
+   "hedge_open": 31,
+   "init_spot_buy": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "BTC/stress": {
+  "bars": 7212,
+  "digest": "71164a623f2066dae8a923bb7d5c3369b3b96d2eb8709393bed6b1f6bfc2ca2c",
+  "equity": 100.57540804760882,
+  "kinds": {
+   "hedge_close": 30,
+   "hedge_open": 31,
+   "init_spot_buy": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "BTC/stress_no_sticky": {
+  "bars": 7212,
+  "digest": "9719383b28c594fefb52640f6e03785762b43d70d488d96fb0b63c7622e8b00a",
+  "equity": 99.35572241905642,
+  "kinds": {
+   "hedge_close": 75,
+   "hedge_open": 76,
+   "init_spot_buy": 1,
+   "margin_rebalance": 5,
+   "ratchet_sell": 1
+  }
+ },
+ "DOGE/carry_margin": {
+  "bars": 7212,
+  "digest": "a334e47dc72624d229c56e617d09d57881f2be6adc03cc9ea8cf06bb32c2407a",
+  "equity": 82.66806604236585,
+  "kinds": {
+   "carry_open": 1,
+   "carry_reduce": 3,
+   "hedge_close": 21,
+   "hedge_open": 22,
+   "init_spot_buy": 1,
+   "margin_rebalance": 4,
+   "ratchet_sell": 2
+  }
+ },
+ "DOGE/cold_b2": {
+  "bars": 7212,
+  "digest": "e2eb0396efb4424768aedffb3872dca66202d9e74346a5d44c8dbfd9aa59cf80",
+  "equity": 86.75662094494074,
+  "kinds": {
+   "hedge_close": 21,
+   "hedge_open": 22,
+   "init_spot_buy": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "DOGE/prod_b2": {
+  "bars": 7212,
+  "digest": "5476420ad98a267b8cfbff5791f265d8ab9564b6031d5e47f41108157f413de9",
+  "equity": 92.10713455973654,
+  "kinds": {
+   "hedge_close": 21,
+   "hedge_open": 22,
+   "init_spot_buy": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "DOGE/research": {
+  "bars": 7212,
+  "digest": "928481d6079bec0ba0331350704f9c6afbdd7faa8aeaa2099877451d2debd4c1",
+  "equity": 94.34086888334136,
+  "kinds": {
+   "carry_open": 1,
+   "hedge_close": 21,
+   "hedge_open": 22,
+   "init_spot_buy": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "DOGE/stress": {
+  "bars": 7212,
+  "digest": "53d37c598ba06cab78c812ca66c796dc8e79d98908ab4c3e53bfc2726fa97e8f",
+  "equity": 116.12728832707833,
+  "kinds": {
+   "hedge_close": 14,
+   "hedge_open": 16,
+   "init_spot_buy": 1,
+   "liquidation": 1,
+   "margin_rebalance": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "DOGE/stress_no_sticky": {
+  "bars": 7212,
+  "digest": "962360166187063cdf8be3f606778e6d51b75af52e8fad5d9861f6f5bb65aa6f",
+  "equity": 115.67968557115499,
+  "kinds": {
+   "hedge_close": 54,
+   "hedge_open": 56,
+   "init_spot_buy": 1,
+   "liquidation": 1,
+   "margin_rebalance": 1,
+   "ratchet_sell": 2
+  }
+ },
+ "SOL/carry_margin": {
+  "bars": 7212,
+  "digest": "893fa95419f91f5aa3729e4e9f40a2ba44d6279f0b838d63827ce65b3d071699",
+  "equity": 117.05622852756417,
+  "kinds": {
+   "carry_close": 2,
+   "carry_open": 3,
+   "hedge_close": 19,
+   "hedge_open": 20,
+   "init_spot_buy": 1,
+   "margin_rebalance": 1,
+   "ratchet_sell": 5
+  }
+ },
+ "SOL/cold_b2": {
+  "bars": 7212,
+  "digest": "fad4b75e822b54862a4cb89237ba89fc015aebda57f2b16d7cc4ccc0735c2ab3",
+  "equity": 132.84370363945243,
+  "kinds": {
+   "hedge_close": 19,
+   "hedge_open": 20,
+   "init_spot_buy": 1,
+   "ratchet_sell": 5
+  }
+ },
+ "SOL/prod_b2": {
+  "bars": 7212,
+  "digest": "b5c2a63ac5c6138678da442efeefd3f61a4028b0ccc4a3b2f90a8e6d28c1540a",
+  "equity": 145.78591187331122,
+  "kinds": {
+   "hedge_close": 19,
+   "hedge_open": 20,
+   "init_spot_buy": 1,
+   "ratchet_sell": 5
+  }
+ },
+ "SOL/research": {
+  "bars": 7212,
+  "digest": "3e970f30a4e64a437cd74d392807ad6b94d0e6447d9299a127c587a0288bc37e",
+  "equity": 136.74799137308025,
+  "kinds": {
+   "carry_close": 2,
+   "carry_open": 3,
+   "hedge_close": 19,
+   "hedge_open": 20,
+   "init_spot_buy": 1,
+   "ratchet_sell": 5
+  }
+ },
+ "SOL/stress": {
+  "bars": 7212,
+  "digest": "952ce2b2cccd9abee475c6d9e84825f9d52ffe92ba8854fe1b2990b51c16b390",
+  "equity": 191.6376398480637,
+  "kinds": {
+   "hedge_close": 19,
+   "hedge_open": 20,
+   "init_spot_buy": 1,
+   "margin_rebalance": 1,
+   "ratchet_sell": 5
+  }
+ },
+ "SOL/stress_no_sticky": {
+  "bars": 7212,
+  "digest": "b1ef2e136882cd873577683ad6b032edb99d86f42564c3b1511c396962bd3ae1",
+  "equity": 188.5875643253404,
+  "kinds": {
+   "hedge_close": 62,
+   "hedge_open": 63,
+   "init_spot_buy": 1,
+   "margin_rebalance": 3,
+   "ratchet_sell": 6,
+   "refill_buy": 1
+  }
+ }
+}
