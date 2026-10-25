@@ -56,6 +56,14 @@ def _make_accrual(mocker, *, open_fps=None, accrued_funding=100.0,
     return accrual, exchange, farb_repo, signal_computer
 
 
+@pytest.fixture(autouse=True)
+def _peak(mocker):
+    return mocker.patch(
+        "frab.strategy.two_phase.actions.funding_accrual.load_funding_peak",
+        return_value=0.0,
+    )
+
+
 # ─── Tests ───────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -214,3 +222,22 @@ async def test_accrue_after_24h_is_full_sweep_again(mocker):
     _, second_kwargs = calls[1]
     assert second_kwargs.get("full") is True
     assert accrual._last_full_sweep_ms == second_now
+
+
+@pytest.mark.asyncio
+async def test_peak_is_rederived_with_gross(mocker, _peak):
+    """A corrected (lower) gross comes with a peak re-derived from the same
+    rows, so POST_BREAKEVEN does not read the correction as funding given back."""
+    fp = _make_fp(perp_position_id=42,
+                  state_data={"gross_funding_so_far": 1.7295, "peak_gross_funding": 1.7295})
+    accrual, _, farb_repo, _ = _make_accrual(mocker, open_fps=[fp], accrued_funding=0.8824)
+    mocker.patch("frab.strategy.two_phase.actions.funding_accrual.load_position",
+                 return_value=mocker.MagicMock(id=42))
+    _peak.return_value = 0.8824
+
+    await accrual.accrue(now_ms=_NOW_MS)
+
+    sd = farb_repo.update_state_data.call_args.args[1]
+    assert sd["gross_funding_so_far"] == pytest.approx(0.8824)
+    assert sd["peak_gross_funding"] == pytest.approx(0.8824)
+    _peak.assert_awaited_once_with(accrual._sf, 42)

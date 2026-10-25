@@ -7,7 +7,7 @@ from frab.exchanges.protocol import Exchange
 from frab.repo.farb_repo import FarbRepo
 import frab.strategy.two_phase as _pkg  # logger looked up at call time so patch.object works
 from frab.strategy.two_phase.evaluators.signal import SignalComputer
-from frab.strategy.two_phase.states._helpers import load_position
+from frab.strategy.two_phase.states._helpers import load_funding_peak, load_position
 
 # Full sweep from pos.opened_at is done on first call and once every 24 h to
 # repair any gaps or corrections; all other calls are incremental.
@@ -65,6 +65,9 @@ class FundingAccrual:
 
             sd = dict(fp.state_data)
             sd["gross_funding_so_far"] = float(gross)
+            # POST_BREAKEVEN reads its giveback as peak - gross; the peak is
+            # re-derived from the same rows so both move together.
+            sd["peak_gross_funding"] = await load_funding_peak(self._sf, perp_pos.id)
             smoothed = await self._signal_computer.compute(fp.coin)
             if smoothed is not None:
                 sd["current_signal_apr"] = smoothed

@@ -66,3 +66,29 @@ async def load_position(
             status=PositionStatus(row.status),
             farb_position_id=row.farb_position_id,
         )
+
+
+async def load_funding_peak(
+    session_factory: async_sessionmaker[AsyncSession],
+    position_id: int,
+) -> float:
+    """High-water mark of the position's cumulative funding, from its accrual
+    rows in time order. Derived from the rows rather than carried forward, so a
+    correction to the rows (the doubled HL daily summaries) corrects the peak
+    too; a carried peak would keep the old high and read the correction as
+    funding given back."""
+    from sqlalchemy import select
+
+    from frab.db.models import FundingAccrual as FundingAccrualRow
+
+    async with session_scope(session_factory) as session:
+        amounts = (await session.execute(
+            select(FundingAccrualRow.amount)
+            .where(FundingAccrualRow.position_id == position_id)
+            .order_by(FundingAccrualRow.ts_ms, FundingAccrualRow.id)
+        )).scalars().all()
+    total = peak = 0.0
+    for amount in amounts:
+        total += amount
+        peak = max(peak, total)
+    return peak
