@@ -290,6 +290,7 @@ class HLClient:
                     coin=coin,
                     ts_ms=int(record["time"]),
                     amount_usdc=float(delta["usdc"]),
+                    n_samples=delta.get("nSamples"),
                 ))
             if len(batch) < 500:
                 break

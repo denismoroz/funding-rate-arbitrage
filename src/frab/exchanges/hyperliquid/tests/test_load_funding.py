@@ -381,3 +381,114 @@ async def test_incremental_boundary_row_deduped(session_factory, mock_client):
     assert len(rows) == 2
     assert {r.ts_ms for r in rows} == {boundary_ts, 6000}
     assert total == pytest.approx(0.75)
+
+
+# ---------------------------------------------------------------------------
+# HL daily summaries (n_samples set): HL folds a UTC day's hourly payments into
+# one entry stamped 00:00:00.000 once they are about a week old. Production
+# stored those next to the hourly rows and doubled gross_funding_so_far
+# (ETH: $1.066 in the DB against $0.553 paid by HL).
+# ---------------------------------------------------------------------------
+
+_DAY = 1_780_272_000_000  # 2026-06-01 00:00:00.000 UTC
+_HOUR = 3_600_000
+
+
+def _hourly(n: int, amount: float = 0.0002) -> list[HLFundingDelta]:
+    # HL's hourly stamps carry a few ms past the hour
+    return [HLFundingDelta(coin="BTC", ts_ms=_DAY + h * _HOUR + 37, amount_usdc=amount)
+            for h in range(n)]
+
+
+async def _rows(sf, pos_id):
+    async with sf() as s:
+        return (await s.execute(
+            select(DBFundingAccrual).where(DBFundingAccrual.position_id == pos_id)
+        )).scalars().all()
+
+
+async def test_daily_summary_dropped_when_all_hours_stored(session_factory, mock_client):
+    pos_id = await _seed_db_position(session_factory)
+    action = make_action(session_factory, mock_client)
+    mock_client.user_funding.return_value = _hourly(24)
+    await action.execute(_make_position(pos_id), full=True)
+
+    # a week later the full sweep sees the day folded into one summary
+    mock_client.user_funding.return_value = [
+        HLFundingDelta(coin="BTC", ts_ms=_DAY, amount_usdc=0.0048, n_samples=24),
+    ]
+    total = await action.execute(_make_position(pos_id), full=True)
+
+    assert total == pytest.approx(0.0048)
+    rows = await _rows(session_factory, pos_id)
+    assert len(rows) == 24
+    assert _DAY not in {r.ts_ms for r in rows}
+
+
+async def test_summary_stored_earlier_next_to_its_hours_is_deleted(session_factory, mock_client):
+    """Heals the rows the old loader wrote."""
+    pos_id = await _seed_db_position(session_factory)
+    async with session_factory() as s:
+        for d in _hourly(24):
+            s.add(DBFundingAccrual(position_id=pos_id, ts_ms=d.ts_ms, amount=d.amount_usdc))
+        s.add(DBFundingAccrual(position_id=pos_id, ts_ms=_DAY, amount=0.0048))
+        await s.commit()
+    mock_client.user_funding.return_value = [
+        HLFundingDelta(coin="BTC", ts_ms=_DAY, amount_usdc=0.0048, n_samples=24),
+    ]
+
+    total = await make_action(session_factory, mock_client).execute(_make_position(pos_id), full=True)
+
+    assert total == pytest.approx(0.0048)
+    assert len(await _rows(session_factory, pos_id)) == 24
+
+
+async def test_daily_summary_replaces_partial_day(session_factory, mock_client):
+    """Hours missed while the engine was down are filled from the summary."""
+    pos_id = await _seed_db_position(session_factory)
+    async with session_factory() as s:
+        for d in _hourly(24)[:10]:
+            s.add(DBFundingAccrual(position_id=pos_id, ts_ms=d.ts_ms, amount=d.amount_usdc))
+        # the next day's first hour is outside the summary's window
+        s.add(DBFundingAccrual(position_id=pos_id, ts_ms=_DAY + 24 * _HOUR + 12, amount=0.0003))
+        await s.commit()
+    mock_client.user_funding.return_value = [
+        HLFundingDelta(coin="BTC", ts_ms=_DAY, amount_usdc=0.0048, n_samples=24),
+    ]
+
+    total = await make_action(session_factory, mock_client).execute(_make_position(pos_id), full=True)
+
+    assert total == pytest.approx(0.0048 + 0.0003)
+    assert {r.ts_ms for r in await _rows(session_factory, pos_id)} == {_DAY, _DAY + 24 * _HOUR + 12}
+
+
+async def test_daily_summary_kept_when_no_hours_stored(session_factory, mock_client):
+    pos_id = await _seed_db_position(session_factory)
+    mock_client.user_funding.return_value = [
+        HLFundingDelta(coin="BTC", ts_ms=_DAY, amount_usdc=0.0048, n_samples=24),
+        *[HLFundingDelta(coin="BTC", ts_ms=_DAY + 86_400_000 + h * _HOUR + 5, amount_usdc=0.0001)
+          for h in range(3)],
+    ]
+
+    total = await make_action(session_factory, mock_client).execute(_make_position(pos_id), full=True)
+
+    assert total == pytest.approx(0.0048 + 0.0003)
+    assert len(await _rows(session_factory, pos_id)) == 4
+
+
+async def test_hourly_row_exactly_at_midnight_is_not_taken_for_a_summary(session_factory, mock_client):
+    """An hourly stamp of exactly 00:00:00.000 counts toward the day; it is not deleted."""
+    pos_id = await _seed_db_position(session_factory)
+    hours = [HLFundingDelta(coin="BTC", ts_ms=_DAY, amount_usdc=0.0002)] + _hourly(24)[1:]
+    mock_client.user_funding.return_value = hours
+    action = make_action(session_factory, mock_client)
+    await action.execute(_make_position(pos_id), full=True)
+
+    mock_client.user_funding.return_value = [
+        HLFundingDelta(coin="BTC", ts_ms=_DAY, amount_usdc=0.0048, n_samples=24),
+    ]
+    total = await action.execute(_make_position(pos_id), full=True)
+
+    # 23 hours past midnight are fewer than 24 samples: the summary stands for the day
+    assert total == pytest.approx(0.0048)
+    assert {r.ts_ms for r in await _rows(session_factory, pos_id)} == {_DAY}

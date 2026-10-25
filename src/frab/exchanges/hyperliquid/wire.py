@@ -84,10 +84,16 @@ class HLFundingRecord:
 
 @dataclass(frozen=True)
 class HLFundingDelta:
-    """One userFunding entry (a settlement payment)."""
+    """One userFunding entry (a settlement payment).
+
+    HL keeps hourly payments for about a week, then folds each UTC day into one
+    entry stamped 00:00:00.000 that covers [ts_ms, ts_ms + 1 day) and carries
+    the number of hourly payments it sums in n_samples (None on hourly entries).
+    """
     coin: str
     ts_ms: int
     amount_usdc: float   # from delta.usdc (already in USDC)
+    n_samples: int | None = None   # from delta.nSamples; set on daily summaries only
 
 
 @dataclass(frozen=True)
