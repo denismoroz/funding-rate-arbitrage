@@ -63,8 +63,9 @@ class FundingRate(Base):
 class Price(Base):
     __tablename__ = "prices"
     __table_args__ = (
+        # The unique constraint's index serves (exchange_id, coin, ts_ms)
+        # lookups; ix_prices_lookup duplicated it (dropped in c8d9e0f1a2b3).
         UniqueConstraint("exchange_id", "coin", "ts_ms"),
-        Index("ix_prices_lookup", "exchange_id", "coin", "ts_ms"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

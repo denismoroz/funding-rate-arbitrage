@@ -23,6 +23,9 @@ WHAT WE COMPUTE (honest, with sample-size caveats)
 
 DATA NOTES (verified by inspection of the copied prod DB)
 =========================================================
+  - Since 2026-10-25 prices in frab.db keeps per-minute rows for 7 days and one
+    row per clock-hour before that; the per-minute history up to 2026-10-18 is
+    in data/prices-archive.db (same columns, table prices).
   - fills.slippage_bps is a PLACEHOLDER (only values 100.0 / 200.0) — NOT real.
     We reconstruct slippage from prices.mark, ignoring the stored column.
   - fills.fee is the REAL HL fee (USDC), backfilled from HL userFills.

@@ -43,6 +43,12 @@ _STOP_TIMEOUT_S = 30.0
 # Ledger._compute_cash scans.
 _WALLET_SNAPSHOT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000
 
+# Keep 7 days of per-minute prices; older rows are thinned to one per clock-hour.
+# Readers take the latest row only (API routes) or a mark near a fill
+# (research/execution/real_fill_audit.py, which matches within +-1h). Unthinned,
+# prices was ~640 MB of the 800 MB prod DB by 2026-10 (36 coins, every minute).
+_PRICE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
 
 class StrategyIdMismatch(Exception):
     def __init__(self, expected: int, got: int) -> None:
@@ -388,6 +394,10 @@ class EngineLoop:
                 await self._prune_wallet_snapshots(now_ms)
             except Exception:
                 logger.exception("prune_wallet_snapshots_failed")
+            try:
+                await self._prune_prices(now_ms)
+            except Exception:
+                logger.exception("prune_prices_failed")
 
     async def _prune_wallet_snapshots(self, now_ms: int) -> None:
         """Downsample old wallet_snapshot rows from per-minute to per-hour.
@@ -421,6 +431,26 @@ class EngineLoop:
                     "      PARTITION BY exchange_id, coin, ts_ms / 3600000"
                     "    ) AS grp_max"
                     "    FROM wallet_snapshots WHERE ts_ms < :cutoff"
+                    "  ) WHERE ts_ms < grp_max)"
+                ),
+                {"cutoff": cutoff},
+            )
+
+    async def _prune_prices(self, now_ms: int) -> None:
+        """Thin prices older than _PRICE_RETENTION_MS to the freshest row per
+        (exchange_id, coin, clock-hour) -- the same single window-function pass
+        as _prune_wallet_snapshots. Hourly, it only meets the hour that just
+        crossed the cutoff (~4k rows)."""
+        cutoff = now_ms - _PRICE_RETENTION_MS
+        async with session_scope(self._sf) as s:
+            await s.execute(
+                text(
+                    "DELETE FROM prices WHERE rowid IN ("
+                    "  SELECT rowid FROM ("
+                    "    SELECT rowid, ts_ms, MAX(ts_ms) OVER ("
+                    "      PARTITION BY exchange_id, coin, ts_ms / 3600000"
+                    "    ) AS grp_max"
+                    "    FROM prices WHERE ts_ms < :cutoff"
                     "  ) WHERE ts_ms < grp_max)"
                 ),
                 {"cutoff": cutoff},

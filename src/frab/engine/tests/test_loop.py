@@ -24,7 +24,7 @@ from frab.db.models import (
     WalletSnapshot as WalletSnapshotRow,
 )
 from frab.db.session import init_db, make_session_factory, session_scope
-from frab.engine.loop import _WALLET_SNAPSHOT_RETENTION_MS, EngineLoop, utcnow_ms
+from frab.engine.loop import _PRICE_RETENTION_MS, _WALLET_SNAPSHOT_RETENTION_MS, EngineLoop, utcnow_ms
 from frab.events.bus import EventBus
 from frab.exchanges.protocol import FundingTick, Quote, WalletKind
 from frab.strategy.two_phase import TwoPhaseParams
@@ -258,8 +258,10 @@ async def test_hour_tick_prunes_only_when_maintenance_owner(
     owner._exchange_id_cache = 1
     owner._save_funding = AsyncMock()
     owner._prune_wallet_snapshots = AsyncMock()
+    owner._prune_prices = AsyncMock()
     await owner._hour_tick(now_ms)
     owner._prune_wallet_snapshots.assert_awaited_once_with(now_ms)
+    owner._prune_prices.assert_awaited_once_with(now_ms)
 
     non_owner = make_loop(
         mock_exchange, mock_strategy, mock_ledger, mock_session_factory,
@@ -268,8 +270,10 @@ async def test_hour_tick_prunes_only_when_maintenance_owner(
     non_owner._exchange_id_cache = 1
     non_owner._save_funding = AsyncMock()
     non_owner._prune_wallet_snapshots = AsyncMock()
+    non_owner._prune_prices = AsyncMock()
     await non_owner._hour_tick(now_ms)
     non_owner._prune_wallet_snapshots.assert_not_awaited()
+    non_owner._prune_prices.assert_not_awaited()
 
 
 # ─── 3. Hour boundary detection ──────────────────────────────────────────────
@@ -864,4 +868,39 @@ async def test_prune_wallet_snapshots_keeps_one_per_hour(
         ("ETH", old_h + 60_000),    # freshest of old ETH hour
         ("BTC", rec_h),             # recent — untouched
         ("BTC", rec_h + 60_000),    # recent — untouched
+    }
+
+
+# ─── _prune_prices thins old prices to one-per-clock-hour ────────────────────
+
+@pytest.mark.asyncio
+async def test_prune_prices_keeps_one_per_hour(
+    mock_exchange, mock_strategy, mock_ledger, seeded_db_session_factory,
+):
+    loop = make_loop(mock_exchange, mock_strategy, mock_ledger, seeded_db_session_factory)
+    eid = await loop._resolve_exchange_id()
+
+    now_ms = 1_800_000_000_000
+    cutoff = now_ms - _PRICE_RETENTION_MS
+    hour = 3_600_000
+    old_h = (cutoff // hour - 5) * hour
+    rec_h = (cutoff // hour + 2) * hour
+
+    def price(coin: str, ts: int) -> PriceRow:
+        return PriceRow(exchange_id=eid, coin=coin, ts_ms=ts, mark=1.0)
+
+    async with session_scope(seeded_db_session_factory) as s:
+        s.add_all([price("BTC", old_h), price("BTC", old_h + 30_000), price("BTC", old_h + 60_000)])
+        s.add_all([price("ETH", old_h), price("ETH", old_h + 30_000)])
+        s.add_all([price("BTC", rec_h), price("BTC", rec_h + 30_000)])
+
+    await loop._prune_prices(now_ms)
+
+    async with session_scope(seeded_db_session_factory) as s:
+        rows = (await s.execute(select(PriceRow))).scalars().all()
+    assert {(r.coin, r.ts_ms) for r in rows} == {
+        ("BTC", old_h + 60_000),
+        ("ETH", old_h + 30_000),
+        ("BTC", rec_h),
+        ("BTC", rec_h + 30_000),
     }
