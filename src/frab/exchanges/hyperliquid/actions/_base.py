@@ -44,3 +44,6 @@ class UnavailableAction:
 
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError(f"{self._name}: session_factory required")
+
+    async def check_close(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"{self._name}: session_factory required")

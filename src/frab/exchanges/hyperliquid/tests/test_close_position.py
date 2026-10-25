@@ -49,6 +49,7 @@ async def session_factory():
 def mock_client(mocker):
     client = mocker.AsyncMock(spec=HLClient)
     client.spot_user_state.return_value = HLSpotState(balances=[])
+    client.all_mids.return_value = {}   # no live spot price unless a test sets one
     return client
 
 
@@ -59,9 +60,10 @@ def symbols(mock_client):
         spot_token_map={"BTC": "UBTC", "ETH": "UETH", "SOL": "USOL"},
         spot_quote_token="USDC",
     )
-    sym._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2, "HYPE": 2}
+    sym._sz_decimals_cache = {"BTC": 5, "ETH": 4, "SOL": 2, "HYPE": 2, "PURR": 0}
     # the spot token's own lot: USOL trades in 0.001 while the SOL perp trades in 0.01
-    sym._spot_sz_decimals_cache = {"UBTC": 5, "UETH": 4, "USOL": 3, "HYPE": 2}
+    sym._spot_sz_decimals_cache = {"UBTC": 5, "UETH": 4, "USOL": 3, "HYPE": 2, "PURR": 0}
+    sym._spot_token_inverse_dict = {"UBTC": "BTC", "UETH": "ETH", "USOL": "SOL", "PURR": "PURR"}
     return sym
 
 
@@ -995,3 +997,213 @@ async def test_close_spot_nothing_sellable_after_reserve_raises_without_an_order
         await action.execute(pos)
 
     mock_client.market_open.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# The gate judges the sale at the CURRENT price (not the entry price)
+# ---------------------------------------------------------------------------
+
+async def test_close_spot_gate_uses_the_current_price_not_the_entry_price(
+    session_factory, mock_client, symbols
+):
+    # PURR #27: entered at 0.14446 (77 x = $11.12 clears $11), now trades at 0.0985:
+    # the 76 sellable are worth $7.49. On the entry price the gate said yes and HL said no.
+    pos = await _seed_open_position(
+        session_factory, coin="PURR", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=77.0, entry_price=0.14446,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("PURR", 76.94826)
+    mock_client.all_mids.return_value = {"PURR/USDC": 0.0985}
+    action = make_action(session_factory, mock_client, symbols)
+
+    with pytest.raises(RuntimeError, match="drained 0"):
+        await action.execute(pos)
+
+    mock_client.market_open.assert_not_called()
+
+
+async def test_close_spot_gate_sells_when_the_current_price_clears_it_though_entry_did_not(
+    session_factory, mock_client, symbols
+):
+    # entry 0.1 x 100 = $10 < $11 would be refused on the entry price; now 0.2 -> $20 sells
+    pos = await _seed_open_position(
+        session_factory, coin="PURR", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=100.0, entry_price=0.1,
+    )
+    mock_client.spot_user_state.side_effect = [
+        _spot_state("PURR", 100.0), _spot_state("PURR", 0.0),
+    ]
+    mock_client.all_mids.return_value = {"PURR/USDC": 0.2}
+    mock_client.market_open.return_value = _filled_response(100.0, 0.2, fee_usdc=0.01)
+    action = make_action(session_factory, mock_client, symbols)
+
+    await action.execute(pos)
+
+    mock_client.market_open.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# check_close: the read-only pre-close check
+# ---------------------------------------------------------------------------
+
+async def test_check_close_blocks_purr_27_on_todays_numbers(session_factory, mock_client, symbols):
+    # wallet 76.94826 PURR (spot qty recorded net of the fee: 77 -> wallet 76.948), lot 1:
+    # floors to 76; 76 x 0.0985 = $7.49 < $11
+    pos = await _seed_open_position(
+        session_factory, coin="PURR", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=77.0, entry_price=0.14446,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("PURR", 76.94826)
+    mock_client.all_mids.return_value = {"PURR/USDC": 0.0985}
+    action = make_action(session_factory, mock_client, symbols)
+
+    check = await action.check_close(pos, None)
+
+    assert not check.ok
+    assert check.spot_qty == 76.0
+    assert check.spot_price == pytest.approx(0.0985)
+    assert check.spot_notional_usdc == pytest.approx(7.486)
+    assert check.spot_min_notional_usdc == MIN_SPOT_RESIDUE_NOTIONAL_USDC
+    assert check.wallet_qty == pytest.approx(76.94826)
+    assert check.lot == 1.0
+    assert "$7.49" in check.reason and "$11" in check.reason and "$10" in check.reason
+    mock_client.market_open.assert_not_called()
+    mock_client.market_close.assert_not_called()
+
+
+async def test_check_close_passes_when_the_current_price_clears_the_bar(
+    session_factory, mock_client, symbols
+):
+    pos = await _seed_open_position(
+        session_factory, coin="PURR", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=77.0, entry_price=0.14446,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("PURR", 76.94826)
+    mock_client.all_mids.return_value = {"PURR/USDC": 0.16}
+    action = make_action(session_factory, mock_client, symbols)
+
+    check = await action.check_close(pos, None)
+
+    assert check.ok and check.reason is None
+    assert check.spot_notional_usdc == pytest.approx(76 * 0.16)
+
+
+async def test_check_close_uses_the_same_budget_as_the_close_other_legs_and_one_lot(
+    session_factory, mock_client, symbols
+):
+    # two open BTC spot legs 0.0003 and 0.0002; the wallet holds both plus a 0.000004 remainder.
+    # Closing the 0.0002 leg may sell the wallet less the OTHER leg's 0.0003 = 0.000204,
+    # capped at qty + one lot (0.0002 + 0.00001) and floored at the lot -> 0.0002
+    other = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.0003, entry_price=60000.0,
+    )
+    pos = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.0002, entry_price=60000.0,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("UBTC", 0.000504)
+    mock_client.all_mids.return_value = {"UBTC/USDC": 60000.0}
+    action = make_action(session_factory, mock_client, symbols)
+
+    check = await action.check_close(pos, None)
+
+    assert check.spot_qty == pytest.approx(0.0002)
+    assert check.reserved_qty == pytest.approx(0.0003)
+    assert check.lot == pytest.approx(0.00001)
+    assert check.spot_notional_usdc == pytest.approx(12.0)
+    assert check.ok
+    # the other leg (0.0003 -> $18 with the remainder it is entitled to) is not what was sold
+    assert (await action.check_close(other, None)).spot_qty == pytest.approx(0.0003)
+
+
+async def test_check_close_nothing_sellable_after_the_reserve_is_blocked(
+    session_factory, mock_client, symbols
+):
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.2, entry_price=100.0,
+    )
+    await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.4, entry_price=100.0,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("USOL", 0.4)
+    mock_client.all_mids.return_value = {"USOL/USDC": 100.0}
+    action = make_action(session_factory, mock_client, symbols)
+
+    check = await action.check_close(pos, None)
+
+    assert not check.ok and check.spot_qty == 0.0
+
+
+async def test_check_close_floors_at_the_spot_lot_not_the_perp_lot(
+    session_factory, mock_client, symbols
+):
+    # SOL: perp lot 0.01, spot (USOL) lot 0.001. Wallet 0.10974 vs qty 0.1 -> may sell 0.101
+    # (qty + one coarser lot 0.01 = 0.11 caps at the wallet 0.10974 -> floors to 0.109)
+    pos = await _seed_open_position(
+        session_factory, coin="SOL", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.1, entry_price=200.0,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("USOL", 0.10974)
+    mock_client.all_mids.return_value = {"USOL/USDC": 200.0}
+    action = make_action(session_factory, mock_client, symbols)
+
+    check = await action.check_close(pos, None)
+
+    assert check.spot_qty == pytest.approx(0.109)
+    assert check.ok
+
+
+async def test_check_close_without_a_live_price_raises_instead_of_ruling_on_the_entry_price(
+    session_factory, mock_client, symbols
+):
+    pos = await _seed_open_position(
+        session_factory, coin="PURR", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=77.0, entry_price=0.14446,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("PURR", 76.94826)
+    mock_client.all_mids.return_value = {}
+    action = make_action(session_factory, mock_client, symbols)
+
+    with pytest.raises(RuntimeError, match="no live spot price"):
+        await action.check_close(pos, None)
+
+
+async def test_check_close_perp_is_not_gated_by_the_minimum_order(
+    session_factory, mock_client, symbols
+):
+    # The perp leg closes reduce-only, which HL exempts from the $10 minimum: a $2 perp
+    # alongside a spot leg that clears the bar does not block, and no HL call is made for it.
+    spot = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.0002, entry_price=60000.0,
+    )
+    perp = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.PERP,
+        side=Side.SHORT, qty=0.00003, entry_price=60000.0,
+    )
+    mock_client.spot_user_state.return_value = _spot_state("UBTC", 0.0002)
+    mock_client.all_mids.return_value = {"UBTC/USDC": 60000.0}
+    action = make_action(session_factory, mock_client, symbols)
+
+    check = await action.check_close(spot, perp)
+
+    assert check.ok
+    mock_client.user_state.assert_not_called()
+    mock_client.market_close.assert_not_called()
+
+
+async def test_check_close_without_a_spot_leg_or_a_live_address_is_ok(
+    session_factory, mock_client, symbols
+):
+    pos = await _seed_open_position(
+        session_factory, coin="BTC", instrument=Instrument.SPOT,
+        side=Side.LONG, qty=0.0002, entry_price=60000.0,
+    )
+    action = make_action(session_factory, mock_client, symbols)
+    assert (await action.check_close(None, None)).ok
+    no_address = make_action(session_factory, mock_client, symbols, address=None)
+    assert (await no_address.check_close(pos, None)).ok
+    mock_client.spot_user_state.assert_not_called()

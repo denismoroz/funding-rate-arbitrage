@@ -43,6 +43,7 @@ from frab.exchanges.hyperliquid.wire import (
     HLUserFill,
 )
 from frab.exchanges.protocol import (
+    CloseCheck,
     FundingTick,
     MarketSpec,
     OpenRequest,
@@ -284,6 +285,11 @@ class HLExchange:
     async def close_position(self, pos: Position) -> Position:
         """Close a position on HL and update DB. Returns closed Position."""
         return await self._close_action.execute(pos)
+
+    async def check_close(self, spot: Position | None, perp: Position | None) -> CloseCheck:
+        """Read-only: can these legs be closed within HL's limits right now? See
+        ClosePositionAction.check_close."""
+        return await self._close_action.check_close(spot, perp)
 
     async def get_open_positions(self) -> list[Position]:
         """Fetch open positions from HL, reconcile with DB, return canonical set.

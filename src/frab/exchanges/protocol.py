@@ -59,6 +59,23 @@ class OpenRequest:
     accept_partial: bool = False
 
 
+@dataclass(frozen=True)
+class CloseCheck:
+    """Whether a FarbPosition's legs can be closed within the venue's limits right now.
+
+    ok=False means the spot leg could not be sold (below the minimum order at the current
+    price): closing the perp first would strand an unhedged spot long. `reason` says why."""
+    ok: bool
+    reason: str | None = None
+    spot_qty: float = 0.0               # what the spot close could sell, floored at the lot
+    spot_price: float = 0.0             # current spot price the sale was valued at
+    spot_notional_usdc: float = 0.0
+    spot_min_notional_usdc: float = 0.0  # the bar the sale must clear
+    wallet_qty: float = 0.0
+    reserved_qty: float = 0.0           # coins of other open legs, never sold
+    lot: float = 0.0
+
+
 class WalletKind(str, Enum):
     SPOT = "spot"
     PERP = "perp"
@@ -74,6 +91,7 @@ class Exchange(Protocol):
 
     async def open_position(self, req: OpenRequest) -> Position: ...
     async def close_position(self, pos: Position) -> Position: ...
+    async def check_close(self, spot: Position | None, perp: Position | None) -> CloseCheck: ...
 
     async def get_open_positions(self) -> list[Position]: ...
 
