@@ -322,7 +322,8 @@ async def test_writes_db_position_with_filled_qty_and_price(session_factory, moc
 
     async with session_factory() as s:
         row = (await s.execute(select(DBPosition))).scalar_one()
-    assert row.qty == pytest.approx(0.001)
+    # the spot buy's fee ($0.034) is taken in the coin: the wallet got 0.001 less 0.034/48000
+    assert row.qty == pytest.approx(0.001 - 0.034 / 48000.0)
     assert row.entry_price == pytest.approx(48000.0)
     assert row.status == PositionStatus.OPEN.value
 
@@ -336,7 +337,7 @@ async def test_writes_db_fill_row(session_factory, mock_client, symbols):
 
     async with session_factory() as s:
         fill = (await s.execute(select(DBFill))).scalar_one()
-    assert fill.qty == pytest.approx(0.001)
+    assert fill.qty == pytest.approx(0.001 - 0.034 / 48000.0)
     assert fill.price == pytest.approx(48000.0)
     assert fill.fee == pytest.approx(0.034)
     assert fill.slippage_bps == pytest.approx(0.01 * 1e4)
@@ -366,7 +367,7 @@ async def test_returns_domain_position_with_correct_fields(session_factory, mock
     assert pos.coin == "BTC"
     assert pos.instrument == Instrument.SPOT
     assert pos.side == Side.LONG
-    assert pos.qty == pytest.approx(0.001)
+    assert pos.qty == pytest.approx(0.001 - 0.034 / 48000.0)
     assert pos.entry_price == pytest.approx(48000.0)
     assert pos.opened_at == CLOCK_DT
     assert pos.status == PositionStatus.OPEN
@@ -444,3 +445,154 @@ async def test_partial_still_raises_when_not_accepted(session_factory, mock_clie
 
     async with session_factory() as s:
         assert (await s.execute(select(DBPosition))).first() is None
+
+
+# ---------------------------------------------------------------------------
+# Spot buy: recorded at what the wallet received (filled size less the fee in the coin)
+# ---------------------------------------------------------------------------
+
+def _hype_symbols(mock_client):
+    sym = HLSymbols(client=mock_client, spot_token_map={}, spot_token_inverse={"HYPE": "HYPE"},
+                    spot_quote_token="USDC")
+    sym._sz_decimals_cache = {"HYPE": 2}
+    return sym
+
+
+async def test_spot_buy_records_filled_qty_net_of_fee_taken_in_the_coin(session_factory, mock_client):
+    # HYPE #31 on 2026-10-08: ordered and filled 0.2 at 83.908, HL took 0.00013439 HYPE as the
+    # fee, so the wallet received 0.19986561. The DB said 0.2.
+    symbols = _hype_symbols(mock_client)
+    mock_client.market_open.return_value = _filled_response(0.2, 83.908, oid=568976683026)
+    mock_client.user_fills_by_time.return_value = [HLUserFill(
+        oid=568976683026, side="B", sz=0.2, px=83.908, ts_ms=CLOCK_MS,
+        fee_raw=0.00013439, fee_token="HYPE", coin="@107")]
+    action = make_action(session_factory, mock_client, symbols)
+
+    pos = await action.execute(OpenRequest(
+        instrument=Instrument.SPOT, coin="HYPE", qty=0.2, side=Side.LONG, farb_position_id=31))
+
+    assert pos.qty == pytest.approx(0.19986561)
+    async with session_factory() as s:
+        row = (await s.execute(select(DBPosition))).scalar_one()
+        fill = (await s.execute(select(DBFill))).scalar_one()
+    assert row.qty == pytest.approx(0.19986561)
+    assert fill.qty == pytest.approx(0.19986561)      # tokens received; the fee is not counted twice
+    assert fill.fee == pytest.approx(0.00013439 * 83.908)
+    assert fill.price == pytest.approx(83.908)
+
+
+async def test_spot_buy_sums_the_fee_over_every_fill_of_the_order(session_factory, mock_client):
+    symbols = _hype_symbols(mock_client)
+    mock_client.market_open.return_value = _filled_response(0.2, 84.0, oid=7)
+    mock_client.user_fills_by_time.return_value = [
+        HLUserFill(oid=7, side="B", sz=0.15, px=84.0, ts_ms=CLOCK_MS,
+                   fee_raw=0.0001, fee_token="HYPE", coin="@107"),
+        HLUserFill(oid=7, side="B", sz=0.05, px=84.0, ts_ms=CLOCK_MS,
+                   fee_raw=0.00003, fee_token="HYPE", coin="@107"),
+        HLUserFill(oid=8, side="B", sz=1.0, px=84.0, ts_ms=CLOCK_MS,
+                   fee_raw=0.5, fee_token="HYPE", coin="@107"),   # another order: ignored
+    ]
+    action = make_action(session_factory, mock_client, symbols)
+
+    pos = await action.execute(OpenRequest(instrument=Instrument.SPOT, coin="HYPE", qty=0.2, side=Side.LONG))
+
+    assert pos.qty == pytest.approx(0.2 - 0.00013)
+
+
+async def test_spot_buy_wrapped_token_fee_is_matched_by_the_spot_pair_base(session_factory, mock_client, symbols):
+    # BTC trades as UBTC: the fee token is UBTC, not BTC
+    mock_client.market_open.return_value = _filled_response(0.00025, 83270.0, oid=568121438670)
+    mock_client.user_fills_by_time.return_value = [HLUserFill(
+        oid=568121438670, side="B", sz=0.00025, px=83270.0, ts_ms=CLOCK_MS,
+        fee_raw=0.000000168, fee_token="UBTC", coin="@142")]
+    action = make_action(session_factory, mock_client, symbols)
+
+    pos = await action.execute(OpenRequest(instrument=Instrument.SPOT, coin="BTC", qty=0.00025, side=Side.LONG))
+
+    assert pos.qty == pytest.approx(0.000249832)
+
+
+async def test_spot_buy_with_fee_paid_in_usdc_keeps_the_filled_qty(session_factory, mock_client, symbols):
+    mock_client.market_open.return_value = _filled_response(0.001, 50000.0, oid=42)
+    mock_client.user_fills_by_time.return_value = [HLUserFill(
+        oid=42, side="B", sz=0.001, px=50000.0, ts_ms=CLOCK_MS,
+        fee_raw=0.03, fee_token="USDC", coin="@142")]
+    action = make_action(session_factory, mock_client, symbols)
+
+    pos = await action.execute(OpenRequest(instrument=Instrument.SPOT, coin="BTC", qty=0.001, side=Side.LONG))
+
+    assert pos.qty == pytest.approx(0.001)
+
+
+async def test_spot_buy_fee_not_found_assumes_taker_fee_in_the_coin(session_factory, mock_client, symbols, mocker, caplog):
+    mocker.patch("asyncio.sleep", new_callable=mocker.AsyncMock)
+    mock_client.market_open.return_value = _filled_response(0.001, 50000.0, oid=42)
+    mock_client.user_fills_by_time.return_value = []      # the fill never shows up
+    action = make_action(session_factory, mock_client, symbols)
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        pos = await action.execute(OpenRequest(instrument=Instrument.SPOT, coin="BTC", qty=0.001, side=Side.LONG))
+
+    assert pos.qty == pytest.approx(0.001 * (1 - SPOT_TAKER))
+    assert "fee not found in userFills" in caplog.text
+
+
+async def test_spot_buy_without_oid_assumes_taker_fee_in_the_coin(session_factory, mock_client, symbols):
+    mock_client.market_open.return_value = _filled_response(0.001, 50000.0, oid=None)
+    action = make_action(session_factory, mock_client, symbols)
+
+    pos = await action.execute(OpenRequest(instrument=Instrument.SPOT, coin="BTC", qty=0.001, side=Side.LONG))
+
+    assert pos.qty == pytest.approx(0.001 * (1 - SPOT_TAKER))
+
+
+async def test_perp_short_is_recorded_at_the_filled_qty_whatever_the_fee(session_factory, mock_client, symbols):
+    mock_client.market_open.return_value = _filled_response(0.21, 83.776, oid=9)
+    mock_client.user_fills_by_time.return_value = [HLUserFill(
+        oid=9, side="A", sz=0.21, px=83.776, ts_ms=CLOCK_MS,
+        fee_raw=0.0076, fee_token="USDC", coin="HYPE")]
+    sym = _hype_symbols(mock_client)
+    action = make_action(session_factory, mock_client, sym)
+
+    pos = await action.execute(OpenRequest(instrument=Instrument.PERP, coin="HYPE", qty=0.21, side=Side.SHORT))
+
+    assert pos.qty == pytest.approx(0.21)
+
+
+async def test_spot_sell_is_recorded_at_the_filled_qty(session_factory, mock_client, symbols):
+    # a sell pays its fee in USDC: nothing is taken out of the coin
+    mock_client.market_open.return_value = _filled_response(0.001, 50000.0, fee_usdc=0.035)
+    action = make_action(session_factory, mock_client, symbols)
+
+    pos = await action.execute(OpenRequest(instrument=Instrument.SPOT, coin="BTC", qty=0.001, side=Side.SHORT))
+
+    assert pos.qty == pytest.approx(0.001)
+
+
+async def test_spot_buy_partial_check_uses_the_gross_filled_qty(session_factory, mock_client, symbols):
+    # 0.1% fee on a full fill must not read as a partial fill (tolerance 1%)
+    mock_client.market_open.return_value = _filled_response(0.001, 50000.0, oid=42)
+    mock_client.user_fills_by_time.return_value = [HLUserFill(
+        oid=42, side="B", sz=0.001, px=50000.0, ts_ms=CLOCK_MS,
+        fee_raw=0.000001, fee_token="UBTC", coin="@142")]
+    action = make_action(session_factory, mock_client, symbols, tol=0.0005)
+
+    pos = await action.execute(OpenRequest(instrument=Instrument.SPOT, coin="BTC", qty=0.001, side=Side.LONG))
+
+    assert pos.qty == pytest.approx(0.000999)
+
+
+async def test_spot_buy_fee_not_below_filled_qty_keeps_the_gross_qty(session_factory, mock_client, symbols, caplog):
+    mock_client.market_open.return_value = _filled_response(0.001, 50000.0, oid=42)
+    mock_client.user_fills_by_time.return_value = [HLUserFill(
+        oid=42, side="B", sz=0.001, px=50000.0, ts_ms=CLOCK_MS,
+        fee_raw=0.002, fee_token="UBTC", coin="@142")]
+    action = make_action(session_factory, mock_client, symbols)
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        pos = await action.execute(OpenRequest(instrument=Instrument.SPOT, coin="BTC", qty=0.001, side=Side.LONG))
+
+    assert pos.qty == pytest.approx(0.001)
+    assert "recording the gross size" in caplog.text

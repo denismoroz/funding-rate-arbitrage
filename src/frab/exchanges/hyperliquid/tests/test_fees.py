@@ -6,7 +6,7 @@ from datetime import datetime, UTC
 
 import pytest
 
-from frab.exchanges.hyperliquid.actions._fees import fetch_real_fee_usdc
+from frab.exchanges.hyperliquid.actions._fees import fetch_order_fee, fetch_real_fee_usdc
 from frab.exchanges.hyperliquid.client import HLClient
 from frab.exchanges.hyperliquid.wire import HLUserFill
 
@@ -144,3 +144,58 @@ async def test_uses_clock_fn_for_end_ms(client, mocker):
 
     _addr, since, end = client.user_fills_by_time.call_args.args
     assert end == FIXED_END_MS
+
+
+async def test_fee_is_summed_over_all_fills_of_the_order(client):
+    # one order, two rows in userFills (ETH 2026-05-30 17:08 sold in two pieces)
+    a = _make_fill(oid=11, fee_token="USDC", fee_raw=0.003)
+    b = _make_fill(oid=11, fee_token="USDC", fee_raw=0.007)
+    other = _make_fill(oid=12, fee_token="USDC", fee_raw=5.0)
+    client.user_fills_by_time.return_value = [a, other, b]
+
+    result = await fetch_real_fee_usdc(
+        client=client, address="0xabc", oid=11, since_ms=0,
+        clock_fn=lambda: FIXED_CLOCK, attempts=1,
+    )
+
+    assert result == pytest.approx(0.01)
+
+
+async def test_order_fee_keeps_the_raw_amount_of_a_fee_taken_in_the_coin(client):
+    fill = _make_fill(oid=13, fee_token="HYPE", fee_raw=0.00013439, px=83.908)
+    client.user_fills_by_time.return_value = [fill]
+
+    fee = await fetch_order_fee(
+        client=client, address="0xabc", oid=13, since_ms=0,
+        clock_fn=lambda: FIXED_CLOCK, attempts=1,
+        spot_token_inverse={"HYPE": "HYPE"},
+    )
+
+    assert fee is not None
+    assert fee.usdc == pytest.approx(0.00013439 * 83.908)
+    assert fee.by_token == {"HYPE": pytest.approx(0.00013439)}
+
+
+async def test_order_fee_usdc_fee_has_no_token_entry(client):
+    client.user_fills_by_time.return_value = [_make_fill(oid=14, fee_token="USDC", fee_raw=0.05)]
+
+    fee = await fetch_order_fee(
+        client=client, address="0xabc", oid=14, since_ms=0,
+        clock_fn=lambda: FIXED_CLOCK, attempts=1,
+    )
+
+    assert fee is not None
+    assert fee.usdc == 0.05
+    assert fee.by_token == {}
+
+
+async def test_order_fee_none_when_the_fill_never_appears(client, mocker):
+    mocker.patch("asyncio.sleep", new_callable=mocker.AsyncMock)
+    client.user_fills_by_time.return_value = []
+
+    fee = await fetch_order_fee(
+        client=client, address="0xabc", oid=15, since_ms=0,
+        clock_fn=lambda: FIXED_CLOCK, attempts=2,
+    )
+
+    assert fee is None

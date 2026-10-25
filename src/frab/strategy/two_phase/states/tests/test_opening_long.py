@@ -255,3 +255,57 @@ async def test_opening_long_defensive_max_uses_pos_qty_when_balance_lower(mocker
     trans_kwargs = farb_repo.transition.await_args.kwargs
     # pos.qty > hl_balance → use pos.qty (defensive max)
     assert trans_kwargs["state_data"]["spot_qty"] == filled_pos.qty
+
+
+@pytest.mark.asyncio
+async def test_opening_long_reconciles_recorded_spot_with_the_wallet(mocker):
+    """After the spot buy, the DB-vs-wallet check runs with the wallet balance just read."""
+    quote = mocker.MagicMock()
+    quote.spot = 50000.0
+    filled_pos = mocker.MagicMock()
+    filled_pos.id = 77
+    filled_pos.qty = 0.019
+    filled_pos.entry_price = 50010.0
+
+    exchange = mocker.AsyncMock()
+    exchange.get_quote.return_value = quote
+    exchange.open_position.return_value = filled_pos
+    exchange.get_wallet = mocker.AsyncMock(return_value=0.0197)
+    reconcile = mocker.patch(
+        "frab.strategy.two_phase.states.opening_long.reconcile_spot_leg",
+        new_callable=mocker.AsyncMock,
+    )
+
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=mocker.AsyncMock())
+    fp = _make_fp()
+    result = await OpeningLongState(ctx).execute(fp)
+
+    assert result == FarbState.OPENING_SHORT
+    reconcile.assert_awaited_once_with(
+        exchange=exchange, session_factory=ctx.session_factory,
+        event_bus=ctx.event_bus, fp=fp, wallet_qty=0.0197,
+    )
+
+
+@pytest.mark.asyncio
+async def test_opening_long_goes_on_when_the_spot_check_itself_fails(mocker):
+    """A broken check must never stop a live open: the leg is already on the exchange."""
+    quote = mocker.MagicMock()
+    quote.spot = 50000.0
+    filled_pos = mocker.MagicMock()
+    filled_pos.id = 77
+    filled_pos.qty = 0.019
+    filled_pos.entry_price = 50010.0
+
+    exchange = mocker.AsyncMock()
+    exchange.get_quote.return_value = quote
+    exchange.open_position.return_value = filled_pos
+    exchange.get_wallet = mocker.AsyncMock(return_value=0.019)
+    exchange.get_lot_size.side_effect = RuntimeError("HL down")
+    farb_repo = mocker.AsyncMock()
+
+    ctx = _make_ctx(mocker, exchange=exchange, farb_repo=farb_repo)
+    result = await OpeningLongState(ctx).execute(_make_fp())
+
+    assert result == FarbState.OPENING_SHORT
+    farb_repo.transition.assert_awaited_once()

@@ -5,6 +5,7 @@ import logging
 
 from frab.domain import FarbPosition, FarbState, Instrument, Side
 from frab.exchanges.protocol import OpenRequest, WalletKind
+from frab.strategy.two_phase.actions.spot_reconcile import reconcile_spot_leg
 from frab.strategy.two_phase.states._base import State, StrategyContext
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,8 @@ class OpeningLongState(State):
         self._farb_repo = ctx.farb_repo
         self._params = ctx.params
         self._settings = ctx.settings
+        self._sf = ctx.session_factory
+        self._bus = ctx.event_bus
 
     async def execute(self, fp: FarbPosition) -> FarbState | None:
         quote = await self._exchange.get_quote(fp.coin)
@@ -38,6 +41,12 @@ class OpeningLongState(State):
         # dust from previous closes is absorbed into this position and matched by short.
         hl_balance = await self._exchange.get_wallet(fp.coin, WalletKind.SPOT)
         spot_qty = max(pos.qty, hl_balance)  # max guards against transient pre-settlement reads
+        # The recorded qty is what the fill delivered; the wallet may also hold sub-lot
+        # remainders of earlier closes. A bigger gap means the record is wrong.
+        await reconcile_spot_leg(
+            exchange=self._exchange, session_factory=self._sf,
+            event_bus=self._bus, fp=fp, wallet_qty=hl_balance,
+        )
         await self._farb_repo.transition(
             fp.id,
             from_state=FarbState.OPENING_LONG,

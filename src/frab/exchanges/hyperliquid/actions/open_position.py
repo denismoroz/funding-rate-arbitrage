@@ -11,7 +11,7 @@ from frab.db.models import Exchange as DBExchange, Fill as DBFill, Position as D
 from frab.db.session import session_scope
 from frab.domain import Instrument, Position, PositionStatus, Side
 from frab.exchanges.hyperliquid.actions._base import HLAction, HLActionContext
-from frab.exchanges.hyperliquid.actions._fees import fetch_real_fee_usdc
+from frab.exchanges.hyperliquid.actions._fees import OrderFee, fetch_order_fee
 from frab.exchanges.protocol import OpenRequest
 
 logger = logging.getLogger(__name__)
@@ -87,13 +87,20 @@ class OpenPositionAction(HLAction):
         oid = filled.oid
         taker = SPOT_TAKER if req.instrument == Instrument.SPOT else PERP_TAKER
 
+        # A spot BUY pays its fee in the bought coin, so the wallet receives the filled
+        # size minus that fee. `fee_in_coin` is that amount; it stays 0 for everything
+        # else (perp legs and spot sells pay in USDC).
+        spot_buy = req.instrument == Instrument.SPOT and req.side == Side.LONG
+        fee_in_coin = 0.0
         if filled.fee_usdc is not None:
             fee = filled.fee_usdc
+            if spot_buy and fill_price > 0:
+                fee_in_coin = fee / fill_price
         else:
             estimate = qty_filled * fill_price * taker
-            real_fee: float | None = None
+            order_fee: OrderFee | None = None
             if oid is not None and self._address is not None:
-                real_fee = await fetch_real_fee_usdc(
+                order_fee = await fetch_order_fee(
                     client=self._client,
                     address=self._address,
                     oid=oid,
@@ -101,7 +108,18 @@ class OpenPositionAction(HLAction):
                     clock_fn=self._clock_fn,
                     spot_token_inverse=self._symbols.spot_token_inverse,
                 )
-            fee = real_fee if real_fee is not None else estimate
+            fee = order_fee.usdc if order_fee is not None else estimate
+            if spot_buy:
+                if order_fee is not None:
+                    base_token = self._symbols.make_spot_name(req.coin).split("/")[0].upper()
+                    fee_in_coin = order_fee.by_token.get(base_token, 0.0)
+                else:
+                    fee_in_coin = qty_filled * taker
+                    logger.warning(
+                        "%s spot buy oid=%s: fee not found in userFills; assuming the "
+                        "taker fee %s of %s was taken in the coin",
+                        req.coin, oid, taker, qty_filled,
+                    )
 
         is_partial = qty_filled < wire_qty * (1 - self._partial_fill_tolerance)
         if is_partial and not req.accept_partial:
@@ -118,6 +136,19 @@ class OpenPositionAction(HLAction):
                 qty_filled / wire_qty * 100 if wire_qty else 0.0,
             )
 
+        # What the wallet actually received: the filled size less the fee taken in the
+        # coin. Recording the gross size overstated every spot leg by its fee (HYPE
+        # #31: 0.2 vs 0.19986561 received) and hid what really sat in the wallet.
+        qty_recorded = qty_filled
+        if fee_in_coin > 0:
+            if fee_in_coin < qty_filled:
+                qty_recorded = qty_filled - fee_in_coin
+            else:
+                logger.warning(
+                    "%s spot buy: fee in coin %s is not below the filled %s; recording the gross size",
+                    req.coin, fee_in_coin, qty_filled,
+                )
+
         async with session_scope(self._sf) as s:
             exchange_id = await self._get_exchange_id(s)
             row = DBPosition(
@@ -125,7 +156,7 @@ class OpenPositionAction(HLAction):
                 coin=req.coin,
                 instrument=req.instrument.value,
                 side=req.side.value,
-                qty=qty_filled,
+                qty=qty_recorded,
                 entry_price=fill_price,
                 opened_at=now_ms,
                 closed_at=None,
@@ -138,7 +169,7 @@ class OpenPositionAction(HLAction):
                 position_id=row.id,
                 ts_ms=now_ms,
                 side=req.side.value,
-                qty=qty_filled,
+                qty=qty_recorded,
                 price=fill_price,
                 fee=fee,
                 slippage_bps=self._slippage * 1e4,
