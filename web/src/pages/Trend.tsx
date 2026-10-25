@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Header } from "../components/Header";
@@ -8,6 +8,8 @@ import {
   fetchTrendSummary,
   type TrendPosition,
   type TrendSummary,
+  TREND_VARIANTS,
+  type TrendVariant,
 } from "../lib/api";
 import { formatCurrency } from "../lib/format";
 
@@ -174,10 +176,18 @@ function PositionRow({ p, equity }: { p: TrendPosition; equity: number }) {
   );
 }
 
+const VARIANT_LABEL: Record<TrendVariant, string> = {
+  trend: "Trend (hand-picked coins)",
+  trend_retune_3k: "Retune · $3k",
+  trend_retune_10k: "Retune · $10k",
+};
+
 export default function Trend() {
-  const summary = useQuery({ queryKey: ["trend-summary"], queryFn: fetchTrendSummary, refetchInterval: 60_000 });
-  const equity = useQuery({ queryKey: ["trend-equity"], queryFn: fetchTrendEquity, refetchInterval: 60_000 });
-  const events = useQuery({ queryKey: ["trend-events"], queryFn: () => fetchTrendEvents(200), refetchInterval: 60_000 });
+  const [variant, setVariant] = useState<TrendVariant>("trend");
+  const summary = useQuery({ queryKey: ["trend-summary", variant], queryFn: () => fetchTrendSummary(variant), refetchInterval: 60_000 });
+  const equity = useQuery({ queryKey: ["trend-equity", variant], queryFn: () => fetchTrendEquity(variant), refetchInterval: 60_000 });
+  const events = useQuery({ queryKey: ["trend-events", variant], queryFn: () => fetchTrendEvents(200, variant), refetchInterval: 60_000 });
+  const retune = (summary.data as unknown as { retune?: Record<string, unknown> } | undefined)?.retune;
 
   const s = summary.data;
   const points = useMemo(
@@ -193,6 +203,29 @@ export default function Trend() {
     <div className="min-h-screen bg-gray-50">
       <Header wsStatus="closed" route="trend" />
       <main className="mx-auto max-w-6xl space-y-4 p-4">
+        <div className="flex flex-wrap gap-2">
+          {TREND_VARIANTS.map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setVariant(v)}
+              className={`rounded-md border px-3 py-1 text-sm ${
+                v === variant ? "border-blue-600 bg-blue-600 text-white" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              {VARIANT_LABEL[v]}
+            </button>
+          ))}
+        </div>
+        {retune && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+            Weekly re-tune: chosen <b>{String(retune.chosen ?? "—")}</b>
+            {typeof retune.chosen_score === "number" && <> (past Sharpe {Number(retune.chosen_score).toFixed(2)})</>}
+            {" · "}first choice {fmtTs(retune.first_choice_at as number | undefined)}
+            {" · "}market caps: {String(retune.cap_source ?? "—")} {retune.cap_snapshot_date ? `(${String(retune.cap_snapshot_date)})` : ""}
+            {" · "}{String(retune.refits ?? "—")} re-tunes in history
+          </div>
+        )}
         <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between">
             <div>

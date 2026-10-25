@@ -797,14 +797,23 @@ export type TrendEvent = {
   details: Record<string, unknown> | null;
 };
 
-export function fetchTrendSummary(): Promise<TrendSummary> {
-  return apiFetch<TrendSummary>("/trend/summary");
+// Trend books: the original paper `trend` (default) and the weekly re-tuned
+// `trend_retune_*` books, selected with ?variant= (frab.api.routes.trend).
+export const TREND_VARIANTS = ["trend", "trend_retune_3k", "trend_retune_10k"] as const;
+export type TrendVariant = (typeof TREND_VARIANTS)[number];
+
+function variantQuery(variant: TrendVariant, sep: "?" | "&"): string {
+  return variant === "trend" ? "" : `${sep}variant=${encodeURIComponent(variant)}`;
 }
 
-export function fetchTrendEquity(): Promise<TrendEquityPoint[]> {
-  return apiFetch<TrendEquityPoint[]>("/trend/equity");
+export function fetchTrendSummary(variant: TrendVariant = "trend"): Promise<TrendSummary> {
+  return apiFetch<TrendSummary>(`/trend/summary${variantQuery(variant, "?")}`);
 }
 
-export function fetchTrendEvents(limit = 200): Promise<TrendEvent[]> {
-  return apiFetch<TrendEvent[]>(`/trend/events?limit=${limit}`);
+export function fetchTrendEquity(variant: TrendVariant = "trend"): Promise<TrendEquityPoint[]> {
+  return apiFetch<TrendEquityPoint[]>(`/trend/equity${variantQuery(variant, "?")}`);
+}
+
+export function fetchTrendEvents(limit = 200, variant: TrendVariant = "trend"): Promise<TrendEvent[]> {
+  return apiFetch<TrendEvent[]>(`/trend/events?limit=${limit}${variantQuery(variant, "&")}`);
 }
