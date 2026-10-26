@@ -76,7 +76,9 @@ def test_book_state_and_params_have_the_shapes_they_had():
     assert sorted(CoinBook.new("BTC", B2Params()).to_state()) == SHAPES["state_keys"]
     assert B2Params().to_dict() == SHAPES["params_to_dict"]
     old_fields = set(SHAPES["params_fields"])
-    assert set(B2Params.__dataclass_fields__) - old_fields == {"shared_margin", "topup_delay_hours"}
+    assert set(B2Params.__dataclass_fields__) - old_fields == {
+        "shared_margin", "topup_delay_hours", "short_window_days", "long_window_days",
+        "partial_hedge_share"}
 
 
 def test_production_param_rows_load_and_store_back_unchanged():

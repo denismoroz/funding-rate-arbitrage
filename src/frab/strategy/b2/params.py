@@ -10,7 +10,9 @@ from dataclasses import asdict, dataclass, field
 
 
 # Params added later, with the value that means "the behaviour that existed before them".
-OPTIONAL_PARAMS: dict[str, object] = {"shared_margin": False, "topup_delay_hours": 0}
+OPTIONAL_PARAMS: dict[str, object] = {"shared_margin": False, "topup_delay_hours": 0,
+                                       "short_window_days": 14, "long_window_days": 30,
+                                       "partial_hedge_share": 1.0}
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,15 @@ class B2Params:
     # initial margin) and the moment it takes effect -- the coins' trip from a cold wallet to HL.
     # The shorts keep losing meanwhile and can be liquidated. 0 = at once, as the books run today.
     topup_delay_hours: int = 0
+    # The hedge signal's two momentum windows, in days: hedge unless the price rose over both.
+    # 14 and 30 are the validated values; the short one also confirms a refill (trend up).
+    # At most 30 days: the engine keeps HISTORY_BARS (740) hourly closes.
+    short_window_days: int = 14
+    long_window_days: int = 30
+    # How much of the spot a MIXED signal hedges (one window up, the other down -- a market
+    # going sideways); both down always hedges in full. 1.0 = in full, as the books run today.
+    # Below 1 the hedge is resized every bar the wanted share changes (sideways <-> down).
+    partial_hedge_share: float = 1.0
 
     @property
     def book_capital(self) -> float:
@@ -117,6 +128,14 @@ class B2Params:
             raise ValueError("B2 topup_delay_hours needs margin_enabled: without margin there is no top-up")
         if p.shared_margin and not p.margin_enabled:
             raise ValueError("B2 shared_margin needs margin_enabled")
+        for name in ("short_window_days", "long_window_days"):
+            value = getattr(p, name)
+            if int(value) != value or not 1 <= value <= 30:
+                raise ValueError(f"B2 {name} must be a whole number of days from 1 to 30")
+        if p.short_window_days > p.long_window_days:
+            raise ValueError("B2 short_window_days must not exceed long_window_days")
+        if not 0.0 < p.partial_hedge_share <= 1.0:
+            raise ValueError("B2 partial_hedge_share must be above 0 and at most 1")
         if p.shared_margin and p.carry_enabled:
             raise ValueError("B2 shared_margin does not model the carry sleeve: set carry_enabled false")
         return p

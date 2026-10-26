@@ -30,7 +30,7 @@ from frab.strategy.b2.params import B2Params
 
 HOURS_PER_YEAR = 8760
 HOUR_MS = 3_600_000
-H14, H30, CARRY_WINDOW = 14 * 24, 30 * 24, 8
+CARRY_WINDOW = 8
 
 
 @dataclass
@@ -51,6 +51,8 @@ class CoinBook:
     sticky_on: bool = False
     sticky_off: int = 0
     hedge_prev: bool = False
+    # share of the spot the wanted hedge covers (params.partial_hedge_share; 1 = in full)
+    hedge_share_prev: float = 1.0
     trend_up_prev: bool = False
     carry_apr_prev: float | None = None
     carry_on: bool = False
@@ -98,6 +100,8 @@ class CoinBook:
             # Written only while a delayed top-up is pending: a book that never uses the delay
             # stores exactly the state it stored before the field existed.
             del state["topup_due_ms"]
+        if state["hedge_share_prev"] == 1.0:
+            del state["hedge_share_prev"]  # the same for a book that hedges in full
         return state
 
     # ── valuation ────────────────────────────────────────────────────────
@@ -351,30 +355,72 @@ def _pool_apply_top_up(pool: MarginPool, params: B2Params, bar_ms: int) -> list[
     return ev
 
 
+def _resize_hedge(book: CoinBook, P: float, perp_cost: float, min_ord: float, bar_ms: int,
+                  pool: "MarginPool | None", margin: bool) -> list[dict]:
+    """A partial hedge (params.partial_hedge_share < 1) follows the wanted share: grown when the
+    signal turns from sideways to down, cut when it turns back. A change below the minimum order
+    waits; growth is capped by the free margin as an entry is."""
+    target = book.units_spot * book.hedge_share_prev
+    delta = target - book.short_size
+    if abs(delta) * P < min_ord:
+        return []
+    if delta > 0:
+        if margin:
+            delta = min(delta, max(_hedge_room(book, P, perp_cost, pool), 0.0))
+            if delta * P < min_ord:
+                return []
+        fee = delta * P * perp_cost
+        book.entry_price = (book.entry_price * book.short_size + P * delta) / (book.short_size + delta)
+        book.short_size += delta
+        book.cash -= fee
+        book.perp_fees += fee
+        book.trades += 1
+        return [_event("hedge_grow", delta, P, delta * P, fee, bar_ms=bar_ms)]
+    cut = -delta
+    realized = cut * (book.entry_price - P)
+    fee = cut * P * perp_cost
+    book.cash += realized - fee
+    book.short_realized += realized
+    book.perp_fees += fee
+    book.short_size -= cut
+    return [_event("hedge_cut", cut, P, cut * P, fee, bar_ms=bar_ms, realized=realized)]
+
+
 def signals_at(closes: list[float], funding: list[float], params: B2Params) -> tuple[bool, bool, float | None]:
     """Raw hedge wish, refill trend confirmation and carry APR at the LAST element.
 
     closes/funding are the hourly histories ending at the bar being closed.
     Mirrors harness.hedge_signal / build_trend_up / carry_pnl's rolling mean.
     """
+    raw_hedge, _, trend_up, carry_apr = _signals(closes, funding, params)
+    return raw_hedge, trend_up, carry_apr
+
+
+def _signals(closes: list[float], funding: list[float], params: B2Params
+             ) -> tuple[bool, bool, bool, float | None]:
+    """`signals_at` plus whether the wish is MIXED: one window up, the other not."""
     n = len(closes)
     p = closes[-1]
-    mom14 = p / closes[-1 - H14] - 1.0 if n > H14 else None
-    mom30 = p / closes[-1 - H30] - 1.0 if n > H30 else None
-    if mom30 is None:
+    h_short, h_long = params.short_window_days * 24, params.long_window_days * 24
+    mom_short = p / closes[-1 - h_short] - 1.0 if n > h_short else None
+    mom_long = p / closes[-1 - h_long] - 1.0 if n > h_long else None
+    mixed = False
+    if mom_long is None:
         raw_hedge = False                                   # not enough history -> no hedge
     else:
-        up = (mom14 is not None and mom14 > params.hedge_threshold) and mom30 > params.hedge_threshold
-        raw_hedge = not up
-    trend_up = mom14 is not None and mom14 > 0.0
+        short_up = mom_short is not None and mom_short > params.hedge_threshold
+        long_up = mom_long > params.hedge_threshold
+        raw_hedge = not (short_up and long_up)
+        mixed = short_up != long_up
+    trend_up = mom_short is not None and mom_short > 0.0
     carry_apr = (sum(funding[-CARRY_WINDOW:]) / CARRY_WINDOW * HOURS_PER_YEAR
                  if len(funding) >= CARRY_WINDOW else None)
-    return raw_hedge, trend_up, carry_apr
+    return raw_hedge, mixed, trend_up, carry_apr
 
 
 def advance_signals(book: CoinBook, closes: list[float], funding_hist: list[float], params: B2Params) -> None:
     """Compute this bar's signals and store them for the next bar (sticky exit applied)."""
-    raw, trend_up, carry_apr = signals_at(closes, funding_hist, params)
+    raw, mixed, trend_up, carry_apr = _signals(closes, funding_hist, params)
     if params.sticky_exit_hours:
         if raw:
             book.sticky_on, book.sticky_off = True, 0
@@ -385,6 +431,10 @@ def advance_signals(book: CoinBook, closes: list[float], funding_hist: list[floa
         book.hedge_prev = book.sticky_on
     else:
         book.hedge_prev = raw
+    if params.partial_hedge_share < 1.0 and raw:
+        # A mixed signal hedges a part; while the sticky exit holds the hedge without a wish,
+        # the last share is kept.
+        book.hedge_share_prev = params.partial_hedge_share if mixed else 1.0
     book.trend_up_prev = trend_up
     book.carry_apr_prev = carry_apr
 
@@ -435,7 +485,7 @@ def step(book: CoinBook, *, bar_ms: int, price: float, funding_rate: float, clos
 
     # 2) hedge entry / exit
     if not book.in_pos and want_hedge:
-        units = book.units_spot
+        units = book.units_spot * book.hedge_share_prev
         limited = False
         if margin and _hedge_room(book, P, perp_cost, pool) < units:
             ev += _top_up(book, P, spot_cost + perp_cost, bar_ms)      # realise a pumped carry's loss
@@ -470,6 +520,9 @@ def step(book: CoinBook, *, bar_ms: int, price: float, funding_rate: float, clos
         book.topup_due_ms = None                  # no short left to top up
         if book.units_spot * P < book.position_size:
             book.refill_pending = True
+    elif book.in_pos and params.partial_hedge_share < 1.0:
+        ev += _resize_hedge(book, P, perp_cost, min_ord, bar_ms, pool if margin else None,
+                            margin)
 
     # 3) refill spot once the trend has turned up
     if book.refill_pending and not book.in_pos and book.trend_up_prev:
