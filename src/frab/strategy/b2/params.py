@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 # Params added later, with the value that means "the behaviour that existed before them".
 OPTIONAL_PARAMS: dict[str, object] = {"shared_margin": False, "topup_delay_hours": 0,
                                        "short_window_days": 14, "long_window_days": 30,
-                                       "partial_hedge_share": 1.0}
+                                       "partial_hedge_share": 1.0, "graded_hedge_depth": 0.0}
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,14 @@ class B2Params:
     # going sideways); both down always hedges in full. 1.0 = in full, as the books run today.
     # Below 1 the hedge is resized every bar the wanted share changes (sideways <-> down).
     partial_hedge_share: float = 1.0
+    # Hedge by the strength of the signal: each window's strength is how far its return is below
+    # `hedge_threshold`, as a share of this depth (capped at 1); the hedged share of the spot is
+    # the mean of the two, so the whole spot is hedged once both returns are down by the depth
+    # and nothing while both are at or above the threshold. One window down is enough to open a
+    # partial hedge (it does not wait for both, unlike the on/off trigger). Resized every bar like a partial
+    # hedge. 0 = off: the hedge is all or nothing, as the books run today. Excludes
+    # partial_hedge_share.
+    graded_hedge_depth: float = 0.0
 
     @property
     def book_capital(self) -> float:
@@ -136,6 +144,10 @@ class B2Params:
             raise ValueError("B2 short_window_days must not exceed long_window_days")
         if not 0.0 < p.partial_hedge_share <= 1.0:
             raise ValueError("B2 partial_hedge_share must be above 0 and at most 1")
+        if not p.graded_hedge_depth >= 0.0 or p.graded_hedge_depth == float("inf"):
+            raise ValueError("B2 graded_hedge_depth must be a finite number, 0 (off) or more")
+        if p.graded_hedge_depth > 0.0 and p.partial_hedge_share < 1.0:
+            raise ValueError("B2 graded_hedge_depth and partial_hedge_share are alternatives: set one")
         if p.shared_margin and p.carry_enabled:
             raise ValueError("B2 shared_margin does not model the carry sleeve: set carry_enabled false")
         return p

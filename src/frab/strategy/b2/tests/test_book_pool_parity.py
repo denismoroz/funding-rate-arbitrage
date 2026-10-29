@@ -78,7 +78,7 @@ def test_book_state_and_params_have_the_shapes_they_had():
     old_fields = set(SHAPES["params_fields"])
     assert set(B2Params.__dataclass_fields__) - old_fields == {
         "shared_margin", "topup_delay_hours", "short_window_days", "long_window_days",
-        "partial_hedge_share"}
+        "partial_hedge_share", "graded_hedge_depth"}
 
 
 def test_production_param_rows_load_and_store_back_unchanged():
