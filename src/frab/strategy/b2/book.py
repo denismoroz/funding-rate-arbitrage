@@ -418,9 +418,26 @@ def _signals(closes: list[float], funding: list[float], params: B2Params
     return raw_hedge, mixed, trend_up, carry_apr
 
 
+def _graded_share(closes: list[float], params: B2Params) -> float:
+    """Share of the spot to hedge by the signal's strength (params.graded_hedge_depth): the mean,
+    over the two windows, of how far the return is below the threshold as a share of the depth."""
+    n = len(closes)
+    h_short, h_long = params.short_window_days * 24, params.long_window_days * 24
+    if n <= h_long:
+        return 0.0                                          # not enough history -> no hedge
+    total = 0.0
+    for h in (h_short, h_long):
+        mom = closes[-1] / closes[-1 - h] - 1.0
+        total += min(max((params.hedge_threshold - mom) / params.graded_hedge_depth, 0.0), 1.0)
+    return total / 2.0
+
+
 def advance_signals(book: CoinBook, closes: list[float], funding_hist: list[float], params: B2Params) -> None:
     """Compute this bar's signals and store them for the next bar (sticky exit applied)."""
     raw, mixed, trend_up, carry_apr = _signals(closes, funding_hist, params)
+    graded = _graded_share(closes, params) if params.graded_hedge_depth > 0.0 else 0.0
+    if params.graded_hedge_depth > 0.0:
+        raw = graded > 0.0      # one window below the threshold is enough; at it there is no strength
     if params.sticky_exit_hours:
         if raw:
             book.sticky_on, book.sticky_off = True, 0
@@ -435,6 +452,8 @@ def advance_signals(book: CoinBook, closes: list[float], funding_hist: list[floa
         # A mixed signal hedges a part; while the sticky exit holds the hedge without a wish,
         # the last share is kept.
         book.hedge_share_prev = params.partial_hedge_share if mixed else 1.0
+    elif params.graded_hedge_depth > 0.0 and raw:
+        book.hedge_share_prev = graded
     book.trend_up_prev = trend_up
     book.carry_apr_prev = carry_apr
 
@@ -520,7 +539,7 @@ def step(book: CoinBook, *, bar_ms: int, price: float, funding_rate: float, clos
         book.topup_due_ms = None                  # no short left to top up
         if book.units_spot * P < book.position_size:
             book.refill_pending = True
-    elif book.in_pos and params.partial_hedge_share < 1.0:
+    elif book.in_pos and (params.partial_hedge_share < 1.0 or params.graded_hedge_depth > 0.0):
         ev += _resize_hedge(book, P, perp_cost, min_ord, bar_ms, pool if margin else None,
                             margin)
 
